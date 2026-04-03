@@ -1,0 +1,2 @@
+{"type":"system","sessionId":"sess-001","timestamp":"2026-03-27T21:30:00.000Z","cwd":"/test/project","isSidechain":true,"message":{"role":"system","content":"Subagent system prompt"}}
+{"type":"assistant","sessionId":"sess-001","timestamp":"2026-03-27T21:35:00.000Z","cwd":"/test/project","isSidechain":true,"message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_05","name":"Skill","input":{"skill":"gsd:execute-phase","args":"2"}}]}}
