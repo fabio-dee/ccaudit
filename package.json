@@ -16,6 +16,7 @@
     "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {
+    "jiti": "catalog:",
     "eslint": "catalog:",
     "typescript-eslint": "catalog:",
     "@eslint/js": "catalog:",
