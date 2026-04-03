@@ -1,0 +1,38 @@
+{
+  "name": "ccaudit",
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Audit Claude Code ghost inventory — agents, skills, MCP servers, and memory files",
+  "bin": {
+    "ccaudit": "./src/index.ts"
+  },
+  "publishConfig": {
+    "bin": {
+      "ccaudit": "./dist/index.js"
+    },
+    "exports": {
+      ".": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "TZ=UTC vitest",
+    "typecheck": "tsc --noEmit",
+    "prepack": "pnpm run build && clean-pkg-json"
+  },
+  "devDependencies": {
+    "@ccaudit/internal": "workspace:*",
+    "@ccaudit/terminal": "workspace:*",
+    "gunshi": "catalog:",
+    "valibot": "catalog:",
+    "tsdown": "catalog:",
+    "vitest": "catalog:",
+    "clean-pkg-json": "catalog:",
+    "typescript": "catalog:",
+    "@types/node": "catalog:"
+  }
+}

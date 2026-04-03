@@ -1,0 +1,19 @@
+{
+  "name": "@ccaudit/terminal",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "TZ=UTC vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "cli-table3": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@types/node": "catalog:"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@ccaudit/internal",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "TZ=UTC vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "valibot": "catalog:",
+    "tinyglobby": "catalog:",
+    "@praha/byethrow": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "@types/node": "catalog:"
+  }
+}
