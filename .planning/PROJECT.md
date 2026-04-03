@@ -12,7 +12,11 @@ Show users exactly how many tokens their ghost inventory wastes — and give the
 
 ### Validated
 
-(None yet — ship to validate)
+- [x] Zero runtime dependencies — all deps as devDependencies, bundler owns the payload (Validated in Phase 1: Foundation & Scaffold)
+- [x] `npx ccaudit --help` executes from working monorepo with shebang binary (Validated in Phase 1: Foundation & Scaffold)
+- [x] Monorepo layout: apps/ccaudit/, packages/internal/, packages/terminal/, docs/ (Validated in Phase 1: Foundation & Scaffold)
+- [x] Node.js >=20.0.0 engines field enforced (Validated in Phase 1: Foundation & Scaffold)
+- [x] CI pipeline: lint, typecheck, test, build on every push (Validated in Phase 1: Foundation & Scaffold)
 
 ### Active
 
@@ -143,4 +147,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-03 after initialization*
+*Last updated: 2026-04-03 after Phase 1 completion*
