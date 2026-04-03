@@ -15,8 +15,8 @@
 
 ### JSONL Parsing
 
-- [ ] **PARS-01**: Session files discovered from `~/.claude/projects/*/sessions/*.jsonl` and `~/.config/claude/projects/*/sessions/*.jsonl`
-- [ ] **PARS-02**: Subagent sessions (`isSidechain: true`, in `subagents/` subdir) included in invocation count
+- [x] **PARS-01**: Session files discovered from `~/.claude/projects/*/sessions/*.jsonl` and `~/.config/claude/projects/*/sessions/*.jsonl`
+- [x] **PARS-02**: Subagent sessions (`isSidechain: true`, in `subagents/` subdir) included in invocation count
 - [x] **PARS-03**: Agent invocations parsed from `type=assistant` `tool_use` blocks where `name='Agent'`; `input.subagent_type` = agent type
 - [x] **PARS-04**: Skill invocations parsed from `tool_use` blocks where `name='Skill'`; `input.skill` = skill name
 - [x] **PARS-05**: MCP invocations parsed from `tool_use` blocks where name matches `mcp__<server>__<tool>`; split on `__` -> [1]=server, [2]=tool

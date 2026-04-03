@@ -59,7 +59,7 @@ Plans:
 **Plans:** 2 plans
 Plans:
 - [x] 02-01-PLAN.md — Parser types, valibot schemas, duration parser, invocation extractor
-- [ ] 02-02-PLAN.md — Session discovery (tinyglobby), streaming JSONL parser, ghost CLI wiring
+- [x] 02-02-PLAN.md — Session discovery (tinyglobby), streaming JSONL parser, ghost CLI wiring
 
 ### Phase 3: Inventory Scanner
 **Goal**: The tool detects ghost items across all four categories (agents, skills, MCP servers, memory files) by comparing installed inventory against the invocation ledger, with tiered ghost classification and per-project breakdown
