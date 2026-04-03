@@ -41,7 +41,10 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Monorepo structure exists: `apps/ccaudit/`, `packages/internal/`, `packages/terminal/`, `docs/` -- pnpm workspaces resolve correctly
   4. CI pipeline runs lint, typecheck, test, and build on every push
   5. `engines` field in package.json declares Node.js >=20.x
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 01-01-PLAN.md — Monorepo workspace, root configs, package skeletons, shared types
+- [ ] 01-02-PLAN.md — CLI skeleton (gunshi), build pipeline (tsdown), CI workflow
 
 ### Phase 2: JSONL Parser
 **Goal**: The tool can discover all session files (XDG + legacy paths, including subagent sessions) and extract a complete invocation ledger for agents, skills, and MCP tools within a configurable time window
@@ -154,7 +157,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Foundation & Scaffold | v1.0 | 0/0 | Not started | - |
+| 1. Foundation & Scaffold | v1.0 | 0/2 | Planning complete | - |
 | 2. JSONL Parser | v1.0 | 0/0 | Not started | - |
 | 3. Inventory Scanner | v1.0 | 0/0 | Not started | - |
 | 4. Token Cost Attribution | v1.0 | 0/0 | Not started | - |
