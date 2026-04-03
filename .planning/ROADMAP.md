@@ -56,7 +56,10 @@ Plans:
   3. Project path is resolved from the `cwd` field in system messages, not from folder-name decoding
   4. Malformed JSONL lines are silently skipped -- the parser never throws on corrupt data
   5. `--since <duration>` flag filters the invocation ledger to the specified window (default 7d)
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 02-01-PLAN.md — Parser types, valibot schemas, duration parser, invocation extractor
+- [ ] 02-02-PLAN.md — Session discovery (tinyglobby), streaming JSONL parser, ghost CLI wiring
 
 ### Phase 3: Inventory Scanner
 **Goal**: The tool detects ghost items across all four categories (agents, skills, MCP servers, memory files) by comparing installed inventory against the invocation ledger, with tiered ghost classification and per-project breakdown
@@ -158,7 +161,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 1. Foundation & Scaffold | v1.0 | 0/2 | Planning complete | - |
-| 2. JSONL Parser | v1.0 | 0/0 | Not started | - |
+| 2. JSONL Parser | v1.0 | 0/2 | Planning complete | - |
 | 3. Inventory Scanner | v1.0 | 0/0 | Not started | - |
 | 4. Token Cost Attribution | v1.0 | 0/0 | Not started | - |
 | 5. Report & CLI Commands | v1.0 | 0/0 | Not started | - |
