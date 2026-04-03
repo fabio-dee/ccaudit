@@ -44,7 +44,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans:** 2 plans
 Plans:
 - [x] 01-01-PLAN.md — Monorepo workspace, root configs, package skeletons, shared types
-- [ ] 01-02-PLAN.md — CLI skeleton (gunshi), build pipeline (tsdown), CI workflow
+- [x] 01-02-PLAN.md — CLI skeleton (gunshi), build pipeline (tsdown), CI workflow
 
 ### Phase 2: JSONL Parser
 **Goal**: The tool can discover all session files (XDG + legacy paths, including subagent sessions) and extract a complete invocation ledger for agents, skills, and MCP tools within a configurable time window
