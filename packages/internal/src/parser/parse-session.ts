@@ -7,12 +7,79 @@ import type { InvocationRecord, ParsedSessionResult, SessionMeta } from './types
 
 const MAX_LINE_SIZE = 10 * 1024 * 1024; // 10MB safety limit
 
-// STUB: intentionally broken for TDD RED phase
+/**
+ * Parse a JSONL session file using streaming (constant memory).
+ *
+ * Uses node:readline for line-by-line processing and valibot safeParse
+ * for schema validation. Malformed lines are silently skipped.
+ *
+ * @param filePath - Absolute path to the JSONL session file.
+ * @param sinceMs - Time window in milliseconds. Use Infinity to include all.
+ * @returns Parsed session result with metadata and invocation records.
+ */
 export async function parseSession(
-  _filePath: string,
-  _sinceMs: number,
+  filePath: string,
+  sinceMs: number,
 ): Promise<ParsedSessionResult> {
-  throw new Error('Not implemented');
+  const invocations: InvocationRecord[] = [];
+  let projectPath: string | null = null;
+  const now = Date.now();
+  const cutoff = sinceMs === Infinity ? 0 : now - sinceMs;
+
+  // Detect subagent from file path (subagents/agent-*.jsonl) OR from JSONL data
+  let isSidechain = filePath.includes('/subagents/agent-');
+
+  const rl = createInterface({
+    input: createReadStream(filePath, { encoding: 'utf-8' }),
+    crlfDelay: Number.POSITIVE_INFINITY,
+  });
+
+  for await (const line of rl) {
+    // Skip empty lines and oversized lines (OOM protection)
+    if (line.length === 0 || line.length > MAX_LINE_SIZE) continue;
+
+    let json: unknown;
+    try {
+      json = JSON.parse(line);
+    } catch {
+      continue; // Malformed JSON -- silent skip (DIST-04)
+    }
+
+    // Extract cwd and isSidechain from the first line that has them (PARS-06)
+    const anyResult = v.safeParse(anyLineSchema, json);
+    if (anyResult.success) {
+      if (projectPath === null && anyResult.output.cwd) {
+        projectPath = anyResult.output.cwd;
+      }
+      if (!isSidechain && anyResult.output.isSidechain === true) {
+        isSidechain = true;
+      }
+    }
+
+    // Only deeply parse assistant messages for tool_use extraction
+    const result = v.safeParse(assistantLineSchema, json);
+    if (!result.success) continue;
+
+    const assistantLine = result.output;
+
+    // Time window filter (PARS-07)
+    if (assistantLine.timestamp) {
+      const ts = new Date(assistantLine.timestamp).getTime();
+      if (ts < cutoff) continue; // Outside --since window
+    }
+
+    // Extract invocations from content blocks (PARS-03, PARS-04, PARS-05)
+    const records = extractInvocations(assistantLine);
+    invocations.push(...records);
+  }
+
+  const meta: SessionMeta = {
+    filePath,
+    projectPath,
+    isSidechain,
+  };
+
+  return { meta, invocations };
 }
 
 if (import.meta.vitest) {

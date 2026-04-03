@@ -9,9 +9,51 @@ export interface DiscoverOptions {
   sinceMs?: number; // If provided, pre-filter by file mtime
 }
 
-// STUB: intentionally broken for TDD RED phase
-export async function discoverSessionFiles(_options?: DiscoverOptions): Promise<string[]> {
-  throw new Error('Not implemented');
+/**
+ * Discover JSONL session files from Claude Code's data directories.
+ *
+ * Searches both XDG (~/.config/claude/) and legacy (~/.claude/) paths.
+ * Includes main sessions (*.jsonl) and subagent sessions (subagents/agent-*.jsonl).
+ *
+ * @param options.claudePaths - Override default Claude paths (useful for testing)
+ * @param options.sinceMs - If provided, pre-filter by file mtime (skip files older than window)
+ */
+export async function discoverSessionFiles(options?: DiscoverOptions): Promise<string[]> {
+  const home = homedir();
+  const paths = options?.claudePaths ?? {
+    xdg: path.join(home, '.config', 'claude'),
+    legacy: path.join(home, '.claude'),
+  };
+
+  // CRITICAL: Use forward slashes for tinyglobby patterns (cross-platform)
+  const patterns = [paths.xdg, paths.legacy].flatMap(base => {
+    const posixBase = base.replace(/\\/g, '/');
+    return [
+      `${posixBase}/projects/*/*.jsonl`,                   // Main sessions
+      `${posixBase}/projects/*/*/subagents/agent-*.jsonl`, // Subagent sessions
+    ];
+  });
+
+  const allFiles = await glob(patterns, { absolute: true, dot: false });
+
+  // Fast pre-filter: skip files whose mtime is older than the time window
+  if (options?.sinceMs != null && options.sinceMs !== Infinity) {
+    const cutoff = Date.now() - options.sinceMs;
+    const filtered: string[] = [];
+    for (const file of allFiles) {
+      try {
+        const stats = await stat(file);
+        if (stats.mtimeMs >= cutoff) {
+          filtered.push(file);
+        }
+      } catch {
+        continue; // File disappeared between glob and stat -- silently skip
+      }
+    }
+    return filtered;
+  }
+
+  return allFiles;
 }
 
 if (import.meta.vitest) {
