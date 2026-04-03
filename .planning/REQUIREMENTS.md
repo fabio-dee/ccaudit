@@ -8,10 +8,10 @@
 ### Foundation & Distribution
 
 - [ ] **DIST-01**: Tool executes via `npx ccaudit@latest` with zero pre-installation required
-- [ ] **DIST-02**: All runtime dependencies bundled at build time; published package has zero runtime `dependencies`
-- [ ] **DIST-03**: Dual path support: XDG (`~/.config/claude/`) and legacy (`~/.claude/`) paths resolved automatically
-- [ ] **DIST-04**: Malformed or schema-invalid JSONL lines silently skipped -- tool never throws on corrupt session data
-- [ ] **DIST-05**: `engines` field declares minimum Node.js version (20.x LTS)
+- [x] **DIST-02**: All runtime dependencies bundled at build time; published package has zero runtime `dependencies`
+- [x] **DIST-03**: Dual path support: XDG (`~/.config/claude/`) and legacy (`~/.claude/`) paths resolved automatically
+- [x] **DIST-04**: Malformed or schema-invalid JSONL lines silently skipped -- tool never throws on corrupt session data
+- [x] **DIST-05**: `engines` field declares minimum Node.js version (20.x LTS)
 
 ### JSONL Parsing
 

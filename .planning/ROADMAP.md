@@ -43,7 +43,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   5. `engines` field in package.json declares Node.js >=20.x
 **Plans:** 2 plans
 Plans:
-- [ ] 01-01-PLAN.md — Monorepo workspace, root configs, package skeletons, shared types
+- [x] 01-01-PLAN.md — Monorepo workspace, root configs, package skeletons, shared types
 - [ ] 01-02-PLAN.md — CLI skeleton (gunshi), build pipeline (tsdown), CI workflow
 
 ### Phase 2: JSONL Parser
