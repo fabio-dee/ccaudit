@@ -20,14 +20,22 @@ Show users exactly how many tokens their ghost inventory wastes — and give the
 - [ ] Parse JSONL session files from `~/.claude/projects/` and `~/.config/claude/projects/` to build an invocation ledger
 - [ ] Detect ghost agents: files in `~/.claude/agents/` and `.claude/agents/` with zero invocations in the time window
 - [ ] Detect ghost skills: `Skill` tool_use entries matched against skill files; absent = ghost
-- [ ] Detect ghost MCP servers: `mcp__<server>__*` tool_use entries matched against `settings.json`; absent = ghost
+- [ ] Detect ghost MCP servers: `mcp__<server>__*` tool_use entries matched against `~/.claude.json` (root `mcpServers` + `projects.<path>.mcpServers`) and `.mcp.json`; absent = ghost
 - [ ] Detect stale memory files: CLAUDE.md and rules/ files with no recent modification (mod-date heuristic)
 - [ ] Calculate per-item token cost estimates (embedded `mcp-token-estimates.json`, community-maintained)
-- [ ] Render ghost inventory table with Defined / Used / Ghost / Token-cost columns per category
-- [ ] `--since <duration>` flag on all read commands (default: 7d)
+- [ ] Render ghost inventory table with Defined / Used / Ghost / Token-cost columns per category; show `lastUsed` date in every ghost row
+- [ ] All token estimates labeled `~` prefix ("~15k tokens (estimated)") — never bare numbers; show "estimated" vs "measured" vs "community-reported" confidence
+- [ ] Health score (0–100) summary: single shareable number, README badge-ready, CI gate semantics
+- [ ] `--since <duration>` flag on all read commands (default: 7d); display window prominently in output header
+- [ ] "Likely ghost" (7–30d) vs "definite ghost" (>30d) tiering in default output
+- [ ] Exit codes: 0 = no ghosts, 1 = ghosts found (enables CI/pre-commit use)
+- [ ] `NO_COLOR` env var and `--no-color` flag (ANSI-free output for piped/CI contexts)
+- [ ] `--quiet` / `-q` flag (data-only output for scripts)
+- [ ] `--verbose` / `-v` flag (show what was scanned/skipped)
+- [ ] `--ci` flag (combines exit-code + quiet + JSON for GitHub Actions / CI pipelines)
 - [ ] `--json` and `--csv` export on all read commands
 - [ ] `npx ccaudit ghost` (default), `ccaudit inventory`, `ccaudit mcp`, `ccaudit trend`
-- [ ] `ccaudit mcp --live` for exact token counts via live MCP connection
+- [ ] `ccaudit mcp --live` for exact token counts via live MCP connection (must ship v1.0 — prevents "estimates are wrong" narrative)
 - [ ] Project path decoded from `cwd` field in JSONL system message (authoritative, not folder-name heuristic)
 - [ ] Silent skip of malformed JSONL lines — never throw
 - [ ] Dual path support: XDG (`~/.config/claude/`) and legacy (`~/.claude/`)
@@ -40,8 +48,10 @@ Show users exactly how many tokens their ghost inventory wastes — and give the
 **v1.2 — Remediation**
 - [ ] `ccaudit --dangerously-bust-ghosts`: gated remediation with triple confirmation
 - [ ] Checkpoint enforcement: must exist + hash must match (hash-based expiry, not time-based)
+- [ ] Hard preflight gate: detect running Claude Code processes and refuse to mutate `~/.claude.json` if running (concurrent writes corrupt OAuth tokens + config)
+- [ ] Atomic write pattern for all config mutations (write to temp file, then rename)
 - [ ] Archive agents/skills to `_archived/` subdirectory (not delete)
-- [ ] Comment-out MCP servers in `settings.json` with `// ccaudit-disabled` prefix (not delete)
+- [ ] Disable MCP servers via key-rename in `~/.claude.json`: move entry from `mcpServers` to `ccaudit-disabled:<name>` key (preserves valid JSON, preserves full config for restore; JSON does not support comments — comment-out is impossible)
 - [ ] Flag stale memory files with `ccaudit-stale: true` frontmatter (not move, not delete)
 - [ ] `ccaudit restore`: full rollback from last bust
 - [ ] `ccaudit restore <name>`: restore single archived item
@@ -107,7 +117,11 @@ Before any conversation: ~108k tokens consumed (54% of 200k window) — MCP tool
 | v1.0 analysis-only | Build trust before touching files; ccusage proved read-only earns adoption | — Pending |
 | Hash-based checkpoint expiry | Time-based (24h) is wrong — a 5-min-old dry-run is invalid if user added agents; hash is correct | — Pending |
 | Archive not delete for agents/skills | Reversibility; users won't trust a tool that deletes their work | — Pending |
-| Comment-out not delete for MCP settings | Preserve original config verbatim; easy machine-readable restore | — Pending |
+| Key-rename not comment-out for MCP | JSON doesn't support comments — `// foo` in JSON = parse error; key-rename to `ccaudit-disabled:<name>` preserves valid JSON | ✓ Corrected |
+| MCP config source: `~/.claude.json` not `settings.json` | MCP servers are in `~/.claude.json` and `.mcp.json`; `settings.json` contains permissions/hooks only | ✓ Corrected |
+| Running-process gate before `~/.claude.json` mutation | `~/.claude.json` contains OAuth tokens; concurrent writes corrupt it; must detect + refuse if Claude Code is running | ✓ Added |
+| `--live` ships in v1.0 | Token estimates start as guesses; users will quote them as facts; must provide verification path at launch | ✓ Confirmed |
+| All token estimates labeled `~` (approximate) | Trust dies if ccaudit reports wrong numbers at viral scale | ✓ Added |
 | No external runtime dependencies | ccusage proved this earns trust and simplifies distribution | — Pending |
 | Project path from `cwd` field | More reliable than decoding folder-name encoding; handles edge cases | — Pending |
 
