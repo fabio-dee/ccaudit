@@ -3,7 +3,8 @@
   "compilerOptions": {
     "composite": true,
     "allowImportingTsExtensions": true,
-    "noEmit": true,
+    "emitDeclarationOnly": true,
+    "declaration": true,
     "rootDir": "./src",
     "outDir": "./dist"
   },

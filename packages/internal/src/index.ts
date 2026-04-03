@@ -1,3 +1,4 @@
+// Domain types (Phase 1)
 export type {
   ItemScope,
   GhostTier,
@@ -8,24 +9,30 @@ export type {
   ClaudePaths,
 } from './types.ts';
 
+// Parser module (Phase 2)
+export {
+  discoverSessionFiles,
+  parseSession,
+  parseDuration,
+  parseMcpName,
+  extractInvocations,
+} from './parser/index.ts';
 export type {
+  DiscoverOptions,
   InvocationKind,
   InvocationRecord,
   SessionMeta,
   ParsedSessionResult,
-} from './parser/types.ts';
+} from './parser/index.ts';
 
-export type {
-  AnyLine,
-  AssistantLine,
+// Schemas (Phase 2)
+export {
+  anyLineSchema,
+  assistantLineSchema,
 } from './schemas/session-line.ts';
-
-export type {
-  ToolUseBlock,
-  ContentBlock,
+export type { AnyLine, AssistantLine } from './schemas/session-line.ts';
+export {
+  toolUseBlockSchema,
+  contentBlockSchema,
 } from './schemas/tool-use.ts';
-
-export { anyLineSchema, assistantLineSchema } from './schemas/session-line.ts';
-export { toolUseBlockSchema, contentBlockSchema } from './schemas/tool-use.ts';
-export { parseDuration } from './parser/duration.ts';
-export { parseMcpName, extractInvocations } from './parser/extract-invocations.ts';
+export type { ToolUseBlock, ContentBlock } from './schemas/tool-use.ts';
