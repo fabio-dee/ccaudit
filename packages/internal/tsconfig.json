@@ -2,6 +2,8 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "composite": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
     "rootDir": "./src",
     "outDir": "./dist"
   },
