@@ -8,9 +8,10 @@ export default defineConfig({
   sourcemap: false,
   minify: 'dce-only',
   treeshake: true,
-  publint: true,
-  unused: true,
   nodeProtocol: true,
+  outputOptions: {
+    entryFileNames: '[name].js',
+  },
   define: {
     'import.meta.vitest': 'undefined',
   },
