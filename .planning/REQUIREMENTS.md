@@ -1,7 +1,7 @@
 # Requirements: ccaudit
 
 **Defined:** 2026-04-03
-**Core Value:** Show users exactly how many tokens their ghost inventory wastes — and give them one safe, reversible command to reclaim them.
+**Core Value:** Show users exactly how many tokens their ghost inventory wastes -- and give them one safe, reversible command to reclaim them.
 
 ## v1 Requirements
 
@@ -10,7 +10,7 @@
 - [ ] **DIST-01**: Tool executes via `npx ccaudit@latest` with zero pre-installation required
 - [ ] **DIST-02**: All runtime dependencies bundled at build time; published package has zero runtime `dependencies`
 - [ ] **DIST-03**: Dual path support: XDG (`~/.config/claude/`) and legacy (`~/.claude/`) paths resolved automatically
-- [ ] **DIST-04**: Malformed or schema-invalid JSONL lines silently skipped — tool never throws on corrupt session data
+- [ ] **DIST-04**: Malformed or schema-invalid JSONL lines silently skipped -- tool never throws on corrupt session data
 - [ ] **DIST-05**: `engines` field declares minimum Node.js version (20.x LTS)
 
 ### JSONL Parsing
@@ -19,7 +19,7 @@
 - [ ] **PARS-02**: Subagent sessions (`isSidechain: true`, in `subagents/` subdir) included in invocation count
 - [ ] **PARS-03**: Agent invocations parsed from `type=assistant` `tool_use` blocks where `name='Agent'`; `input.subagent_type` = agent type
 - [ ] **PARS-04**: Skill invocations parsed from `tool_use` blocks where `name='Skill'`; `input.skill` = skill name
-- [ ] **PARS-05**: MCP invocations parsed from `tool_use` blocks where name matches `mcp__<server>__<tool>`; split on `__` → [1]=server, [2]=tool
+- [ ] **PARS-05**: MCP invocations parsed from `tool_use` blocks where name matches `mcp__<server>__<tool>`; split on `__` -> [1]=server, [2]=tool
 - [ ] **PARS-06**: Project path resolved from `cwd` field in system messages (authoritative; not folder-name decoding)
 - [ ] **PARS-07**: `--since <duration>` flag on all read commands with configurable lookback (default: 7d)
 
@@ -29,16 +29,16 @@
 - [ ] **SCAN-02**: Ghost skills detected: `~/.claude/skills/` and `.claude/skills/` files with zero `Skill` tool_use invocations in time window
 - [ ] **SCAN-03**: Ghost MCP servers detected: entries in `~/.claude.json` (`mcpServers` root key + `projects.<path>.mcpServers`) and `.mcp.json` with zero `mcp__<server>__*` invocations in time window
 - [ ] **SCAN-04**: Stale memory files detected: CLAUDE.md and `rules/` files with no modification in >30 days (file mod-date heuristic)
-- [ ] **SCAN-05**: "Likely ghost" tier (7–30d since last invocation) vs "definite ghost" tier (>30d / never) shown in default output
-- [ ] **SCAN-06**: `lastUsed` date shown in every ghost row — never "ghost" without "last seen N days ago"
+- [ ] **SCAN-05**: "Likely ghost" tier (7-30d since last invocation) vs "definite ghost" tier (>30d / never) shown in default output
+- [ ] **SCAN-06**: `lastUsed` date shown in every ghost row -- never "ghost" without "last seen N days ago"
 - [ ] **SCAN-07**: Per-project breakdown available alongside global cross-project view
 
 ### Token Cost Attribution
 
 - [ ] **TOKN-01**: Per-item token cost estimated from embedded `mcp-token-estimates.json` (community-maintained, bundled at build)
-- [ ] **TOKN-02**: All estimates labeled with `~` prefix everywhere ("~15k tokens (estimated)") — never bare numbers
+- [ ] **TOKN-02**: All estimates labeled with `~` prefix everywhere ("~15k tokens (estimated)") -- never bare numbers
 - [ ] **TOKN-03**: Confidence tier shown per estimate: "estimated" / "measured" / "community-reported"
-- [ ] **TOKN-04**: `ccaudit mcp --live` connects to running MCP servers for exact token count (ships v1.0 — verification path required at launch)
+- [ ] **TOKN-04**: `ccaudit mcp --live` connects to running MCP servers for exact token count (ships v1.0 -- verification path required at launch)
 - [ ] **TOKN-05**: Total ghost overhead calculated and displayed as both token count and percentage of 200k context window
 
 ### Ghost Inventory Report
@@ -47,7 +47,7 @@
 - [ ] **REPT-02**: `ccaudit inventory` shows full inventory with all usage stats
 - [ ] **REPT-03**: `ccaudit mcp` shows MCP-specific detail view (token cost + frequency)
 - [ ] **REPT-04**: `ccaudit trend` shows invocation frequency over time
-- [ ] **REPT-05**: Health score (0–100) displayed in all report views; README badge-ready; CI gate semantics
+- [ ] **REPT-05**: Health score (0-100) displayed in all report views; README badge-ready; CI gate semantics
 - [ ] **REPT-06**: Per-item recommendations shown: Archive / Monitor / Keep
 - [ ] **REPT-07**: `--since` window displayed prominently in output headers: "Ghosts (no invocations in past 7 days)"
 
@@ -75,10 +75,10 @@
 - [ ] **RMED-04**: Agents archived to `~/.claude/agents/_archived/` (not deleted); project-local agents to `.claude/agents/_archived/`
 - [ ] **RMED-05**: Skills archived to `~/.claude/skills/_archived/` (not deleted)
 - [ ] **RMED-06**: MCP servers disabled via key-rename in `~/.claude.json`: entry moved from `mcpServers` to `ccaudit-disabled:<name>` key (preserves valid JSON; JSON comments are not valid)
-- [ ] **RMED-07**: Stale memory files flagged with `ccaudit-stale: true` frontmatter (not moved, not deleted; still load normally — flag is for human review)
+- [ ] **RMED-07**: Stale memory files flagged with `ccaudit-stale: true` frontmatter (not moved, not deleted; still load normally -- flag is for human review)
 - [ ] **RMED-08**: Incremental restore manifest written: each remediation operation appended as it completes; crash mid-operation still allows partial restore
 - [ ] **RMED-09**: Atomic write pattern for all `~/.claude.json` mutations (write to temp, then `rename`)
-- [ ] **RMED-10**: Triple confirmation UX: [1/3] proceed? → [2/3] are you sure? → [3/3] type "I accept full responsibility"
+- [ ] **RMED-10**: Triple confirmation UX: [1/3] proceed? -> [2/3] are you sure? -> [3/3] type "I accept full responsibility"
 - [ ] **RMED-11**: `ccaudit restore`: full rollback from last bust
 - [ ] **RMED-12**: `ccaudit restore <name>`: restore single archived item
 - [ ] **RMED-13**: `ccaudit restore --list`: show all archived items with dates
@@ -115,34 +115,81 @@
 
 | Feature | Reason |
 |---------|--------|
-| Integration with Agent-Registry, the-library, or external tools | ccaudit implements all algorithms natively — no external runtime deps |
+| Integration with Agent-Registry, the-library, or external tools | ccaudit implements all algorithms natively -- no external runtime deps |
 | Cloud sync or remote storage | Local-only, zero-install philosophy; user data stays on device |
 | GUI or web dashboard | CLI-only for v1; ccboard covers TUI/web space |
 | Auto-running on session start | User-initiated only; passive monitoring violates trust model |
 | Non-Claude Code tools (Cursor, Windsurf) | Claude Code JSONL schema only; other tools use different formats |
 | Destructive delete (vs archive) | Trust model requires reversibility; one data-loss report kills adoption |
 | Comment-out in JSON config | JSON does not support comments; produces parse errors on startup |
-| Time-based checkpoint expiry | Hash-based is correct — time doesn't capture "inventory changed" |
+| Time-based checkpoint expiry | Hash-based is correct -- time doesn't capture "inventory changed" |
 
 ## Traceability
 
-| Requirement | Phase | Status |
-|-------------|-------|--------|
-| DIST-01–05 | Phase 1 | Pending |
-| PARS-01–07 | Phase 2 | Pending |
-| SCAN-01–07 | Phase 3 | Pending |
-| TOKN-01–05 | Phase 3 | Pending |
-| REPT-01–07 | Phase 4 | Pending |
-| OUTP-01–07 | Phase 4 | Pending |
-| DRYR-01–03 | Phase 5 | Pending |
-| RMED-01–13 | Phase 6 | Pending |
-| COMM-01–02 | Phase 6 | Pending |
+| Requirement | Phase | Milestone | Status |
+|-------------|-------|-----------|--------|
+| DIST-01 | Phase 1: Foundation & Scaffold | v1.0 | Pending |
+| DIST-02 | Phase 1: Foundation & Scaffold | v1.0 | Pending |
+| DIST-03 | Phase 1: Foundation & Scaffold | v1.0 | Pending |
+| DIST-04 | Phase 1: Foundation & Scaffold | v1.0 | Pending |
+| DIST-05 | Phase 1: Foundation & Scaffold | v1.0 | Pending |
+| PARS-01 | Phase 2: JSONL Parser | v1.0 | Pending |
+| PARS-02 | Phase 2: JSONL Parser | v1.0 | Pending |
+| PARS-03 | Phase 2: JSONL Parser | v1.0 | Pending |
+| PARS-04 | Phase 2: JSONL Parser | v1.0 | Pending |
+| PARS-05 | Phase 2: JSONL Parser | v1.0 | Pending |
+| PARS-06 | Phase 2: JSONL Parser | v1.0 | Pending |
+| PARS-07 | Phase 2: JSONL Parser | v1.0 | Pending |
+| SCAN-01 | Phase 3: Inventory Scanner | v1.0 | Pending |
+| SCAN-02 | Phase 3: Inventory Scanner | v1.0 | Pending |
+| SCAN-03 | Phase 3: Inventory Scanner | v1.0 | Pending |
+| SCAN-04 | Phase 3: Inventory Scanner | v1.0 | Pending |
+| SCAN-05 | Phase 3: Inventory Scanner | v1.0 | Pending |
+| SCAN-06 | Phase 3: Inventory Scanner | v1.0 | Pending |
+| SCAN-07 | Phase 3: Inventory Scanner | v1.0 | Pending |
+| TOKN-01 | Phase 4: Token Cost Attribution | v1.0 | Pending |
+| TOKN-02 | Phase 4: Token Cost Attribution | v1.0 | Pending |
+| TOKN-03 | Phase 4: Token Cost Attribution | v1.0 | Pending |
+| TOKN-04 | Phase 4: Token Cost Attribution | v1.0 | Pending |
+| TOKN-05 | Phase 4: Token Cost Attribution | v1.0 | Pending |
+| REPT-01 | Phase 5: Report & CLI Commands | v1.0 | Pending |
+| REPT-02 | Phase 5: Report & CLI Commands | v1.0 | Pending |
+| REPT-03 | Phase 5: Report & CLI Commands | v1.0 | Pending |
+| REPT-04 | Phase 5: Report & CLI Commands | v1.0 | Pending |
+| REPT-05 | Phase 5: Report & CLI Commands | v1.0 | Pending |
+| REPT-06 | Phase 5: Report & CLI Commands | v1.0 | Pending |
+| REPT-07 | Phase 5: Report & CLI Commands | v1.0 | Pending |
+| OUTP-01 | Phase 6: Output Control & Polish | v1.0 | Pending |
+| OUTP-02 | Phase 6: Output Control & Polish | v1.0 | Pending |
+| OUTP-03 | Phase 6: Output Control & Polish | v1.0 | Pending |
+| OUTP-04 | Phase 6: Output Control & Polish | v1.0 | Pending |
+| OUTP-05 | Phase 6: Output Control & Polish | v1.0 | Pending |
+| OUTP-06 | Phase 6: Output Control & Polish | v1.0 | Pending |
+| OUTP-07 | Phase 6: Output Control & Polish | v1.0 | Pending |
+| DRYR-01 | Phase 7: Dry-Run & Checkpoint | v1.1 | Pending |
+| DRYR-02 | Phase 7: Dry-Run & Checkpoint | v1.1 | Pending |
+| DRYR-03 | Phase 7: Dry-Run & Checkpoint | v1.1 | Pending |
+| RMED-01 | Phase 8: Remediation Core | v1.2 | Pending |
+| RMED-02 | Phase 8: Remediation Core | v1.2 | Pending |
+| RMED-03 | Phase 8: Remediation Core | v1.2 | Pending |
+| RMED-04 | Phase 8: Remediation Core | v1.2 | Pending |
+| RMED-05 | Phase 8: Remediation Core | v1.2 | Pending |
+| RMED-06 | Phase 8: Remediation Core | v1.2 | Pending |
+| RMED-07 | Phase 8: Remediation Core | v1.2 | Pending |
+| RMED-08 | Phase 8: Remediation Core | v1.2 | Pending |
+| RMED-09 | Phase 8: Remediation Core | v1.2 | Pending |
+| RMED-10 | Phase 8: Remediation Core | v1.2 | Pending |
+| RMED-11 | Phase 9: Restore & Rollback | v1.2 | Pending |
+| RMED-12 | Phase 9: Restore & Rollback | v1.2 | Pending |
+| RMED-13 | Phase 9: Restore & Rollback | v1.2 | Pending |
+| COMM-01 | Phase 10: Community Contribution | v1.2 | Pending |
+| COMM-02 | Phase 10: Community Contribution | v1.2 | Pending |
 
 **Coverage:**
-- v1 requirements: 55 total
-- Mapped to phases: 55
-- Unmapped: 0 ✓
+- v1 requirements: 56 total
+- Mapped to phases: 56
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-03*
-*Last updated: 2026-04-03 after initial definition + research corrections*
+*Last updated: 2026-04-03 after roadmap creation (10-phase fine-granularity structure)*
