@@ -58,7 +58,7 @@ Plans:
   5. `--since <duration>` flag filters the invocation ledger to the specified window (default 7d)
 **Plans:** 2 plans
 Plans:
-- [ ] 02-01-PLAN.md — Parser types, valibot schemas, duration parser, invocation extractor
+- [x] 02-01-PLAN.md — Parser types, valibot schemas, duration parser, invocation extractor
 - [ ] 02-02-PLAN.md — Session discovery (tinyglobby), streaming JSONL parser, ghost CLI wiring
 
 ### Phase 3: Inventory Scanner
