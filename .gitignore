@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# pnpm
+.pnpm-store/
+.pnpm-debug.log
+
+# Build output (tsdown)
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Vitest
+coverage/
+.vitest-cache/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Runtime
+*.pid
+*.seed
+
+# ccaudit runtime state (not part of source)
+.last-dry-run
