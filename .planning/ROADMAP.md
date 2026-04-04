@@ -106,7 +106,7 @@ Plans:
 **Plans:** 3 plans
 Plans:
 - [x] 05-01-PLAN.md — Report logic: health score, recommendation classifier, trend builder
-- [ ] 05-02-PLAN.md — Terminal rendering layer: table builders, header, score display
+- [x] 05-02-PLAN.md — Terminal rendering layer: table builders, header, score display
 - [ ] 05-03-PLAN.md — CLI command wiring: refactor ghost/mcp, create inventory/trend
 **UI hint**: yes
 
