@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 06-06-PLAN.md
-last_updated: "2026-04-04T16:51:14.149Z"
+stopped_at: Completed 06-05-PLAN.md
+last_updated: "2026-04-04T17:04:38.778Z"
 last_activity: 2026-04-04
 progress:
   total_phases: 10
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 20
-  completed_plans: 19
+  completed_plans: 20
   percent: 100
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 06 (output-control-polish) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 Status: Ready to execute
 Last activity: 2026-04-04
 
@@ -70,6 +70,7 @@ Progress: [████████████████████] 14/14 p
 | Phase 06-output-control-polish P02 | 7min | 2 tasks | 7 files |
 | Phase 06-output-control-polish P04 | 2min | 1 tasks | 2 files |
 | Phase 06-output-control-polish P06 | 4min | 3 tasks | 1 files |
+| Phase 06-output-control-polish P05 | 30min | 4 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -130,6 +131,11 @@ Recent decisions affecting current work:
 - [Phase 06-output-control-polish]: Repository URL sourced from git remote get-url origin (0xD-Fabio/ccaudit), not plan placeholder
 - [Phase 06-output-control-polish]: License set to MIT for v1.0 npm publication (ccusage-aligned)
 - [Phase 06-output-control-polish]: Gap #2 closure (Plan 06-06): restored scripts and devDependencies in apps/ccaudit/package.json via verbatim union with e3dbe01 metadata additions — sourced blocks from cb0932f (last pre-regression commit), preserved the resolved 0xD-Fabio/ccaudit remote URLs, documented clean-pkg-json's working-tree mutation side effect
+- [Phase 06-output-control-polish]: Coverage config lives on root vitest.config.ts only — vitest projects mode inherits coverage from root, zero duplication across per-project configs
+- [Phase 06-output-control-polish]: branches: 70 threshold is a deliberate compromise with inline rationale — defensive error paths (ENOENT, parse errors, stderr diagnostics) require elaborate fixtures; raising to 80 tracked as Phase 7+ tech debt
+- [Phase 06-output-control-polish]: json-summary reporter added to coverage.reporter so test -d coverage succeeds in CI — text/text-summary are stdout-only and leave no filesystem artifact
+- [Phase 06-output-control-polish]: CI coverage fix uses pnpm exec vitest --run --coverage (no dash-dash delimiter) — keeps root test script unchanged (TZ=UTC vitest) so local behavior is undisturbed
+- [Phase 06-output-control-polish]: Private-helper branch coverage pattern: exercise module-private formatTier/formatRecommendation/formatLastUsed/formatTokenShort via public render* entry points with dated fixtures instead of exporting the helpers
 
 ### Pending Todos
 
@@ -144,6 +150,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-04T16:51:14.147Z
-Stopped at: Completed 06-06-PLAN.md
+Last session: 2026-04-04T17:04:38.776Z
+Stopped at: Completed 06-05-PLAN.md
 Resume file: None

@@ -23,7 +23,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 3: Inventory Scanner** - Ghost detection across agents, skills, MCP servers, memory files
 - [ ] **Phase 4: Token Cost Attribution** - Per-item token estimates, confidence tiers, live MCP measurement
 - [ ] **Phase 5: Report & CLI Commands** - Ghost table, all subcommands, health score, recommendations
-- [ ] **Phase 6: Output Control & Polish** - Exit codes, NO_COLOR, quiet/verbose/ci/json/csv, release prep
+- [x] **Phase 6: Output Control & Polish** - Exit codes, NO_COLOR, quiet/verbose/ci/json/csv, release prep
 - [ ] **Phase 7: Dry-Run & Checkpoint** - Change plan preview, SHA-256 checkpoint, hash-based invalidation
 - [ ] **Phase 8: Remediation Core** - Archive, key-rename MCP disable, memory flagging, safety gates
 - [ ] **Phase 9: Restore & Rollback** - Full and partial restore from incremental manifest
@@ -123,12 +123,14 @@ Plans:
   5. README, npm metadata, and package are publication-ready (this is the v1.0 launch candidate)
   6. CI test job enforces an 80% coverage threshold via `vitest --coverage`; the job fails if coverage drops below the threshold
   7. CI matrix runs tests on both `ubuntu-latest` and `macos-latest`; all jobs pass on both platforms
-**Plans:** 4 plans
+**Plans:** 6 plans
 Plans:
 - [x] 06-01-PLAN.md — Terminal foundation: color control, CSV formatter, TSV quiet formatter, renderer updates
 - [x] 06-02-PLAN.md — Command wiring: shared args, output mode, exit codes, JSON envelope, CSV/quiet paths
 - [x] 06-03-PLAN.md — CI polish: @vitest/coverage-v8, OS matrix (ubuntu+macOS), 80% coverage thresholds
 - [x] 06-04-PLAN.md — Publication prep: README flag docs, CI examples, npm metadata (SC-5)
+- [x] 06-05-PLAN.md — Gap #1 closure: fix CI coverage invocation, move thresholds to vitest.config.ts, add terminal-table branch tests
+- [x] 06-06-PLAN.md — Gap #2 closure: restore apps/ccaudit scripts + devDependencies regression, regenerate dist/
 
 ### Phase 7: Dry-Run & Checkpoint
 **Goal**: Users can preview exactly what remediation would change without touching the filesystem, and the tool writes a hash-based checkpoint that gates future remediation
