@@ -123,11 +123,12 @@ Plans:
   5. README, npm metadata, and package are publication-ready (this is the v1.0 launch candidate)
   6. CI test job enforces an 80% coverage threshold via `vitest --coverage`; the job fails if coverage drops below the threshold
   7. CI matrix runs tests on both `ubuntu-latest` and `macos-latest`; all jobs pass on both platforms
-**Plans:** 3 plans
+**Plans:** 4 plans
 Plans:
 - [ ] 06-01-PLAN.md — Terminal foundation: color control, CSV formatter, TSV quiet formatter, renderer updates
 - [ ] 06-02-PLAN.md — Command wiring: shared args, output mode, exit codes, JSON envelope, CSV/quiet paths
 - [ ] 06-03-PLAN.md — CI polish: @vitest/coverage-v8, OS matrix (ubuntu+macOS), 80% coverage thresholds
+- [ ] 06-04-PLAN.md — Publication prep: README flag docs, CI examples, npm metadata (SC-5)
 
 ### Phase 7: Dry-Run & Checkpoint
 **Goal**: Users can preview exactly what remediation would change without touching the filesystem, and the tool writes a hash-based checkpoint that gates future remediation
@@ -186,7 +187,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 3. Inventory Scanner | v1.0 | 0/3 | Planning complete | - |
 | 4. Token Cost Attribution | v1.0 | 2/3 | In Progress|  |
 | 5. Report & CLI Commands | v1.0 | 0/4 | Gap closure | - |
-| 6. Output Control & Polish | v1.0 | 0/3 | Planning complete | - |
+| 6. Output Control & Polish | v1.0 | 0/4 | Planning complete | - |
 | 7. Dry-Run & Checkpoint | v1.1 | 0/0 | Not started | - |
 | 8. Remediation Core | v1.2 | 0/0 | Not started | - |
 | 9. Restore & Rollback | v1.2 | 0/0 | Not started | - |
