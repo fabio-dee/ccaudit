@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 07-01-PLAN.md
-last_updated: "2026-04-04T21:03:40.277Z"
+stopped_at: Completed 07-02-PLAN.md
+last_updated: "2026-04-04T21:14:25.920Z"
 last_activity: 2026-04-04
 progress:
   total_phases: 10
   completed_phases: 6
   total_plans: 23
-  completed_plans: 21
+  completed_plans: 22
   percent: 100
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 07 (dry-run-checkpoint) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-04-04
 
@@ -72,6 +72,7 @@ Progress: [████████████████████] 14/14 p
 | Phase 06-output-control-polish P06 | 4min | 3 tasks | 1 files |
 | Phase 06-output-control-polish P05 | 30min | 4 tasks | 5 files |
 | Phase 07-dry-run-checkpoint P01 | 14min | 3 tasks | 5 files |
+| Phase 07-dry-run-checkpoint P02 | 5min | 3 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -140,6 +141,10 @@ Recent decisions affecting current work:
 - [Phase 07-dry-run-checkpoint]: StatFn injection parameter on computeGhostHash enables D-14 cache verification in tests because vi.spyOn cannot intercept node:fs/promises ESM exports (module namespace non-configurable)
 - [Phase 07-dry-run-checkpoint]: MCP sourcePath cache uses Map<string, Promise<number>> not raw numbers - promise-valued memoization deduplicates concurrent Promise.all consumers where a synchronous number cache would race-miss
 - [Phase 07-dry-run-checkpoint]: Atomic write pattern (tmp-then-rename, 0o700 dir / 0o600 file, process.pid suffix) established in checkpoint.ts to be reused by Phase 8 for ~/.claude.json mutations per RMED-09
+- [Phase 07-dry-run-checkpoint]: Build-time CCAUDIT_VERSION via gen-version.mjs script + prebuild/pretest hooks (not tsdown define) — generated file _version.ts is git-ignored and regenerated on every build/test from package.json
+- [Phase 07-dry-run-checkpoint]: Single-decision-point dry-run branch placed after enrichScanResults and before calculateHealthScore — 4 output-mode sub-branches within the dry-run block instead of orthogonal forking across the inventory path
+- [Phase 07-dry-run-checkpoint]: Dry-run JSON envelope carries full changePlan + compact checkpoint projection (not just ghost_hash) — matches --csv row coverage and keeps --json --verbose non-redundant
+- [Phase 07-dry-run-checkpoint]: Stale project-reference dist .d.ts files from Plan 01 required manual rebuild during Task 1+3 typecheck — pre-existing repo hygiene issue, recommend adding pnpm -r exec tsc to Plan 03 preconditions
 
 ### Pending Todos
 
@@ -154,6 +159,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-04T21:03:40.275Z
-Stopped at: Completed 07-01-PLAN.md
+Last session: 2026-04-04T21:14:25.918Z
+Stopped at: Completed 07-02-PLAN.md
 Resume file: None

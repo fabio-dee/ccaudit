@@ -142,7 +142,7 @@ Plans:
   3. The checkpoint is invalidated when the ghost inventory hash changes (hash-based, not time-based expiry)
 **Plans:** 3 plans
 - [x] 07-01-PLAN.md — @ccaudit/internal remediation module: buildChangePlan, calculateDryRunSavings, computeGhostHash, writeCheckpoint, readCheckpoint + in-source tests
-- [ ] 07-02-PLAN.md — @ccaudit/terminal renderChangePlan renderer + CLI --dry-run flag wiring + CCAUDIT_VERSION prebuild injection
+- [x] 07-02-PLAN.md — @ccaudit/terminal renderChangePlan renderer + CLI --dry-run flag wiring + CCAUDIT_VERSION prebuild injection
 - [ ] 07-03-PLAN.md — End-to-end integration test (dry-run-command.test.ts) against tmpdir fixture + workspace coverage gate
 
 ### Phase 8: Remediation Core
