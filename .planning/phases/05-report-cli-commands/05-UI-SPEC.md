@@ -1,7 +1,8 @@
 ---
 phase: 5
 slug: report-cli-commands
-status: draft
+status: approved
+reviewed_at: 2026-04-04
 shadcn_initialized: false
 preset: none
 created: 2026-04-04
