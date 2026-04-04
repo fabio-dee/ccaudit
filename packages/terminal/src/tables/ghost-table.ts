@@ -1,4 +1,4 @@
-import pc from 'picocolors';
+import { colorize } from '../color.ts';
 import type { CategorySummary, TokenCostResult } from '@ccaudit/internal';
 import { formatTokenEstimate } from '@ccaudit/internal';
 
@@ -71,7 +71,7 @@ export function renderTopGhosts(ghosts: TokenCostResult[], maxItems: number = 5)
   const top = sorted.slice(0, maxItems);
   const lines: string[] = [];
 
-  lines.push(pc.bold('\u{1F6A8} Top ghosts by token cost:'));
+  lines.push(colorize.bold('\u{1F6A8} Top ghosts by token cost:'));
 
   for (let i = 0; i < top.length; i++) {
     const g = top[i]!;
@@ -91,8 +91,8 @@ export function renderTopGhosts(ghosts: TokenCostResult[], maxItems: number = 5)
  * Render the ghost command footer with two hint lines (dim per UI-SPEC).
  */
 export function renderGhostFooter(_sinceWindow: string): string {
-  const hint1 = pc.dim('See per-item details: ccaudit inventory');
-  const hint2 = pc.dim('Dry-run coming in v1.1: npx ccaudit@latest --dry-run');
+  const hint1 = colorize.dim('See per-item details: ccaudit inventory');
+  const hint2 = colorize.dim('Dry-run coming in v1.1: npx ccaudit@latest --dry-run');
   return `${hint1}\n${hint2}`;
 }
 

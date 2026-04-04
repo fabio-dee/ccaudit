@@ -1,4 +1,4 @@
-import pc from 'picocolors';
+import { colorize } from '../color.ts';
 import type { HealthScore } from '@ccaudit/internal';
 
 /**
@@ -17,13 +17,13 @@ export function renderHealthScore(health: HealthScore): string {
 
   switch (health.grade) {
     case 'Healthy':
-      return pc.green(pc.bold(label));
+      return colorize.green(colorize.bold(label));
     case 'Fair':
-      return pc.yellow(pc.bold(label));
+      return colorize.yellow(colorize.bold(label));
     case 'Poor':
-      return pc.red(pc.bold(label));
+      return colorize.red(colorize.bold(label));
     case 'Critical':
-      return pc.red(pc.bold(label));
+      return colorize.red(colorize.bold(label));
   }
 }
 

@@ -1,4 +1,4 @@
-import pc from 'picocolors';
+import { colorize } from '../color.ts';
 
 /**
  * Render a branded header line for a CLI command.
@@ -16,7 +16,7 @@ export function renderHeader(emoji: string, title: string, sinceWindow: string):
   const visualWidth = stripAnsi(headerText).length;
   const dividerWidth = Math.max(32, visualWidth);
   const divider = renderDivider(dividerWidth);
-  return `${pc.bold(headerText)}\n${divider}`;
+  return `${colorize.bold(headerText)}\n${divider}`;
 }
 
 /**
@@ -24,7 +24,7 @@ export function renderHeader(emoji: string, title: string, sinceWindow: string):
  * Uses U+2501 BOX DRAWINGS HEAVY HORIZONTAL.
  */
 export function renderDivider(width: number): string {
-  return pc.cyan('\u2501'.repeat(width));
+  return colorize.cyan('\u2501'.repeat(width));
 }
 
 /**

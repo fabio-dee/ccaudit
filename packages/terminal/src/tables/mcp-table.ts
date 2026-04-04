@@ -1,5 +1,5 @@
 import Table from 'cli-table3';
-import pc from 'picocolors';
+import { colorize, getTableStyle } from '../color.ts';
 import type { TokenCostResult } from '@ccaudit/internal';
 import { classifyRecommendation, formatTokenEstimate } from '@ccaudit/internal';
 
@@ -15,7 +15,7 @@ export function renderMcpTable(results: TokenCostResult[]): string {
   const table = new Table({
     head: ['Server', 'Scope', 'Tier', 'Invocations', 'Last Used', '~Token Cost', 'Action'],
     colAligns: ['left', 'left', 'center', 'right', 'right', 'right', 'center'],
-    style: { head: ['cyan'] },
+    style: getTableStyle(),
     wordWrap: true,
   });
 
@@ -45,9 +45,9 @@ export function renderMcpTable(results: TokenCostResult[]): string {
  */
 function formatTier(tier: string): string {
   switch (tier) {
-    case 'definite-ghost': return pc.red('[GHOST]');
-    case 'likely-ghost': return pc.yellow('[LIKELY]');
-    case 'used': return pc.green('[ACTIVE]');
+    case 'definite-ghost': return colorize.red('[GHOST]');
+    case 'likely-ghost': return colorize.yellow('[LIKELY]');
+    case 'used': return colorize.green('[ACTIVE]');
     default: return tier;
   }
 }
@@ -57,9 +57,9 @@ function formatTier(tier: string): string {
  */
 function formatRecommendation(rec: string): string {
   switch (rec) {
-    case 'archive': return pc.red('Archive');
-    case 'monitor': return pc.yellow('Monitor');
-    case 'keep': return pc.green('Keep');
+    case 'archive': return colorize.red('Archive');
+    case 'monitor': return colorize.yellow('Monitor');
+    case 'keep': return colorize.green('Keep');
     default: return rec;
   }
 }

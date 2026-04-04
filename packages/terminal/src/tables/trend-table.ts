@@ -1,4 +1,5 @@
 import Table from 'cli-table3';
+import { getTableStyle } from '../color.ts';
 import type { TrendBucket } from '@ccaudit/internal';
 
 /**
@@ -14,7 +15,7 @@ export function renderTrendTable(buckets: TrendBucket[]): string {
   const table = new Table({
     head: ['Period', 'Agents', 'Skills', 'MCP', 'Total'],
     colAligns: ['left', 'right', 'right', 'right', 'right'],
-    style: { head: ['cyan'] },
+    style: getTableStyle(),
     wordWrap: true,
   });
 
