@@ -31,9 +31,9 @@ Show users exactly how many tokens their ghost inventory wastes — and give the
 ### Active
 
 **v1.0 — Analysis (read-only)**
-- [ ] Calculate per-item token cost estimates (embedded `mcp-token-estimates.json`, community-maintained)
+- [x] Calculate per-item token cost estimates (embedded `mcp-token-estimates.json`, community-maintained) (Validated in Phase 4: Token Cost Attribution)
 - [ ] Render ghost inventory table with Defined / Used / Ghost / Token-cost columns per category; show `lastUsed` date in every ghost row
-- [ ] All token estimates labeled `~` prefix ("~15k tokens (estimated)") — never bare numbers; show "estimated" vs "measured" vs "community-reported" confidence
+- [x] All token estimates labeled `~` prefix ("~15k tokens (estimated)") — never bare numbers; show "estimated" vs "measured" vs "community-reported" confidence (Validated in Phase 4: Token Cost Attribution)
 - [ ] Health score (0–100) summary: single shareable number, README badge-ready, CI gate semantics
 - [ ] Exit codes: 0 = no ghosts, 1 = ghosts found (enables CI/pre-commit use)
 - [ ] `NO_COLOR` env var and `--no-color` flag (ANSI-free output for piped/CI contexts)
@@ -42,7 +42,7 @@ Show users exactly how many tokens their ghost inventory wastes — and give the
 - [ ] `--ci` flag (combines exit-code + quiet + JSON for GitHub Actions / CI pipelines)
 - [ ] `--json` and `--csv` export on all read commands
 - [ ] `npx ccaudit ghost` (default), `ccaudit inventory`, `ccaudit mcp`, `ccaudit trend`
-- [ ] `ccaudit mcp --live` for exact token counts via live MCP connection (must ship v1.0 — prevents "estimates are wrong" narrative)
+- [x] `ccaudit mcp --live` for exact token counts via live MCP connection (must ship v1.0 — prevents "estimates are wrong" narrative) (Validated in Phase 4: Token Cost Attribution)
 
 
 **v1.1 — Dry-run**
@@ -148,4 +148,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-04 after Phase 3 completion*
+*Last updated: 2026-04-04 after Phase 4 completion*
