@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: Phase 5 context gathered
-last_updated: "2026-04-04T10:08:19.283Z"
+status: executing
+stopped_at: Completed 05-01-PLAN.md
+last_updated: "2026-04-04T10:49:34.677Z"
 last_activity: 2026-04-04
 progress:
   total_phases: 10
   completed_phases: 4
-  total_plans: 10
-  completed_plans: 10
+  total_plans: 13
+  completed_plans: 11
   percent: 0
 ---
 
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-03)
 
 **Core value:** Show users exactly how many tokens their ghost inventory wastes -- and give them one safe, reversible command to reclaim them.
-**Current focus:** Phase 04 — token-cost-attribution
+**Current focus:** Phase 05 — report-cli-commands
 
 ## Current Position
 
-Phase: 5
-Plan: Not started
-Status: Phase complete — ready for verification
+Phase: 05 (report-cli-commands) — EXECUTING
+Plan: 2 of 3
+Status: Ready to execute
 Last activity: 2026-04-04
 
 Progress: [..........] 0%
@@ -61,6 +61,7 @@ Progress: [..........] 0%
 | Phase 04 P02 | 2min | 1 tasks | 1 files |
 | Phase 04 P01 | 4min | 2 tasks | 7 files |
 | Phase 04 P03 | 5min | 2 tasks | 6 files |
+| Phase 05 P01 | 5min | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -100,6 +101,9 @@ Recent decisions affecting current work:
 - [Phase 04]: enrichScanResults uses Promise.all for parallel per-category token estimation
 - [Phase 04]: Skill token cap at 500 with source annotation when capped
 - [Phase 04]: MCP --live replaces estimate with measured value on success, keeps estimate on failure
+- [Phase 05]: Health score penalty weights: definite*3 cap 60, likely*1 cap 20, token ratio cap 20
+- [Phase 05]: Trend granularity auto-selects: daily for <=7d, weekly for >7d with Monday-aligned weeks
+- [Phase 05]: Integration test scaffold uses node:os tmpdir for portable fixtures
 
 ### Pending Todos
 
@@ -114,6 +118,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-04T10:08:19.280Z
-Stopped at: Phase 5 context gathered
-Resume file: .planning/phases/05-report-cli-commands/05-CONTEXT.md
+Last session: 2026-04-04T10:49:34.675Z
+Stopped at: Completed 05-01-PLAN.md
+Resume file: None

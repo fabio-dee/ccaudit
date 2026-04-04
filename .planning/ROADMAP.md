@@ -105,7 +105,7 @@ Plans:
   6. Integration tests exercise the full `ghost` command path using a mock filesystem (tmp directory) and fixture JSONL files, asserting on the rendered output columns and row counts
 **Plans:** 3 plans
 Plans:
-- [ ] 05-01-PLAN.md — Report logic: health score, recommendation classifier, trend builder
+- [x] 05-01-PLAN.md — Report logic: health score, recommendation classifier, trend builder
 - [ ] 05-02-PLAN.md — Terminal rendering layer: table builders, header, score display
 - [ ] 05-03-PLAN.md — CLI command wiring: refactor ghost/mcp, create inventory/trend
 **UI hint**: yes

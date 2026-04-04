@@ -46,9 +46,9 @@
 - [ ] **REPT-01**: Default command (`npx ccaudit`) shows ghost inventory table: Defined / Used / Ghost / ~Token-cost columns per category
 - [ ] **REPT-02**: `ccaudit inventory` shows full inventory with all usage stats
 - [ ] **REPT-03**: `ccaudit mcp` shows MCP-specific detail view (token cost + frequency)
-- [ ] **REPT-04**: `ccaudit trend` shows invocation frequency over time
-- [ ] **REPT-05**: Health score (0-100) displayed in all report views; README badge-ready; CI gate semantics
-- [ ] **REPT-06**: Per-item recommendations shown: Archive / Monitor / Keep
+- [x] **REPT-04**: `ccaudit trend` shows invocation frequency over time
+- [x] **REPT-05**: Health score (0-100) displayed in all report views; README badge-ready; CI gate semantics
+- [x] **REPT-06**: Per-item recommendations shown: Archive / Monitor / Keep
 - [ ] **REPT-07**: `--since` window displayed prominently in output headers: "Ghosts (no invocations in past 7 days)"
 
 ### Output Control
