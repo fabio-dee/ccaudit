@@ -13,8 +13,99 @@ export async function scanMemoryFiles(
   claudePaths: ClaudePaths,
   projectPaths: string[],
 ): Promise<InventoryItem[]> {
-  // TODO: implement
-  throw new Error('Not implemented');
+  const items: InventoryItem[] = [];
+
+  // 1. Global CLAUDE.md files
+  for (const base of [claudePaths.legacy, claudePaths.xdg]) {
+    const claudeMdPath = path.join(base, 'CLAUDE.md');
+    try {
+      const s = await stat(claudeMdPath);
+      items.push({
+        name: 'CLAUDE.md',
+        path: claudeMdPath,
+        scope: 'global',
+        category: 'memory',
+        projectPath: null,
+        mtimeMs: s.mtimeMs,
+      });
+    } catch {
+      // File doesn't exist -- silently skip
+    }
+  }
+
+  // 2. Global rules/ files
+  for (const base of [claudePaths.legacy, claudePaths.xdg]) {
+    const rulesDir = path.join(base, 'rules');
+    try {
+      const entries = await readdir(rulesDir);
+      for (const entry of entries) {
+        if (!entry.endsWith('.md')) continue;
+        const filePath = path.join(rulesDir, entry);
+        try {
+          const s = await stat(filePath);
+          items.push({
+            name: entry,
+            path: filePath,
+            scope: 'global',
+            category: 'memory',
+            projectPath: null,
+            mtimeMs: s.mtimeMs,
+          });
+        } catch {
+          // File disappeared between readdir and stat -- skip
+        }
+      }
+    } catch {
+      // rules/ directory doesn't exist -- skip
+    }
+  }
+
+  // 3. Project CLAUDE.md files
+  for (const projPath of projectPaths) {
+    const projClaudeMd = path.join(projPath, 'CLAUDE.md');
+    try {
+      const s = await stat(projClaudeMd);
+      items.push({
+        name: 'CLAUDE.md',
+        path: projClaudeMd,
+        scope: 'project',
+        category: 'memory',
+        projectPath: projPath,
+        mtimeMs: s.mtimeMs,
+      });
+    } catch {
+      // File doesn't exist -- skip
+    }
+  }
+
+  // 4. Project .claude/rules/ files
+  for (const projPath of projectPaths) {
+    const rulesDir = path.join(projPath, '.claude', 'rules');
+    try {
+      const entries = await readdir(rulesDir);
+      for (const entry of entries) {
+        if (!entry.endsWith('.md')) continue;
+        const filePath = path.join(rulesDir, entry);
+        try {
+          const s = await stat(filePath);
+          items.push({
+            name: entry,
+            path: filePath,
+            scope: 'project',
+            category: 'memory',
+            projectPath: projPath,
+            mtimeMs: s.mtimeMs,
+          });
+        } catch {
+          // File disappeared between readdir and stat -- skip
+        }
+      }
+    } catch {
+      // rules/ directory doesn't exist -- skip
+    }
+  }
+
+  return items;
 }
 
 if (import.meta.vitest) {

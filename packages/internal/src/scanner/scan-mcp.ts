@@ -24,8 +24,13 @@ export interface ClaudeConfig {
  * Returns an empty object on any error (missing file, corrupt JSON).
  */
 export async function readClaudeConfig(configPath?: string): Promise<ClaudeConfig> {
-  // TODO: implement
-  throw new Error('Not implemented');
+  const resolved = configPath ?? path.join(homedir(), '.claude.json');
+  try {
+    const raw = await readFile(resolved, 'utf-8');
+    return JSON.parse(raw) as ClaudeConfig;
+  } catch {
+    return {}; // Missing or corrupt -- return empty
+  }
 }
 
 /**
@@ -41,8 +46,66 @@ export async function scanMcpServers(
   claudeConfigPath: string | undefined,
   projectPaths: string[],
 ): Promise<InventoryItem[]> {
-  // TODO: implement
-  throw new Error('Not implemented');
+  const config = await readClaudeConfig(claudeConfigPath);
+  const items: InventoryItem[] = [];
+  const seen = new Set<string>();
+  const resolvedConfigPath = claudeConfigPath ?? path.join(homedir(), '.claude.json');
+
+  // 1. Global mcpServers (root level)
+  for (const serverName of Object.keys(config.mcpServers ?? {})) {
+    const key = `global::${serverName}`;
+    seen.add(key);
+    items.push({
+      name: serverName,
+      path: resolvedConfigPath,
+      scope: 'global',
+      category: 'mcp-server',
+      projectPath: null,
+    });
+  }
+
+  // 2. Per-project mcpServers from ~/.claude.json
+  for (const [projPath, projConfig] of Object.entries(config.projects ?? {})) {
+    for (const serverName of Object.keys(projConfig.mcpServers ?? {})) {
+      const key = `${projPath}::${serverName}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        items.push({
+          name: serverName,
+          path: resolvedConfigPath,
+          scope: 'project',
+          category: 'mcp-server',
+          projectPath: projPath,
+        });
+      }
+    }
+  }
+
+  // 3. .mcp.json files at project roots
+  for (const projPath of projectPaths) {
+    const mcpJsonPath = path.join(projPath, '.mcp.json');
+    try {
+      const raw = await readFile(mcpJsonPath, 'utf-8');
+      const mcpConfig = JSON.parse(raw) as { mcpServers?: Record<string, unknown> };
+      for (const serverName of Object.keys(mcpConfig.mcpServers ?? {})) {
+        const key = `${projPath}::${serverName}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          items.push({
+            name: serverName,
+            path: mcpJsonPath,
+            scope: 'project',
+            category: 'mcp-server',
+            projectPath: projPath,
+          });
+        }
+      }
+    } catch {
+      continue; // No .mcp.json or corrupt -- skip silently
+    }
+  }
+
+  return items;
 }
 
 if (import.meta.vitest) {
