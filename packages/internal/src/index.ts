@@ -82,3 +82,16 @@ export type {
   McpServerConfig,
   McpToolDefinition,
 } from './token/index.ts';
+
+// Report module (Phase 5)
+export {
+  calculateHealthScore,
+  classifyRecommendation,
+  buildTrendData,
+} from './report/index.ts';
+export type {
+  HealthScore,
+  HealthGrade,
+  CategorySummary,
+  TrendBucket,
+} from './report/index.ts';
