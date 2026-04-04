@@ -98,6 +98,7 @@ Plans:
   3. Health score (0-100) appears in all report views and is suitable for README badges and CI gate semantics
   4. Per-item recommendations (Archive / Monitor / Keep) are shown in output
   5. `--since` window is displayed prominently in output headers (e.g., "Ghosts (no invocations in past 7 days)")
+  6. Integration tests exercise the full `ghost` command path using a mock filesystem (tmp directory) and fixture JSONL files, asserting on the rendered output columns and row counts
 **Plans**: TBD
 **UI hint**: yes
 
@@ -111,6 +112,8 @@ Plans:
   3. `--ci` flag combines exit-code + quiet + JSON for GitHub Actions pipelines
   4. `--json` and `--csv` flags produce structured and spreadsheet-compatible export on all read commands
   5. README, npm metadata, and package are publication-ready (this is the v1.0 launch candidate)
+  6. CI test job enforces an 80% coverage threshold via `vitest --coverage`; the job fails if coverage drops below the threshold
+  7. CI matrix runs tests on both `ubuntu-latest` and `macos-latest`; all jobs pass on both platforms
 **Plans**: TBD
 
 ### Phase 7: Dry-Run & Checkpoint
@@ -136,6 +139,7 @@ Plans:
   6. All `~/.claude.json` mutations use atomic write-to-temp-then-rename pattern
   7. An incremental restore manifest is written as operations complete (crash mid-operation allows partial restore)
   8. Triple confirmation UX: proceed? -> are you sure? -> type "I accept full responsibility"
+  9. CI matrix extended to `windows-latest`; `fs.rename` EPERM retry logic verified on Windows with exponential backoff test
 **Plans**: TBD
 
 ### Phase 9: Restore & Rollback
