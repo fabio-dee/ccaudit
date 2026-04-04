@@ -108,7 +108,7 @@ Plans:
 - [x] 05-01-PLAN.md — Report logic: health score, recommendation classifier, trend builder
 - [x] 05-02-PLAN.md — Terminal rendering layer: table builders, header, score display
 - [x] 05-03-PLAN.md — CLI command wiring: refactor ghost/mcp, create inventory/trend
-- [ ] 05-04-PLAN.md — Gap closure: health score in trend command, end-to-end pipeline test
+- [x] 05-04-PLAN.md — Gap closure: health score in trend command, end-to-end pipeline test
 **UI hint**: yes
 
 ### Phase 6: Output Control & Polish
