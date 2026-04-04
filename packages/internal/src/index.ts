@@ -60,3 +60,25 @@ export type {
   InvocationSummary,
 } from './scanner/index.ts';
 export type { ClaudeConfig } from './scanner/index.ts';
+
+// Token module (Phase 4)
+export {
+  enrichScanResults,
+  calculateTotalOverhead,
+  lookupMcpEstimate,
+  getMcpEstimatesMap,
+  estimateFromFileSize,
+  formatTokenEstimate,
+  formatTotalOverhead,
+  listMcpTools,
+  measureMcpTokens,
+  BYTES_PER_TOKEN,
+  CONTEXT_WINDOW_SIZE,
+} from './token/index.ts';
+export type {
+  TokenEstimate,
+  TokenCostResult,
+  McpTokenEntry,
+  McpServerConfig,
+  McpToolDefinition,
+} from './token/index.ts';
