@@ -95,3 +95,20 @@ export type {
   CategorySummary,
   TrendBucket,
 } from './report/index.ts';
+
+// Remediation module (Phase 7)
+export {
+  buildChangePlan,
+  calculateDryRunSavings,
+  computeGhostHash,
+  resolveCheckpointPath,
+  writeCheckpoint,
+  readCheckpoint,
+} from './remediation/index.ts';
+export type {
+  ChangePlan,
+  ChangePlanItem,
+  ChangePlanAction,
+  Checkpoint,
+  ReadCheckpointResult,
+} from './remediation/index.ts';
