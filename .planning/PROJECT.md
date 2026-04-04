@@ -22,19 +22,19 @@ Show users exactly how many tokens their ghost inventory wastes — and give the
 - [x] Silent skip of malformed JSONL lines — never throw (Validated in Phase 2: JSONL Parser)
 - [x] Dual path support: XDG (`~/.config/claude/`) and legacy (`~/.claude/`) (Validated in Phase 2: JSONL Parser)
 - [x] `--since <duration>` flag on all read commands (default: 7d); display window prominently in output header (Validated in Phase 2: JSONL Parser — parser + ghost command wired)
+- [x] Detect ghost agents: files in `~/.claude/agents/` and `.claude/agents/` with zero invocations in the time window (Validated in Phase 3: Inventory Scanner)
+- [x] Detect ghost skills: `Skill` tool_use entries matched against skill files; absent = ghost (Validated in Phase 3: Inventory Scanner)
+- [x] Detect ghost MCP servers: `mcp__<server>__*` tool_use entries matched against `~/.claude.json` (root `mcpServers` + `projects.<path>.mcpServers`) and `.mcp.json`; absent = ghost (Validated in Phase 3: Inventory Scanner)
+- [x] Detect stale memory files: CLAUDE.md and rules/ files with no recent modification (mod-date heuristic) (Validated in Phase 3: Inventory Scanner)
+- [x] "Likely ghost" (7–30d) vs "definite ghost" (>30d) tiering in default output (Validated in Phase 3: Inventory Scanner)
 
 ### Active
 
 **v1.0 — Analysis (read-only)**
-- [ ] Detect ghost agents: files in `~/.claude/agents/` and `.claude/agents/` with zero invocations in the time window
-- [ ] Detect ghost skills: `Skill` tool_use entries matched against skill files; absent = ghost
-- [ ] Detect ghost MCP servers: `mcp__<server>__*` tool_use entries matched against `~/.claude.json` (root `mcpServers` + `projects.<path>.mcpServers`) and `.mcp.json`; absent = ghost
-- [ ] Detect stale memory files: CLAUDE.md and rules/ files with no recent modification (mod-date heuristic)
 - [ ] Calculate per-item token cost estimates (embedded `mcp-token-estimates.json`, community-maintained)
 - [ ] Render ghost inventory table with Defined / Used / Ghost / Token-cost columns per category; show `lastUsed` date in every ghost row
 - [ ] All token estimates labeled `~` prefix ("~15k tokens (estimated)") — never bare numbers; show "estimated" vs "measured" vs "community-reported" confidence
 - [ ] Health score (0–100) summary: single shareable number, README badge-ready, CI gate semantics
-- [ ] "Likely ghost" (7–30d) vs "definite ghost" (>30d) tiering in default output
 - [ ] Exit codes: 0 = no ghosts, 1 = ghosts found (enables CI/pre-commit use)
 - [ ] `NO_COLOR` env var and `--no-color` flag (ANSI-free output for piped/CI contexts)
 - [ ] `--quiet` / `-q` flag (data-only output for scripts)
@@ -148,4 +148,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-03 after Phase 2 completion*
+*Last updated: 2026-04-04 after Phase 3 completion*
