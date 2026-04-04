@@ -86,7 +86,11 @@ Plans:
   2. Confidence tier is shown per estimate: "estimated" / "measured" / "community-reported"
   3. `ccaudit mcp --live` connects to running MCP servers and returns exact token counts (verification path available at launch)
   4. Total ghost overhead is displayed as both absolute token count and percentage of the 200k context window
-**Plans**: TBD
+**Plans:** 3 plans
+Plans:
+- [ ] 04-01-PLAN.md — Token types, bundled JSON data, file-size estimator, format functions
+- [ ] 04-02-PLAN.md — Minimal MCP JSON-RPC client for --live measurement
+- [ ] 04-03-PLAN.md — Enrichment pipeline, ghost command token display, mcp subcommand
 
 ### Phase 5: Report & CLI Commands
 **Goal**: Users can run `ccaudit ghost`, `ccaudit inventory`, `ccaudit mcp`, and `ccaudit trend` to see ghost tables with Defined/Used/Ghost/Token-cost columns, a health score, per-item recommendations, and the `--since` window prominently displayed
@@ -171,7 +175,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 1. Foundation & Scaffold | v1.0 | 0/2 | Planning complete | - |
 | 2. JSONL Parser | v1.0 | 0/2 | Planning complete | - |
 | 3. Inventory Scanner | v1.0 | 0/3 | Planning complete | - |
-| 4. Token Cost Attribution | v1.0 | 0/0 | Not started | - |
+| 4. Token Cost Attribution | v1.0 | 0/3 | Planning complete | - |
 | 5. Report & CLI Commands | v1.0 | 0/0 | Not started | - |
 | 6. Output Control & Polish | v1.0 | 0/0 | Not started | - |
 | 7. Dry-Run & Checkpoint | v1.1 | 0/0 | Not started | - |
