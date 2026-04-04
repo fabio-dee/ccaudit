@@ -128,7 +128,7 @@ Plans:
 - [x] 06-01-PLAN.md — Terminal foundation: color control, CSV formatter, TSV quiet formatter, renderer updates
 - [x] 06-02-PLAN.md — Command wiring: shared args, output mode, exit codes, JSON envelope, CSV/quiet paths
 - [x] 06-03-PLAN.md — CI polish: @vitest/coverage-v8, OS matrix (ubuntu+macOS), 80% coverage thresholds
-- [ ] 06-04-PLAN.md — Publication prep: README flag docs, CI examples, npm metadata (SC-5)
+- [x] 06-04-PLAN.md — Publication prep: README flag docs, CI examples, npm metadata (SC-5)
 
 ### Phase 7: Dry-Run & Checkpoint
 **Goal**: Users can preview exactly what remediation would change without touching the filesystem, and the tool writes a hash-based checkpoint that gates future remediation
