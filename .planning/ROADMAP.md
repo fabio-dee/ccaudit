@@ -71,7 +71,11 @@ Plans:
   3. Stale memory files (CLAUDE.md, `rules/` files with no modification in >30 days) are detected via file mod-date heuristic
   4. Each ghost item shows `lastUsed` date and is classified as "likely ghost" (7-30d) or "definite ghost" (>30d / never)
   5. Per-project breakdown is available alongside the global cross-project view
-**Plans**: TBD
+**Plans:** 3 plans
+Plans:
+- [ ] 03-01-PLAN.md — Scanner type contracts, ghost classification, invocation map builder
+- [ ] 03-02-PLAN.md — Four scanner modules (agents, skills, MCP servers, memory files)
+- [ ] 03-03-PLAN.md — Coordinator, barrel exports, ghost CLI wiring
 
 ### Phase 4: Token Cost Attribution
 **Goal**: Every ghost item has an estimated token cost from the bundled `mcp-token-estimates.json`, with clear confidence labeling and a `--live` path for exact MCP server measurements
@@ -162,7 +166,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 |-------|-----------|----------------|--------|-----------|
 | 1. Foundation & Scaffold | v1.0 | 0/2 | Planning complete | - |
 | 2. JSONL Parser | v1.0 | 0/2 | Planning complete | - |
-| 3. Inventory Scanner | v1.0 | 0/0 | Not started | - |
+| 3. Inventory Scanner | v1.0 | 0/3 | Planning complete | - |
 | 4. Token Cost Attribution | v1.0 | 0/0 | Not started | - |
 | 5. Report & CLI Commands | v1.0 | 0/0 | Not started | - |
 | 6. Output Control & Polish | v1.0 | 0/0 | Not started | - |
