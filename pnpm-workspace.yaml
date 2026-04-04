@@ -15,6 +15,7 @@ catalog:
   # Build
   tsdown: ^0.21.7
   vitest: ^4.1.2
+  '@vitest/coverage-v8': ^4.1.2
   clean-pkg-json: ^1.4.1
   typescript: ^6.0.2
 

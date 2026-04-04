@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "catalog:",
     "cli-table3": "catalog:",
     "picocolors": "catalog:",
     "@ccaudit/internal": "workspace:*",

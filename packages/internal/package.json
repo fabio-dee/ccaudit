@@ -11,6 +11,7 @@
     "typecheck": "tsc"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "catalog:",
     "valibot": "catalog:",
     "tinyglobby": "catalog:",
     "@praha/byethrow": "catalog:",

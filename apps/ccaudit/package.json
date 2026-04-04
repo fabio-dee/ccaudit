@@ -27,6 +27,7 @@
   "devDependencies": {
     "@ccaudit/internal": "workspace:*",
     "@ccaudit/terminal": "workspace:*",
+    "@vitest/coverage-v8": "catalog:",
     "gunshi": "catalog:",
     "valibot": "catalog:",
     "tsdown": "catalog:",
