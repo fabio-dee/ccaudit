@@ -40,11 +40,117 @@ export interface McpToolDefinition {
  * @throws If server times out, command not found, or non-stdio transport
  */
 export async function listMcpTools(
-  _config: McpServerConfig,
-  _timeoutMs?: number,
+  config: McpServerConfig,
+  timeoutMs: number = 15_000,
 ): Promise<McpToolDefinition[]> {
-  // TODO: implement
-  throw new Error('Not implemented');
+  // Reject non-stdio transports immediately
+  if (config.type && config.type !== 'stdio') {
+    throw new Error(
+      `Live measurement not available for ${config.type} transport. Use estimate.`,
+    );
+  }
+
+  return new Promise<McpToolDefinition[]>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let settled = false;
+
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      fn();
+    };
+
+    // Spawn the MCP server child process
+    const child = spawn(config.command, config.args ?? [], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, ...config.env },
+    });
+
+    // Handle spawn errors (command not found, permission denied)
+    child.on('error', (err) => {
+      settle(() => reject(new Error(`MCP server spawn failed: ${err.message}`)));
+    });
+
+    // Handle unexpected exit
+    child.on('exit', (code) => {
+      if (!settled && code !== null && code !== 0) {
+        settle(() =>
+          reject(new Error(`MCP server exited with code ${code}`)),
+        );
+      }
+    });
+
+    // Set up timeout
+    timer = setTimeout(() => {
+      settle(() => {
+        child.kill();
+        reject(new Error(`MCP server timeout after ${timeoutMs}ms`));
+      });
+    }, timeoutMs);
+
+    // Parse newline-delimited JSON from stdout
+    const rl = createInterface({ input: child.stdout });
+
+    let state: 'awaiting-init' | 'awaiting-tools' = 'awaiting-init';
+
+    rl.on('line', (line) => {
+      // Filter out non-JSON lines (some servers print startup messages)
+      const trimmed = line.trim();
+      if (!trimmed || !trimmed.startsWith('{')) return;
+
+      let msg: { jsonrpc?: string; id?: number; result?: Record<string, unknown> };
+      try {
+        msg = JSON.parse(trimmed);
+      } catch {
+        return; // Skip unparseable lines
+      }
+
+      if (state === 'awaiting-init' && msg.id === 1) {
+        // Received initialize response -- send initialized notification + tools/list
+        state = 'awaiting-tools';
+
+        const initializedNotification = JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'notifications/initialized',
+        }) + '\n';
+
+        const toolsListRequest = JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'tools/list',
+          params: {},
+        }) + '\n';
+
+        child.stdin.write(initializedNotification);
+        child.stdin.write(toolsListRequest);
+      } else if (state === 'awaiting-tools' && msg.id === 2) {
+        // Received tools/list response -- extract tools and resolve
+        const result = msg.result as { tools?: McpToolDefinition[] } | undefined;
+        const tools: McpToolDefinition[] = result?.tools ?? [];
+
+        settle(() => {
+          rl.close();
+          child.kill();
+          resolve(tools);
+        });
+      }
+    });
+
+    // Send initialize request
+    const initRequest = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-06-18',
+        capabilities: {},
+        clientInfo: { name: 'ccaudit', version: '0.0.1' },
+      },
+    }) + '\n';
+
+    child.stdin.write(initRequest);
+  });
 }
 
 /**
@@ -58,21 +164,34 @@ export async function listMcpTools(
  * @returns Token measurement with confidence 'measured'
  */
 export async function measureMcpTokens(
-  _config: McpServerConfig,
-  _timeoutMs?: number,
+  config: McpServerConfig,
+  timeoutMs?: number,
 ): Promise<{
   tokens: number;
   confidence: 'measured';
   source: string;
   toolCount: number;
 }> {
-  // TODO: implement
-  throw new Error('Not implemented');
-}
+  const tools = await listMcpTools(config, timeoutMs);
 
-// Suppress unused import warnings for RED phase
-void spawn;
-void createInterface;
+  // Sum character lengths of tool definitions, divide by 4 for token estimate
+  let totalChars = 0;
+  for (const tool of tools) {
+    totalChars +=
+      tool.name.length +
+      (tool.description ?? '').length +
+      JSON.stringify(tool.inputSchema ?? {}).length;
+  }
+
+  const tokens = Math.ceil(totalChars / 4);
+
+  return {
+    tokens,
+    confidence: 'measured',
+    source: 'live measurement via tools/list',
+    toolCount: tools.length,
+  };
+}
 
 if (import.meta.vitest) {
   const { describe, it, expect } = import.meta.vitest;
