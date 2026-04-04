@@ -71,7 +71,7 @@ Plans:
   3. Stale memory files (CLAUDE.md, `rules/` files with no modification in >30 days) are detected via file mod-date heuristic
   4. Each ghost item shows `lastUsed` date and is classified as "likely ghost" (7-30d) or "definite ghost" (>30d / never)
   5. Per-project breakdown is available alongside the global cross-project view
-**Plans:** 3 plans
+**Plans:** 4 plans
 Plans:
 - [x] 03-01-PLAN.md — Scanner type contracts, ghost classification, invocation map builder
 - [x] 03-02-PLAN.md — Four scanner modules (agents, skills, MCP servers, memory files)
@@ -103,11 +103,12 @@ Plans:
   4. Per-item recommendations (Archive / Monitor / Keep) are shown in output
   5. `--since` window is displayed prominently in output headers (e.g., "Ghosts (no invocations in past 7 days)")
   6. Integration tests exercise the full `ghost` command path using a mock filesystem (tmp directory) and fixture JSONL files, asserting on the rendered output columns and row counts
-**Plans:** 3 plans
+**Plans:** 4 plans
 Plans:
 - [x] 05-01-PLAN.md — Report logic: health score, recommendation classifier, trend builder
 - [x] 05-02-PLAN.md — Terminal rendering layer: table builders, header, score display
 - [x] 05-03-PLAN.md — CLI command wiring: refactor ghost/mcp, create inventory/trend
+- [ ] 05-04-PLAN.md — Gap closure: health score in trend command, end-to-end pipeline test
 **UI hint**: yes
 
 ### Phase 6: Output Control & Polish
@@ -180,7 +181,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 2. JSONL Parser | v1.0 | 0/2 | Planning complete | - |
 | 3. Inventory Scanner | v1.0 | 0/3 | Planning complete | - |
 | 4. Token Cost Attribution | v1.0 | 2/3 | In Progress|  |
-| 5. Report & CLI Commands | v1.0 | 0/3 | Planning complete | - |
+| 5. Report & CLI Commands | v1.0 | 0/4 | Gap closure | - |
 | 6. Output Control & Polish | v1.0 | 0/0 | Not started | - |
 | 7. Dry-Run & Checkpoint | v1.1 | 0/0 | Not started | - |
 | 8. Remediation Core | v1.2 | 0/0 | Not started | - |
