@@ -3,8 +3,9 @@
  *
  * Tests validate rendered output from @ccaudit/terminal renderers
  * and @ccaudit/internal report functions given known fixture data.
- * Full pipeline tests (discover -> parse -> scan) are avoided per
- * 05-RESEARCH.md pitfall 6 -- they're too brittle for integration tests.
+ * Includes both renderer-level tests with fixture data and a full pipeline
+ * test that exercises discover -> parse -> scan -> enrich against a mock
+ * filesystem in a temp directory.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdir, writeFile, readdir, rm, stat } from 'node:fs/promises';
@@ -22,8 +23,12 @@ import {
 import {
   calculateHealthScore,
   classifyRecommendation,
+  discoverSessionFiles,
+  parseSession,
+  scanAll,
+  enrichScanResults,
 } from '@ccaudit/internal';
-import type { TokenCostResult, CategorySummary } from '@ccaudit/internal';
+import type { TokenCostResult, CategorySummary, ClaudePaths, InvocationRecord } from '@ccaudit/internal';
 
 // ── Fixture Helpers ────────────────────────────────────────────────
 
@@ -161,14 +166,11 @@ async function setupMockFilesystem(): Promise<void> {
   await mkdir(sessionsDir, { recursive: true });
 
   // Agent 1: "code-reviewer" -- will be marked as used (has invocation)
-  const usedAgentDir = join(agentsDir, 'code-reviewer');
-  await mkdir(usedAgentDir, { recursive: true });
-  await writeFile(join(usedAgentDir, 'agent.md'), '# Code Reviewer Agent\nReviews code.', 'utf-8');
+  // scanAgents uses path.basename(file, '.md') as the name, so flat .md files
+  await writeFile(join(agentsDir, 'code-reviewer.md'), '# Code Reviewer Agent\nReviews code.', 'utf-8');
 
   // Agent 2: "stale-helper" -- will be a ghost (no invocation)
-  const ghostAgentDir = join(agentsDir, 'stale-helper');
-  await mkdir(ghostAgentDir, { recursive: true });
-  await writeFile(join(ghostAgentDir, 'agent.md'), '# Stale Helper Agent\nNever used.', 'utf-8');
+  await writeFile(join(agentsDir, 'stale-helper.md'), '# Stale Helper Agent\nNever used.', 'utf-8');
 
   // Skill 1: "deploy" -- will be used
   const skillDir = join(skillsDir, 'deploy');
@@ -231,10 +233,10 @@ describe('ghost command integration', () => {
     expect(claudeContents).toContain('skills');
     expect(claudeContents).toContain('projects');
 
-    // Verify agents exist
+    // Verify agents exist (flat .md files -- scanAgents uses basename as name)
     const agentContents = await readdir(agentsDir);
-    expect(agentContents).toContain('code-reviewer');
-    expect(agentContents).toContain('stale-helper');
+    expect(agentContents).toContain('code-reviewer.md');
+    expect(agentContents).toContain('stale-helper.md');
 
     // Verify skills exist
     const skillContents = await readdir(skillsDir);
@@ -378,5 +380,90 @@ describe('ghost command integration', () => {
     const scoreOutput = renderHealthScore(healthScore);
     expect(scoreOutput).toContain('Health:');
     expect(scoreOutput).toContain('/100');
+  });
+
+  // ── Full Pipeline Test ──────────────────────────────────────────────
+
+  it('exercises full discover->parse->scan->enrich pipeline against mock filesystem', async () => {
+    // Use the mock filesystem's .claude/ directory as the legacy Claude path.
+    // discoverSessionFiles expects claudePaths: { xdg, legacy } pointing to Claude data dirs.
+    // The fixture has sessions at claudeDir/projects/test-project/session-001.jsonl
+    // which matches the glob pattern: legacy/projects/*/*.jsonl
+    const claudePaths: ClaudePaths = {
+      xdg: join(fixtureDir, '.config', 'claude'),   // non-existent -- no XDG sessions
+      legacy: claudeDir,                              // fixtureDir/.claude -- has sessions, agents, skills
+    };
+
+    // Step 1: Discover session files from fixture directory
+    const files = await discoverSessionFiles({ claudePaths });
+    expect(files.length).toBeGreaterThanOrEqual(1);
+    expect(files.some(f => f.includes('session-001.jsonl'))).toBe(true);
+
+    // Step 2: Parse all discovered sessions
+    const allInvocations: InvocationRecord[] = [];
+    const projectPaths = new Set<string>();
+    for (const file of files) {
+      const result = await parseSession(file, Infinity);
+      allInvocations.push(...result.invocations);
+      if (result.meta.projectPath) {
+        projectPaths.add(result.meta.projectPath);
+      }
+    }
+
+    // Fixture has 3 invocations: agent(code-reviewer), skill(deploy), mcp(context7)
+    expect(allInvocations.length).toBeGreaterThanOrEqual(3);
+
+    // Step 3: Run inventory scanner against fixture directories
+    const { results } = await scanAll(allInvocations, {
+      claudePaths,
+      projectPaths: [...projectPaths],
+      claudeConfigPath: claudeConfigPath,
+    });
+
+    // Fixture defines: 2 agents, 1 skill, 2 MCP servers = at least 5 items
+    expect(results.length).toBeGreaterThanOrEqual(3);
+
+    // Step 4: Enrich with token estimates
+    const enriched = await enrichScanResults(results);
+    expect(enriched.length).toBe(results.length);
+
+    // Step 5: Verify ghost detection -- stale-helper agent and unused-server MCP should be ghosts
+    const ghostItems = enriched.filter(r => r.tier !== 'used');
+    const ghostNames = ghostItems.map(r => r.item.name);
+
+    // stale-helper agent has no invocations -> should be a ghost
+    expect(ghostNames).toContain('stale-helper');
+
+    // unused-server MCP has no invocations -> should be a ghost
+    expect(ghostNames).toContain('unused-server');
+
+    // code-reviewer agent has an invocation -> should NOT be a ghost
+    const usedItems = enriched.filter(r => r.tier === 'used');
+    const usedNames = usedItems.map(r => r.item.name);
+    expect(usedNames).toContain('code-reviewer');
+
+    // Step 6: Health score should be computable
+    const healthScore = calculateHealthScore(enriched);
+    expect(healthScore.score).toBeGreaterThanOrEqual(0);
+    expect(healthScore.score).toBeLessThanOrEqual(100);
+    expect(typeof healthScore.grade).toBe('string');
+
+    // Step 7: Render ghost summary with pipeline data to verify end-to-end
+    const categories = ['agent', 'skill', 'mcp-server', 'memory'] as const;
+    const summaries: CategorySummary[] = categories.map(cat => {
+      const catItems = enriched.filter(r => r.item.category === cat);
+      return {
+        category: cat,
+        defined: catItems.length,
+        used: catItems.filter(r => r.tier === 'used').length,
+        ghost: catItems.filter(r => r.tier !== 'used').length,
+        tokenCost: catItems
+          .filter(r => r.tier !== 'used')
+          .reduce((sum, r) => sum + (r.tokenEstimate?.tokens ?? 0), 0),
+      };
+    });
+    const summaryOutput = renderGhostSummary(summaries);
+    expect(summaryOutput).toContain('Agents');
+    expect(summaryOutput).toContain('MCP Servers');
   });
 });
