@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 05-04-PLAN.md
-last_updated: "2026-04-04T11:57:12.925Z"
+stopped_at: Completed 06-03-PLAN.md
+last_updated: "2026-04-04T15:07:25.819Z"
 last_activity: 2026-04-04
 progress:
   total_phases: 10
   completed_phases: 5
-  total_plans: 14
-  completed_plans: 14
-  percent: 0
+  total_plans: 18
+  completed_plans: 15
+  percent: 100
 ---
 
 # Project State
@@ -21,12 +21,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-04)
 
 **Core value:** Show users exactly how many tokens their ghost inventory wastes -- and give them one safe, reversible command to reclaim them.
-**Current focus:** Phase 06 — output-control-&-polish
+**Current focus:** Phase 06 — output-control-polish
 
 ## Current Position
 
-Phase: 6
-Plan: Not started
+Phase: 06 (output-control-polish) — EXECUTING
+Plan: 2 of 4
 Status: Ready to execute
 Last activity: 2026-04-04
 
@@ -65,6 +65,7 @@ Progress: [████████████████████] 14/14 p
 | Phase 05 P02 | 4min | 2 tasks | 10 files |
 | Phase 05 P03 | 5min | 3 tasks | 6 files |
 | Phase 05 P04 | 4min | 2 tasks | 2 files |
+| Phase 06-output-control-polish P03 | 2min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -113,6 +114,8 @@ Recent decisions affecting current work:
 - [Phase 05]: ghost.ts builds CategorySummary[] inline from enriched results
 - [Phase 05]: mcp.ts in-source tests verify structural wiring not full pipeline
 - [Phase 05]: Agent fixture changed from subdirectory format to flat .md files matching scanAgents basename naming convention
+- [Phase 06-output-control-polish]: Coverage-v8 version pinned to match vitest (^4.1.2) as peer dependency
+- [Phase 06-output-control-polish]: Coverage thresholds passed as CLI flags in CI workflow for explicit visibility
 
 ### Pending Todos
 
@@ -127,6 +130,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-04
-Stopped at: Phase 05 complete, ready to plan Phase 06
+Last session: 2026-04-04T15:07:25.816Z
+Stopped at: Completed 06-03-PLAN.md
 Resume file: None

@@ -58,8 +58,8 @@
 - [ ] **OUTP-03**: `--quiet` / `-q` flag: machine-readable data only, no decorative output
 - [ ] **OUTP-04**: `--verbose` / `-v` flag: show files scanned, skipped, and parsing decisions
 - [ ] **OUTP-05**: `--ci` flag: combines exit-code + quiet + JSON for GitHub Actions / CI pipelines
-- [ ] **OUTP-06**: `--json` export on all read commands (structured output)
-- [ ] **OUTP-07**: `--csv` export on all read commands (spreadsheet-compatible)
+- [x] **OUTP-06**: `--json` export on all read commands (structured output)
+- [x] **OUTP-07**: `--csv` export on all read commands (spreadsheet-compatible)
 
 ### Dry-Run (v1.1)
 
