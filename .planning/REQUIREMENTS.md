@@ -35,11 +35,11 @@
 
 ### Token Cost Attribution
 
-- [ ] **TOKN-01**: Per-item token cost estimated from embedded `mcp-token-estimates.json` (community-maintained, bundled at build)
-- [ ] **TOKN-02**: All estimates labeled with `~` prefix everywhere ("~15k tokens (estimated)") -- never bare numbers
-- [ ] **TOKN-03**: Confidence tier shown per estimate: "estimated" / "measured" / "community-reported"
+- [x] **TOKN-01**: Per-item token cost estimated from embedded `mcp-token-estimates.json` (community-maintained, bundled at build)
+- [x] **TOKN-02**: All estimates labeled with `~` prefix everywhere ("~15k tokens (estimated)") -- never bare numbers
+- [x] **TOKN-03**: Confidence tier shown per estimate: "estimated" / "measured" / "community-reported"
 - [x] **TOKN-04**: `ccaudit mcp --live` connects to running MCP servers for exact token count (ships v1.0 -- verification path required at launch)
-- [ ] **TOKN-05**: Total ghost overhead calculated and displayed as both token count and percentage of 200k context window
+- [x] **TOKN-05**: Total ghost overhead calculated and displayed as both token count and percentage of 200k context window
 
 ### Ghost Inventory Report
 

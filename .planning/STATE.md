@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 04-02-PLAN.md
-last_updated: "2026-04-04T08:18:05.469Z"
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-04-04T08:18:16.225Z"
 last_activity: 2026-04-04
 progress:
   total_phases: 10
@@ -94,6 +94,8 @@ Recent decisions affecting current work:
 - [Phase 03-inventory-scanner]: Memory files classified directly by mtimeMs -- no invocation matching needed
 - [Phase 03-inventory-scanner]: scanAll extracts unique projectPaths from invocations when not explicitly provided
 - [Phase 04]: Settle guard pattern for child_process promise lifecycle
+- [Phase 04]: JSON import requires 'with { type: json }' attribute for NodeNext module resolution
+- [Phase 04]: tsconfig include needs src/**/*.json for JSON data files in composite project
 
 ### Pending Todos
 
@@ -108,6 +110,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-04T08:17:46.111Z
-Stopped at: Completed 04-02-PLAN.md
+Last session: 2026-04-04T08:18:16.223Z
+Stopped at: Completed 04-01-PLAN.md
 Resume file: None
