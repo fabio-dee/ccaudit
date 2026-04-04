@@ -4,8 +4,13 @@ import {
   parseSession,
   parseDuration,
   scanAll,
+  enrichScanResults,
+  calculateTotalOverhead,
+  formatTokenEstimate,
+  formatTotalOverhead,
+  CONTEXT_WINDOW_SIZE,
 } from '@ccaudit/internal';
-import type { InvocationRecord, ScanResult } from '@ccaudit/internal';
+import type { InvocationRecord, TokenCostResult } from '@ccaudit/internal';
 
 export const ghostCommand = define({
   name: 'ghost',
@@ -73,21 +78,30 @@ export const ghostCommand = define({
       projectPaths: [...projectPaths],
     });
 
+    // Step 3.5: Enrich with token estimates
+    const enriched = await enrichScanResults(results);
+
     // Step 4: Filter to ghosts only
-    const ghosts = results.filter(r => r.tier !== 'used');
+    const ghosts = enriched.filter(r => r.tier !== 'used');
     const likelyGhosts = ghosts.filter(r => r.tier === 'likely-ghost');
     const definiteGhosts = ghosts.filter(r => r.tier === 'definite-ghost');
 
     if (ctx.values.json) {
+      const totalTokens = calculateTotalOverhead(ghosts);
       console.log(JSON.stringify({
         window: sinceStr,
         files: files.length,
         projects: projectPaths.size,
-        inventory: results.length,
+        inventory: enriched.length,
         ghosts: {
           total: ghosts.length,
           likely: likelyGhosts.length,
           definite: definiteGhosts.length,
+        },
+        totalOverhead: {
+          tokens: totalTokens,
+          percentage: ((totalTokens / CONTEXT_WINDOW_SIZE) * 100).toFixed(1),
+          contextWindow: CONTEXT_WINDOW_SIZE,
         },
         items: ghosts.map(r => ({
           name: r.item.name,
@@ -98,13 +112,18 @@ export const ghostCommand = define({
           invocations: r.invocationCount,
           path: r.item.path,
           projectPath: r.item.projectPath,
+          tokenEstimate: r.tokenEstimate ? {
+            tokens: r.tokenEstimate.tokens,
+            confidence: r.tokenEstimate.confidence,
+            source: r.tokenEstimate.source,
+          } : null,
         })),
       }, null, 2));
     } else {
       console.log(`\nccaudit ghost (window: ${sinceStr})`);
       console.log('\u2500'.repeat(50));
       console.log(`Scanned: ${files.length} files, ${projectPaths.size} projects`);
-      console.log(`Inventory: ${results.length} items`);
+      console.log(`Inventory: ${enriched.length} items`);
       console.log(`Ghosts: ${ghosts.length} (${likelyGhosts.length} likely, ${definiteGhosts.length} definite)\n`);
 
       if (ghosts.length === 0) {
@@ -124,9 +143,16 @@ export const ghostCommand = define({
             ? `last used ${Math.floor((Date.now() - r.lastUsed.getTime()) / 86_400_000)}d ago`
             : 'never used';
           const tierLabel = r.tier === 'definite-ghost' ? 'GHOST' : 'LIKELY';
-          console.log(`  [${tierLabel}] ${r.item.name} \u2014 ${lastUsedStr} (${r.item.scope})`);
+          const tokenStr = formatTokenEstimate(r.tokenEstimate);
+          console.log(`  [${tierLabel}] ${r.item.name} \u2014 ${lastUsedStr} (${r.item.scope}) | ${tokenStr}`);
         }
         console.log('');
+      }
+
+      // Token overhead summary
+      const totalOverhead = calculateTotalOverhead(ghosts);
+      if (totalOverhead > 0) {
+        console.log(formatTotalOverhead(totalOverhead));
       }
     }
   },
