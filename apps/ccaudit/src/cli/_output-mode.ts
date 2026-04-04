@@ -13,24 +13,66 @@ export interface OutputMode {
   verbose: boolean;
 }
 
-// Stub implementations -- tests should fail
-export function resolveOutputMode(_values: {
+/**
+ * Resolve CLI flag values into a unified output mode.
+ *
+ * Rules:
+ * - --ci implies --json --quiet (per D-14)
+ * - If both json and csv are true, json wins (csv ignored)
+ * - If both verbose and quiet are true, quiet wins (verbose becomes false)
+ */
+export function resolveOutputMode(values: {
   ci?: boolean;
   json?: boolean;
   csv?: boolean;
   quiet?: boolean;
   verbose?: boolean;
 }): OutputMode {
-  return { json: false, csv: false, quiet: false, verbose: false };
+  let json = values.json ?? false;
+  let csv = values.csv ?? false;
+  let quiet = values.quiet ?? false;
+  let verbose = values.verbose ?? false;
+
+  // --ci is sugar for --json --quiet
+  if (values.ci) {
+    json = true;
+    quiet = true;
+  }
+
+  // json wins over csv
+  if (json && csv) {
+    csv = false;
+  }
+
+  // quiet wins over verbose
+  if (quiet && verbose) {
+    verbose = false;
+  }
+
+  return { json, csv, quiet, verbose };
 }
 
+/**
+ * Wrap command-specific data with a standardized JSON meta envelope.
+ * Per D-16: every command's JSON output includes meta with command, version,
+ * since, timestamp, and exitCode.
+ */
 export function buildJsonEnvelope<T extends Record<string, unknown>>(
-  _command: string,
-  _since: string,
-  _exitCode: number,
-  _data: T,
+  command: string,
+  since: string,
+  exitCode: number,
+  data: T,
 ): Record<string, unknown> {
-  return {};
+  return {
+    meta: {
+      command,
+      version: '0.0.1',
+      since,
+      timestamp: new Date().toISOString(),
+      exitCode,
+    },
+    ...data,
+  };
 }
 
 if (import.meta.vitest) {

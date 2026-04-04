@@ -6,7 +6,24 @@
  * by initColor() reading process.argv directly. This means both
  * `ccaudit --no-color ghost` and `ccaudit ghost --no-color` work.
  */
-export const outputArgs = {} as const;
+export const outputArgs = {
+  quiet: {
+    type: 'boolean' as const,
+    short: 'q',
+    description: 'Machine-readable output only (suppress decorative text)',
+    default: false,
+  },
+  csv: {
+    type: 'boolean' as const,
+    description: 'Output as CSV (RFC 4180)',
+    default: false,
+  },
+  ci: {
+    type: 'boolean' as const,
+    description: 'CI mode: --json --quiet with exit codes (implies --json --quiet)',
+    default: false,
+  },
+} as const;
 
 if (import.meta.vitest) {
   const { describe, it, expect } = import.meta.vitest;
