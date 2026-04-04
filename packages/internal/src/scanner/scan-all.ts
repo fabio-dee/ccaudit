@@ -23,8 +23,84 @@ export async function matchInventory(
   invocations: InvocationRecord[],
   claudeConfigPath?: string,
 ): Promise<ScanResult[]> {
-  // TODO: implement
-  return [];
+  const { agents, skills, mcpServers } = buildInvocationMaps(invocations);
+  const config = await readClaudeConfig(claudeConfigPath);
+  const skillUsage = config.skillUsage ?? {};
+
+  const results: ScanResult[] = [];
+
+  for (const item of items) {
+    let lastUsedMs: number | null = null;
+    let count = 0;
+    let lastUsedDate: Date | null = null;
+
+    if (item.category === 'agent') {
+      const summary = agents.get(item.name);
+      if (summary) {
+        lastUsedMs = new Date(summary.lastTimestamp).getTime();
+        count = summary.count;
+        lastUsedDate = new Date(summary.lastTimestamp);
+      }
+    } else if (item.category === 'skill') {
+      // First try invocation map by directory name
+      let summary = skills.get(item.name);
+
+      // Also try the resolved (registered) skill name
+      if (!summary) {
+        const registeredName = await resolveSkillName(item.path);
+        summary = skills.get(registeredName);
+
+        // If still no invocation match, check skillUsage from ~/.claude.json
+        if (!summary) {
+          // Try registered name first, then directory name, then partial match
+          const usageEntry =
+            skillUsage[registeredName] ??
+            skillUsage[item.name] ??
+            Object.entries(skillUsage).find(([key]) => key.includes(item.name))?.[1];
+
+          if (usageEntry) {
+            lastUsedMs = usageEntry.lastUsedAt;
+            count = usageEntry.usageCount;
+            lastUsedDate = new Date(usageEntry.lastUsedAt);
+          }
+        }
+      }
+
+      if (summary) {
+        lastUsedMs = new Date(summary.lastTimestamp).getTime();
+        count = summary.count;
+        lastUsedDate = new Date(summary.lastTimestamp);
+      }
+    } else if (item.category === 'mcp-server') {
+      const summary = mcpServers.get(item.name);
+      if (summary) {
+        lastUsedMs = new Date(summary.lastTimestamp).getTime();
+        count = summary.count;
+        lastUsedDate = new Date(summary.lastTimestamp);
+      }
+    } else if (item.category === 'memory') {
+      // Memory files use mtimeMs directly (no invocation matching)
+      lastUsedMs = item.mtimeMs ?? null;
+      count = 0;
+      lastUsedDate = lastUsedMs !== null ? new Date(lastUsedMs) : null;
+    }
+
+    const tier = classifyGhost(lastUsedMs);
+
+    // For non-memory items, compute lastUsedDate from lastUsedMs if not already set
+    if (lastUsedDate === null && lastUsedMs !== null) {
+      lastUsedDate = new Date(lastUsedMs);
+    }
+
+    results.push({
+      item,
+      tier,
+      lastUsed: lastUsedDate,
+      invocationCount: count,
+    });
+  }
+
+  return results;
 }
 
 /**
@@ -32,8 +108,14 @@ export async function matchInventory(
  * Global items (projectPath === null) are grouped under the 'global' key.
  */
 export function groupByProject(results: ScanResult[]): Map<string, ScanResult[]> {
-  // TODO: implement
-  return new Map();
+  const map = new Map<string, ScanResult[]>();
+  for (const r of results) {
+    const key = r.item.projectPath ?? 'global';
+    const arr = map.get(key) ?? [];
+    arr.push(r);
+    map.set(key, arr);
+  }
+  return map;
 }
 
 /**
@@ -51,8 +133,40 @@ export async function scanAll(
   results: ScanResult[];
   byProject: Map<string, ScanResult[]>;
 }> {
-  // TODO: implement
-  return { results: [], byProject: new Map() };
+  // Resolve claudePaths from options or defaults
+  const claudePaths: ClaudePaths = options?.claudePaths ?? {
+    xdg: path.join(homedir(), '.config', 'claude'),
+    legacy: path.join(homedir(), '.claude'),
+  };
+
+  // Resolve projectPaths from options or extract unique values from invocations
+  const projectPaths: string[] = options?.projectPaths ?? [
+    ...new Set(invocations.map(inv => inv.projectPath).filter(Boolean)),
+  ];
+
+  // Run all four scanners in parallel
+  const [agentItems, skillItems, mcpItems, memoryItems] = await Promise.all([
+    scanAgents(claudePaths, projectPaths),
+    scanSkills(claudePaths, projectPaths),
+    scanMcpServers(options?.claudeConfigPath, projectPaths),
+    scanMemoryFiles(claudePaths, projectPaths),
+  ]);
+
+  // Flatten all items
+  const allItems: InventoryItem[] = [
+    ...agentItems,
+    ...skillItems,
+    ...mcpItems,
+    ...memoryItems,
+  ];
+
+  // Classify all items against invocation ledger
+  const results = await matchInventory(allItems, invocations, options?.claudeConfigPath);
+
+  // Group by project
+  const byProject = groupByProject(results);
+
+  return { results, byProject };
 }
 
 if (import.meta.vitest) {
