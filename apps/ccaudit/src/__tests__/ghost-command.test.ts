@@ -1,16 +1,55 @@
 /**
- * Integration test scaffold for the ghost command.
+ * Integration tests for ghost command rendering and report output.
  *
- * Wave 0 setup for Plan 03: creates fixture JSONL data, mock filesystem
- * structure, and assertion stubs for all command output behaviors.
- * Plan 03 tasks will fill in the .todo() stubs after commands are wired.
+ * Tests validate rendered output from @ccaudit/terminal renderers
+ * and @ccaudit/internal report functions given known fixture data.
+ * Full pipeline tests (discover -> parse -> scan) are avoided per
+ * 05-RESEARCH.md pitfall 6 -- they're too brittle for integration tests.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdir, writeFile, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// ── Fixture Data ────────────────────────────────────────────────────
+import {
+  renderGhostSummary,
+  renderTopGhosts,
+  renderHeader,
+  renderHealthScore,
+  renderInventoryTable,
+  renderMcpTable,
+} from '@ccaudit/terminal';
+import {
+  calculateHealthScore,
+  classifyRecommendation,
+} from '@ccaudit/internal';
+import type { TokenCostResult, CategorySummary } from '@ccaudit/internal';
+
+// ── Fixture Helpers ────────────────────────────────────────────────
+
+/** Build a minimal TokenCostResult for testing. */
+function makeResult(
+  name: string,
+  tier: 'used' | 'likely-ghost' | 'definite-ghost',
+  tokens: number | null = null,
+  category: 'agent' | 'skill' | 'mcp-server' | 'memory' = 'agent',
+): TokenCostResult {
+  return {
+    item: {
+      name,
+      path: `/test/${name}`,
+      scope: 'global',
+      category,
+      projectPath: null,
+    },
+    tier,
+    lastUsed: tier === 'used' ? new Date() : null,
+    invocationCount: tier === 'used' ? 1 : 0,
+    tokenEstimate: tokens !== null
+      ? { tokens, confidence: 'estimated', source: 'test' }
+      : null,
+  };
+}
 
 /**
  * Write a minimal valid JSONL session file to a directory.
@@ -211,19 +250,133 @@ describe('ghost command integration', () => {
     expect(sessionContents.some(f => f.endsWith('.jsonl'))).toBe(true);
   });
 
-  // ── Assertion Stubs (Plan 03 will fill these in) ──────────────────
+  // ── Render Integration Tests ──────────────────────────────────────
 
-  it.todo('renders summary rows with 4 category lines');
+  it('renders summary rows with 4 category lines', () => {
+    const summaries: CategorySummary[] = [
+      { category: 'agent', defined: 140, used: 12, ghost: 128, tokenCost: 47000 },
+      { category: 'skill', defined: 90, used: 8, ghost: 82, tokenCost: 18000 },
+      { category: 'mcp-server', defined: 6, used: 2, ghost: 4, tokenCost: 32000 },
+      { category: 'memory', defined: 9, used: 3, ghost: 6, tokenCost: 12000 },
+    ];
 
-  it.todo('renders top ghosts section sorted by token cost');
+    const output = renderGhostSummary(summaries);
+    const lines = output.split('\n').filter(l => l.trim().length > 0);
+    expect(lines).toHaveLength(4);
 
-  it.todo('renders health score line with grade');
+    // Each line should contain a category name
+    expect(output).toContain('Agents');
+    expect(output).toContain('Skills');
+    expect(output).toContain('MCP Servers');
+    expect(output).toContain('Memory Files');
+  });
 
-  it.todo('renders --since window in header');
+  it('renders top ghosts section sorted by token cost', () => {
+    const ghosts = [
+      makeResult('low-cost', 'definite-ghost', 1000),
+      makeResult('high-cost', 'definite-ghost', 15000),
+      makeResult('mid-cost', 'definite-ghost', 5000),
+    ];
 
-  it.todo('JSON output includes healthScore and recommendation fields');
+    const output = renderTopGhosts(ghosts);
+    const lines = output.split('\n').filter(l => l.trim().length > 0);
 
-  it.todo('inventory command renders cli-table3 bordered table');
+    // Header line + 3 items
+    expect(lines.length).toBeGreaterThanOrEqual(4);
 
-  it.todo('mcp command renders cli-table3 bordered table with health score');
+    // First ghost item (after header) should be highest cost
+    const itemLines = lines.slice(1); // skip header
+    expect(itemLines[0]).toContain('high-cost');
+    expect(itemLines[1]).toContain('mid-cost');
+    expect(itemLines[2]).toContain('low-cost');
+  });
+
+  it('renders health score line with grade', () => {
+    const results = Array.from({ length: 5 }, () =>
+      makeResult('ghost', 'definite-ghost', 0),
+    );
+    const healthScore = calculateHealthScore(results);
+
+    const output = renderHealthScore(healthScore);
+    expect(output).toContain('Health:');
+    expect(output).toContain('85/100');
+    expect(output).toContain('Healthy');
+  });
+
+  it('renders --since window in header', () => {
+    const output = renderHeader('\u{1F47B}', 'Ghost Inventory', '7 days');
+    expect(output).toContain('7 days');
+    expect(output).toContain('Ghost Inventory');
+    expect(output).toContain('\u{1F47B}');
+  });
+
+  it('JSON output includes healthScore and recommendation fields', () => {
+    const results = [
+      makeResult('ghost-agent', 'definite-ghost', 5000),
+      makeResult('likely-agent', 'likely-ghost', 2000),
+      makeResult('active-agent', 'used', 1000),
+    ];
+
+    const healthScore = calculateHealthScore(results);
+
+    // Simulate the JSON output structure from ghost.ts
+    const jsonOutput = {
+      healthScore: {
+        score: healthScore.score,
+        grade: healthScore.grade,
+        ghostPenalty: healthScore.ghostPenalty,
+        tokenPenalty: healthScore.tokenPenalty,
+      },
+      items: results
+        .filter(r => r.tier !== 'used')
+        .map(r => ({
+          name: r.item.name,
+          recommendation: classifyRecommendation(r.tier),
+        })),
+    };
+
+    // Verify healthScore structure
+    expect(jsonOutput.healthScore).toHaveProperty('score');
+    expect(jsonOutput.healthScore).toHaveProperty('grade');
+    expect(typeof jsonOutput.healthScore.score).toBe('number');
+    expect(typeof jsonOutput.healthScore.grade).toBe('string');
+
+    // Verify items have recommendation field
+    expect(jsonOutput.items).toHaveLength(2); // 2 ghosts
+    expect(jsonOutput.items[0]!.recommendation).toBe('archive');
+    expect(jsonOutput.items[1]!.recommendation).toBe('monitor');
+  });
+
+  it('inventory command renders table with column headers', () => {
+    const results = [
+      makeResult('agent-a', 'definite-ghost', 5000, 'agent'),
+      makeResult('skill-b', 'used', 1000, 'skill'),
+    ];
+
+    const output = renderInventoryTable(results);
+    expect(output).toContain('Name');
+    expect(output).toContain('Category');
+    expect(output).toContain('Tier');
+    expect(output).toContain('Action');
+    // Verify item names appear in table
+    expect(output).toContain('agent-a');
+    expect(output).toContain('skill-b');
+  });
+
+  it('mcp command renders table with health score', () => {
+    const results = [
+      makeResult('sequential-thinking', 'definite-ghost', 15000, 'mcp-server'),
+    ];
+
+    const output = renderMcpTable(results);
+    expect(output).toContain('Server');
+    expect(output).toContain('sequential-thinking');
+    expect(output).toContain('Action');
+
+    // Also verify health score rendering works for MCP context
+    const healthScore = calculateHealthScore(results);
+    const scoreOutput = renderHealthScore(healthScore);
+    expect(scoreOutput).toContain('Health:');
+    expect(scoreOutput).toContain('/100');
+  });
 });
