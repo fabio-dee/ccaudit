@@ -39,7 +39,9 @@
   },
   "scripts": {
     "build": "tsdown",
+    "prebuild": "node scripts/gen-version.mjs",
     "test": "TZ=UTC vitest",
+    "pretest": "node scripts/gen-version.mjs",
     "typecheck": "tsc --noEmit",
     "prepack": "pnpm run build && clean-pkg-json"
   },
