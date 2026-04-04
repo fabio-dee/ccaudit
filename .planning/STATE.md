@@ -18,10 +18,10 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-03)
+See: .planning/PROJECT.md (updated 2026-04-04)
 
 **Core value:** Show users exactly how many tokens their ghost inventory wastes -- and give them one safe, reversible command to reclaim them.
-**Current focus:** Phase 05 — report-cli-commands
+**Current focus:** Phase 06 — output-control-&-polish
 
 ## Current Position
 
@@ -30,7 +30,7 @@ Plan: Not started
 Status: Ready to execute
 Last activity: 2026-04-04
 
-Progress: [..........] 0%
+Progress: [████████████████████] 14/14 plans (100%)
 
 ## Performance Metrics
 
@@ -127,6 +127,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-04T11:53:37.793Z
-Stopped at: Completed 05-04-PLAN.md
+Last session: 2026-04-04
+Stopped at: Phase 05 complete, ready to plan Phase 06
 Resume file: None
