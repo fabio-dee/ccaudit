@@ -3,6 +3,23 @@
   "version": "0.0.1",
   "type": "module",
   "description": "Audit Claude Code ghost inventory — agents, skills, MCP servers, and memory files",
+  "keywords": [
+    "claude-code",
+    "claude",
+    "audit",
+    "ghost",
+    "mcp",
+    "tokens",
+    "cli",
+    "npx"
+  ],
+  "license": "MIT",
+  "author": "Fabio D.",
+  "homepage": "https://github.com/0xD-Fabio/ccaudit#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0xD-Fabio/ccaudit.git"
+  },
   "bin": {
     "ccaudit": "./src/index.ts"
   },
@@ -14,26 +31,10 @@
       ".": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "engines": {
     "node": ">=20.0.0"
-  },
-  "scripts": {
-    "build": "tsdown",
-    "test": "TZ=UTC vitest",
-    "typecheck": "tsc --noEmit",
-    "prepack": "pnpm run build && clean-pkg-json"
-  },
-  "devDependencies": {
-    "@ccaudit/internal": "workspace:*",
-    "@ccaudit/terminal": "workspace:*",
-    "@vitest/coverage-v8": "catalog:",
-    "gunshi": "catalog:",
-    "valibot": "catalog:",
-    "tsdown": "catalog:",
-    "vitest": "catalog:",
-    "clean-pkg-json": "catalog:",
-    "typescript": "catalog:",
-    "@types/node": "catalog:"
   }
 }

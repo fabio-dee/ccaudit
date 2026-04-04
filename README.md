@@ -39,11 +39,69 @@ npx ccaudit@latest
 ```bash
 npx ccaudit                     # ghost inventory, last 7 days
 npx ccaudit ghost --since 30d   # configurable threshold
+npx ccaudit ghost --json        # structured JSON with meta envelope
+npx ccaudit ghost --csv         # RFC 4180 CSV for spreadsheets
+npx ccaudit ghost --quiet       # machine-parseable TSV (pipe-friendly)
+npx ccaudit --no-color ghost    # ANSI-free output
 npx ccaudit inventory           # full inventory + all usage stats
 npx ccaudit mcp                 # MCP servers: token cost + frequency
 npx ccaudit mcp --live          # exact token count via live connection
 npx ccaudit trend               # invocation frequency over time
+npx ccaudit trend --csv         # time-series CSV export
 ```
+
+### CI / Scripting
+
+ccaudit is designed to be piped, parsed, and dropped into CI pipelines. Exit codes, machine-readable formats, and stderr/stdout separation are all first-class.
+
+**Exit codes:**
+
+- `ghost`, `inventory`, `mcp` — exit `1` when ghosts are found, `0` otherwise
+- `trend` — always exits `0` (time-series data is informational, not pass/fail)
+
+**GitHub Actions example:**
+
+```yaml
+- run: npx ccaudit@latest --ci
+```
+
+The `--ci` flag is shorthand for `--json --quiet` combined with the exit code semantics above. It emits compact JSON on stdout (no pretty-printing, no ANSI, no decorative output) so a pipeline step can pipe it straight into `jq`:
+
+```bash
+npx ccaudit --ci | jq .healthScore.score
+```
+
+**Scripting examples:**
+
+```bash
+# Count ghost rows
+npx ccaudit ghost --quiet | wc -l
+
+# Export to CSV for Google Sheets
+npx ccaudit ghost --csv > ghosts.csv
+
+# Verbose scan progress on stderr, clean JSON on stdout
+npx ccaudit ghost --json --verbose 2>/dev/null > report.json
+```
+
+Verbose messages are written to **stderr** with a `[ccaudit]` prefix, so they never contaminate JSON/CSV/TSV output on stdout. Redirect stderr (`2>/dev/null`) or capture it separately when composing pipelines.
+
+**NO_COLOR support:**
+
+ccaudit respects the [`NO_COLOR`](https://no-color.org/) environment variable and the `--no-color` flag. Either one disables all ANSI color codes in every rendered output — useful for log files, CI environments, and terminals that can't render colors.
+
+### Flags Reference
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--since <duration>` | `-s` | Time window (`7d`, `30d`, `2w`, …) |
+| `--json` | `-j` | JSON output with meta envelope |
+| `--csv` |  | RFC 4180 CSV export |
+| `--quiet` | `-q` | Machine-readable only (TSV, compact JSON, headerless CSV) |
+| `--verbose` | `-v` | Scan details on stderr |
+| `--ci` |  | CI mode: `--json --quiet` plus exit codes |
+| `--no-color` |  | Disable ANSI colors (also respects `NO_COLOR` env var) |
+| `--live` |  | (mcp only) Live MCP server token measurement |
 
 ### Dry-run (preview, no changes)
 
@@ -153,7 +211,7 @@ TypeScript · Node · `npx ccaudit@latest` · `gunshi` CLI · `tinyglobby` · `v
 
 ## Status
 
-**Pre-release.** Schema validation and PRD in progress. Not yet published to npm.
+**v1.0** — Analysis-only release. Ghost detection, token attribution, all output formats (JSON/CSV/TSV). CI-ready with exit codes.
 
 ---
 
