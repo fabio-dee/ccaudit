@@ -88,8 +88,8 @@ Plans:
   4. Total ghost overhead is displayed as both absolute token count and percentage of the 200k context window
 **Plans:** 3 plans
 Plans:
-- [ ] 04-01-PLAN.md — Token types, bundled JSON data, file-size estimator, format functions
-- [ ] 04-02-PLAN.md — Minimal MCP JSON-RPC client for --live measurement
+- [x] 04-01-PLAN.md — Token types, bundled JSON data, file-size estimator, format functions
+- [x] 04-02-PLAN.md — Minimal MCP JSON-RPC client for --live measurement
 - [ ] 04-03-PLAN.md — Enrichment pipeline, ghost command token display, mcp subcommand
 
 ### Phase 5: Report & CLI Commands
