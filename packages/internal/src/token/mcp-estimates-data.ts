@@ -1,5 +1,5 @@
 import * as v from 'valibot';
-import rawEstimates from '../data/mcp-token-estimates.json';
+import rawEstimates from '../data/mcp-token-estimates.json' with { type: 'json' };
 import type { McpTokenEntry } from './types.ts';
 
 /**
