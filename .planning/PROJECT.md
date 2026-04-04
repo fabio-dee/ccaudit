@@ -35,12 +35,12 @@ Show users exactly how many tokens their ghost inventory wastes — and give the
 - [x] Render ghost inventory table with Defined / Used / Ghost / Token-cost columns per category; show `lastUsed` date in every ghost row (Validated in Phase 5: Report & CLI Commands)
 - [x] All token estimates labeled `~` prefix ("~15k tokens (estimated)") — never bare numbers; show "estimated" vs "measured" vs "community-reported" confidence (Validated in Phase 4: Token Cost Attribution)
 - [x] Health score (0–100) summary: single shareable number, README badge-ready, CI gate semantics (Validated in Phase 5: Report & CLI Commands)
-- [ ] Exit codes: 0 = no ghosts, 1 = ghosts found (enables CI/pre-commit use)
-- [ ] `NO_COLOR` env var and `--no-color` flag (ANSI-free output for piped/CI contexts)
-- [ ] `--quiet` / `-q` flag (data-only output for scripts)
-- [ ] `--verbose` / `-v` flag (show what was scanned/skipped)
-- [ ] `--ci` flag (combines exit-code + quiet + JSON for GitHub Actions / CI pipelines)
-- [ ] `--json` and `--csv` export on all read commands
+- [x] Exit codes: 0 = no ghosts, 1 = ghosts found (enables CI/pre-commit use) (Validated in Phase 6: Output Control & Polish)
+- [x] `NO_COLOR` env var and `--no-color` flag (ANSI-free output for piped/CI contexts) (Validated in Phase 6: Output Control & Polish)
+- [x] `--quiet` / `-q` flag (data-only output for scripts) (Validated in Phase 6: Output Control & Polish)
+- [x] `--verbose` / `-v` flag (show what was scanned/skipped) (Validated in Phase 6: Output Control & Polish)
+- [x] `--ci` flag (combines exit-code + quiet + JSON for GitHub Actions / CI pipelines) (Validated in Phase 6: Output Control & Polish)
+- [x] `--json` and `--csv` export on all read commands (Validated in Phase 6: Output Control & Polish)
 - [x] `npx ccaudit ghost` (default), `ccaudit inventory`, `ccaudit mcp`, `ccaudit trend` (Validated in Phase 5: Report & CLI Commands)
 - [x] `ccaudit mcp --live` for exact token counts via live MCP connection (must ship v1.0 — prevents "estimates are wrong" narrative) (Validated in Phase 4: Token Cost Attribution)
 
@@ -148,4 +148,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-04 after Phase 5 completion*
+*Last updated: 2026-04-04 after Phase 6 completion (v1.0 launch candidate — output control, CI coverage enforcement, publishable npm package)*
