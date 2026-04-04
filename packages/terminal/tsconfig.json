@@ -5,7 +5,8 @@
     "rootDir": "./src",
     "outDir": "./dist",
     "emitDeclarationOnly": true,
-    "declaration": true
+    "declaration": true,
+    "allowImportingTsExtensions": true
   },
   "include": ["src/**/*.ts"],
   "references": [
