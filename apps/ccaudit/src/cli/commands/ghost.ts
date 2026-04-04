@@ -35,6 +35,12 @@ import { CCAUDIT_VERSION } from '../../_version.ts';
 export const ghostCommand = define({
   name: 'ghost',
   description: 'Show ghost inventory report (default)',
+  // Convert camelCase arg keys to kebab-case on the CLI so `dryRun` is
+  // exposed as `--dry-run` (the documented flag name in Phase 7 contracts
+  // and in the SUMMARY/RESEARCH docs). Without this, gunshi preserves the
+  // literal key name and the flag would be `--dryRun`, which is unusable
+  // for end users and contradicts the Plan 02 contract.
+  toKebab: true,
   args: {
     ...outputArgs,
     since: {

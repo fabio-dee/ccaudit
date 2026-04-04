@@ -13,6 +13,13 @@ export async function run(): Promise<void> {
     name: 'ccaudit',
     version: '0.0.1',
     description: 'Audit Claude Code ghost inventory \u2014 agents, skills, MCP servers, and memory files',
+    // Suppress gunshi's default pre-run banner ("Audit Claude Code ghost
+    // inventory — ... (ccaudit v0.0.1)") so machine-readable output modes
+    // (--json, --csv, --quiet, --ci) emit ONLY the payload on stdout. Without
+    // this, gunshi prints the decorative header before our command's `run()`
+    // executes, which corrupts JSON.parse() and CSV row parsers downstream.
+    // The banner is still visible in --help output (which uses renderUsage).
+    renderHeader: null,
     subCommands: {
       ghost: ghostCommand,
       mcp: mcpCommand,
