@@ -36,5 +36,23 @@
   ],
   "engines": {
     "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "TZ=UTC vitest",
+    "typecheck": "tsc --noEmit",
+    "prepack": "pnpm run build && clean-pkg-json"
+  },
+  "devDependencies": {
+    "@ccaudit/internal": "workspace:*",
+    "@ccaudit/terminal": "workspace:*",
+    "@vitest/coverage-v8": "catalog:",
+    "gunshi": "catalog:",
+    "valibot": "catalog:",
+    "tsdown": "catalog:",
+    "vitest": "catalog:",
+    "clean-pkg-json": "catalog:",
+    "typescript": "catalog:",
+    "@types/node": "catalog:"
   }
 }
