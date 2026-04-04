@@ -18,12 +18,18 @@ import {
   renderTopGhosts,
   renderGhostFooter,
   renderHealthScore,
+  initColor,
+  csvTable,
+  tsvRow,
 } from '@ccaudit/terminal';
+import { outputArgs } from '../_shared-args.ts';
+import { resolveOutputMode, buildJsonEnvelope } from '../_output-mode.ts';
 
 export const ghostCommand = define({
   name: 'ghost',
   description: 'Show ghost inventory report (default)',
   args: {
+    ...outputArgs,
     since: {
       type: 'string',
       short: 's',
@@ -54,20 +60,29 @@ export const ghostCommand = define({
       return;
     }
 
-    if (ctx.values.verbose) {
-      console.log(`Scanning sessions (window: ${sinceStr})...`);
+    // Initialize color detection from process.argv (--no-color) and env (NO_COLOR)
+    // Must be called before ANY rendering. Takes no arguments per D-07.
+    initColor();
+
+    // Resolve output mode from all flag values
+    const mode = resolveOutputMode(ctx.values);
+
+    if (mode.verbose) {
+      console.error(`[ccaudit] Scanning sessions (window: ${sinceStr})...`);
     }
 
     // Step 1: Discover session files
     const files = await discoverSessionFiles({ sinceMs });
 
-    if (ctx.values.verbose) {
-      console.log(`Found ${files.length} session file(s)`);
+    if (mode.verbose) {
+      console.error(`[ccaudit] Found ${files.length} session file(s)`);
     }
 
     if (files.length === 0) {
-      console.log('No session files found. Check that Claude Code has been used recently.');
-      console.log('Session files are stored in ~/.claude/projects/ and ~/.config/claude/projects/');
+      if (!mode.quiet && !mode.json && !mode.csv) {
+        console.log('No session files found. Check that Claude Code has been used recently.');
+        console.log('Session files are stored in ~/.claude/projects/ and ~/.config/claude/projects/');
+      }
       return;
     }
 
@@ -84,8 +99,8 @@ export const ghostCommand = define({
     }
 
     // Step 3: Run inventory scanner
-    if (ctx.values.verbose) {
-      console.log('Scanning inventory...');
+    if (mode.verbose) {
+      console.error('[ccaudit] Scanning inventory...');
     }
 
     const { results } = await scanAll(allInvocations, {
@@ -120,9 +135,15 @@ export const ghostCommand = define({
       };
     });
 
-    if (ctx.values.json) {
+    // Determine exit code: 1 if ghosts found (per D-01)
+    const hasGhosts = enriched.some(r => r.tier !== 'used');
+    const exitCode = hasGhosts ? 1 : 0;
+
+    // Output routing (in order of precedence per D-17)
+    if (mode.json) {
+      // JSON with meta envelope
       const totalTokens = calculateTotalOverhead(ghosts);
-      console.log(JSON.stringify({
+      const envelope = buildJsonEnvelope('ghost', sinceStr, exitCode, {
         window: sinceStr,
         files: files.length,
         projects: projectPaths.size,
@@ -157,8 +178,36 @@ export const ghostCommand = define({
           } : null,
           recommendation: classifyRecommendation(r.tier),
         })),
-      }, null, 2));
+      });
+      const indent = mode.quiet ? 0 : 2;
+      console.log(JSON.stringify(envelope, null, indent));
+    } else if (mode.csv) {
+      // CSV output (RFC 4180 per D-18, D-19)
+      const headers = ['name', 'category', 'tier', 'lastUsed', 'tokens', 'recommendation', 'confidence'];
+      const rows = enriched.map(r => [
+        r.item.name,
+        r.item.category,
+        r.tier,
+        r.lastUsed?.toISOString() ?? 'never',
+        String(r.tokenEstimate?.tokens ?? 0),
+        classifyRecommendation(r.tier),
+        r.tokenEstimate?.confidence ?? 'none',
+      ]);
+      console.log(csvTable(headers, rows, !mode.quiet));
+    } else if (mode.quiet) {
+      // TSV output (per D-09)
+      for (const r of enriched) {
+        console.log(tsvRow([
+          r.item.name,
+          r.item.category,
+          r.tier,
+          r.lastUsed?.toISOString() ?? 'never',
+          String(r.tokenEstimate?.tokens ?? 0),
+          classifyRecommendation(r.tier),
+        ]));
+      }
     } else {
+      // Default rendered output (tables, headers, footer)
       console.log('');
       console.log(renderHeader('\u{1F47B}', 'Ghost Inventory', humanizeSinceWindow(sinceStr)));
       console.log('');
@@ -184,6 +233,11 @@ export const ghostCommand = define({
       console.log(renderHealthScore(healthScore));
       console.log('');
       console.log(renderGhostFooter(sinceStr));
+    }
+
+    // Set exit code: ghost/inventory/mcp exit 1 when ghosts found (per D-01, D-02, D-03)
+    if (hasGhosts) {
+      process.exitCode = 1;
     }
   },
 });

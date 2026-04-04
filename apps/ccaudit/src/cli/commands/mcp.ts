@@ -18,12 +18,18 @@ import {
   humanizeSinceWindow,
   renderMcpTable,
   renderHealthScore,
+  initColor,
+  csvTable,
+  tsvRow,
 } from '@ccaudit/terminal';
+import { outputArgs } from '../_shared-args.ts';
+import { resolveOutputMode, buildJsonEnvelope } from '../_output-mode.ts';
 
 export const mcpCommand = define({
   name: 'mcp',
   description: 'Show MCP server token costs (use --live for exact counts)',
   args: {
+    ...outputArgs,
     since: {
       type: 'string',
       short: 's',
@@ -68,8 +74,14 @@ export const mcpCommand = define({
 
     const timeoutMs = Number.parseInt(ctx.values.timeout ?? '15000', 10);
 
-    if (ctx.values.verbose) {
-      console.log(`Scanning sessions (window: ${sinceStr})...`);
+    // Initialize color detection from process.argv (--no-color) and env (NO_COLOR)
+    initColor();
+
+    // Resolve output mode from all flag values
+    const mode = resolveOutputMode(ctx.values);
+
+    if (mode.verbose) {
+      console.error(`[ccaudit] Scanning sessions (window: ${sinceStr})...`);
     }
 
     // Step 1: Discover session files
@@ -114,8 +126,8 @@ export const mcpCommand = define({
           const serverConfig = allServerConfigs[r.item.name] as Record<string, unknown> | undefined;
           if (!serverConfig || typeof serverConfig.command !== 'string') {
             const transport = (serverConfig as Record<string, unknown> | undefined)?.type ?? 'unknown';
-            if (ctx.values.verbose) {
-              console.log(`  ${r.item.name}: live measurement not available (${String(transport)} transport) -- using estimate`);
+            if (mode.verbose) {
+              console.error(`[ccaudit] ${r.item.name}: live measurement not available (${String(transport)} transport) -- using estimate`);
             }
             return r;
           }
@@ -139,8 +151,8 @@ export const mcpCommand = define({
               },
             };
           } catch (err) {
-            if (ctx.values.verbose) {
-              console.log(`  ${r.item.name}: measurement failed (${(err as Error).message}) -- using estimate`);
+            if (mode.verbose) {
+              console.error(`[ccaudit] ${r.item.name}: measurement failed (${(err as Error).message}) -- using estimate`);
             }
             return r;
           }
@@ -148,11 +160,15 @@ export const mcpCommand = define({
       );
     }
 
+    // Determine exit code: 1 if ghosts found (per D-01)
+    const hasGhosts = enriched.some(r => r.tier !== 'used');
+    const exitCode = hasGhosts ? 1 : 0;
+
     // Step 7: Display results
-    if (ctx.values.json) {
+    if (mode.json) {
       const totalTokens = calculateTotalOverhead(enriched);
       const healthScore = calculateHealthScore(enriched);
-      console.log(JSON.stringify({
+      const envelope = buildJsonEnvelope('mcp', sinceStr, exitCode, {
         window: sinceStr,
         live: ctx.values.live ?? false,
         servers: enriched.length,
@@ -179,7 +195,34 @@ export const mcpCommand = define({
           } : null,
           recommendation: classifyRecommendation(r.tier),
         })),
-      }, null, 2));
+      });
+      const indent = mode.quiet ? 0 : 2;
+      console.log(JSON.stringify(envelope, null, indent));
+    } else if (mode.csv) {
+      // CSV output (RFC 4180 per D-18, D-19)
+      const headers = ['name', 'category', 'tier', 'lastUsed', 'tokens', 'recommendation', 'confidence'];
+      const rows = enriched.map(r => [
+        r.item.name,
+        r.item.category,
+        r.tier,
+        r.lastUsed?.toISOString() ?? 'never',
+        String(r.tokenEstimate?.tokens ?? 0),
+        classifyRecommendation(r.tier),
+        r.tokenEstimate?.confidence ?? 'none',
+      ]);
+      console.log(csvTable(headers, rows, !mode.quiet));
+    } else if (mode.quiet) {
+      // TSV output (per D-09)
+      for (const r of enriched) {
+        console.log(tsvRow([
+          r.item.name,
+          r.item.category,
+          r.tier,
+          r.lastUsed?.toISOString() ?? 'never',
+          String(r.tokenEstimate?.tokens ?? 0),
+          classifyRecommendation(r.tier),
+        ]));
+      }
     } else {
       console.log('');
       const modeLabel = ctx.values.live ? ' (live)' : '';
@@ -200,6 +243,11 @@ export const mcpCommand = define({
 
       console.log('');
       console.log(renderHealthScore(calculateHealthScore(enriched)));
+    }
+
+    // Set exit code: mcp exits 1 when ghosts found (per D-01)
+    if (hasGhosts) {
+      process.exitCode = 1;
     }
   },
 });
@@ -226,6 +274,9 @@ if (import.meta.vitest) {
       expect(argKeys).toContain('json');
       expect(argKeys).toContain('verbose');
       expect(argKeys).toContain('live');
+      expect(argKeys).toContain('quiet');
+      expect(argKeys).toContain('csv');
+      expect(argKeys).toContain('ci');
     });
   });
 }

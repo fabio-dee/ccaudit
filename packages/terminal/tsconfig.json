@@ -6,7 +6,8 @@
     "outDir": "./dist",
     "emitDeclarationOnly": true,
     "declaration": true,
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    "types": ["vitest/importMeta", "node"]
   },
   "include": ["src/**/*.ts"],
   "references": [
