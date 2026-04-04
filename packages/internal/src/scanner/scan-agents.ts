@@ -14,8 +14,55 @@ export async function scanAgents(
   claudePaths: ClaudePaths,
   projectPaths: string[],
 ): Promise<InventoryItem[]> {
-  // TODO: implement
-  throw new Error('Not implemented');
+  const items: InventoryItem[] = [];
+
+  // Global agents: scan both legacy and XDG paths
+  for (const base of [claudePaths.legacy, claudePaths.xdg]) {
+    // CRITICAL: Use forward slashes for tinyglobby (cross-platform)
+    const posixBase = base.replace(/\\/g, '/');
+    try {
+      const files = await glob([`${posixBase}/agents/**/*.md`], {
+        absolute: true,
+        dot: false,
+      });
+      for (const filePath of files) {
+        items.push({
+          name: path.basename(filePath, '.md'),
+          path: filePath,
+          scope: 'global',
+          category: 'agent',
+          projectPath: null,
+        });
+      }
+    } catch {
+      // Directory doesn't exist -- silently skip
+    }
+  }
+
+  // Project-local agents: .claude/agents/ in each project path
+  for (const projPath of projectPaths) {
+    const agentsDir = path.join(projPath, '.claude', 'agents');
+    const posixDir = agentsDir.replace(/\\/g, '/');
+    try {
+      const files = await glob([`${posixDir}/**/*.md`], {
+        absolute: true,
+        dot: false,
+      });
+      for (const filePath of files) {
+        items.push({
+          name: path.basename(filePath, '.md'),
+          path: filePath,
+          scope: 'project',
+          category: 'agent',
+          projectPath: projPath,
+        });
+      }
+    } catch {
+      // Directory doesn't exist -- silently skip
+    }
+  }
+
+  return items;
 }
 
 if (import.meta.vitest) {

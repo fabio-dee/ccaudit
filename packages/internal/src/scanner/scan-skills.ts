@@ -8,8 +8,18 @@ import type { ClaudePaths } from '../types.ts';
  * Returns the `name:` field value, or the directory name as fallback.
  */
 export async function resolveSkillName(skillDir: string): Promise<string> {
-  // TODO: implement
-  throw new Error('Not implemented');
+  const skillMdPath = path.join(skillDir, 'SKILL.md');
+  try {
+    const content = await readFile(skillMdPath, 'utf-8');
+    // Simple YAML frontmatter extraction (no yaml parser needed)
+    const nameMatch = content.match(/^name:\s*(.+)$/m);
+    if (nameMatch) {
+      return nameMatch[1].trim();
+    }
+  } catch {
+    // SKILL.md doesn't exist or can't be read
+  }
+  return path.basename(skillDir);
 }
 
 /**
@@ -23,8 +33,57 @@ export async function scanSkills(
   claudePaths: ClaudePaths,
   projectPaths: string[],
 ): Promise<InventoryItem[]> {
-  // TODO: implement
-  throw new Error('Not implemented');
+  const items: InventoryItem[] = [];
+
+  // Global skills: scan both legacy and XDG paths
+  for (const base of [claudePaths.legacy, claudePaths.xdg]) {
+    const skillsDir = path.join(base, 'skills');
+    let entries;
+    try {
+      entries = await readdir(skillsDir, { withFileTypes: true });
+    } catch {
+      continue; // Directory doesn't exist -- silently skip
+    }
+
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue; // Skip dotfiles
+      if (entry.isDirectory() || entry.isSymbolicLink()) {
+        items.push({
+          name: entry.name,
+          path: path.join(skillsDir, entry.name),
+          scope: 'global',
+          category: 'skill',
+          projectPath: null,
+        });
+      }
+    }
+  }
+
+  // Project-local skills: .claude/skills/ in each project path
+  for (const projPath of projectPaths) {
+    const skillsDir = path.join(projPath, '.claude', 'skills');
+    let entries;
+    try {
+      entries = await readdir(skillsDir, { withFileTypes: true });
+    } catch {
+      continue; // Directory doesn't exist -- silently skip
+    }
+
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue; // Skip dotfiles
+      if (entry.isDirectory() || entry.isSymbolicLink()) {
+        items.push({
+          name: entry.name,
+          path: path.join(skillsDir, entry.name),
+          scope: 'project',
+          category: 'skill',
+          projectPath: projPath,
+        });
+      }
+    }
+  }
+
+  return items;
 }
 
 if (import.meta.vitest) {
