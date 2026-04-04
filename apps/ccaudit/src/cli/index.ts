@@ -1,6 +1,8 @@
 import { cli } from 'gunshi';
 import { ghostCommand } from './commands/ghost.ts';
 import { mcpCommand } from './commands/mcp.ts';
+import { inventoryCommand } from './commands/inventory.ts';
+import { trendCommand } from './commands/trend.ts';
 
 export async function run(): Promise<void> {
   let args = process.argv.slice(2);
@@ -10,11 +12,12 @@ export async function run(): Promise<void> {
   await cli(args, ghostCommand, {
     name: 'ccaudit',
     version: '0.0.1',
-    description: 'Audit Claude Code ghost inventory — agents, skills, MCP servers, and memory files',
+    description: 'Audit Claude Code ghost inventory \u2014 agents, skills, MCP servers, and memory files',
     subCommands: {
       ghost: ghostCommand,
       mcp: mcpCommand,
-      // Future: inventory, trend, restore, contribute
+      inventory: inventoryCommand,
+      trend: trendCommand,
     },
   });
 }
