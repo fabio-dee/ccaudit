@@ -1,0 +1,201 @@
+import { readdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
+import type { InventoryItem } from './types.ts';
+import type { ClaudePaths } from '../types.ts';
+
+/**
+ * Extract the registered skill name from SKILL.md frontmatter.
+ * Returns the `name:` field value, or the directory name as fallback.
+ */
+export async function resolveSkillName(skillDir: string): Promise<string> {
+  // TODO: implement
+  throw new Error('Not implemented');
+}
+
+/**
+ * Discover skill directories (and symlinks) from global and project-local skills/ directories.
+ *
+ * Skips dotfiles (entries starting with `.`).
+ * Returns InventoryItem[] with category='skill'.
+ * Silently skips missing directories (never throws).
+ */
+export async function scanSkills(
+  claudePaths: ClaudePaths,
+  projectPaths: string[],
+): Promise<InventoryItem[]> {
+  // TODO: implement
+  throw new Error('Not implemented');
+}
+
+if (import.meta.vitest) {
+  const { describe, it, expect, beforeEach, afterEach } = import.meta.vitest;
+  const { mkdtemp, mkdir, writeFile, rm, symlink } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+
+  describe('resolveSkillName', () => {
+    let tmpDir: string;
+
+    beforeEach(async () => {
+      tmpDir = await mkdtemp(path.join(tmpdir(), 'skill-name-'));
+    });
+
+    afterEach(async () => {
+      await rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should return name from SKILL.md name: field', async () => {
+      const skillDir = path.join(tmpDir, 'my-skill');
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        path.join(skillDir, 'SKILL.md'),
+        '---\nname: custom-skill-name\ndescription: A skill\n---\n# Skill',
+      );
+      const name = await resolveSkillName(skillDir);
+      expect(name).toBe('custom-skill-name');
+    });
+
+    it('should fall back to directory name when SKILL.md has no name field', async () => {
+      const skillDir = path.join(tmpDir, 'fallback-skill');
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(path.join(skillDir, 'SKILL.md'), '# Just a heading\nNo name field.');
+      const name = await resolveSkillName(skillDir);
+      expect(name).toBe('fallback-skill');
+    });
+
+    it('should fall back to directory name when SKILL.md does not exist', async () => {
+      const skillDir = path.join(tmpDir, 'no-skillmd');
+      await mkdir(skillDir, { recursive: true });
+      const name = await resolveSkillName(skillDir);
+      expect(name).toBe('no-skillmd');
+    });
+
+    it('should trim whitespace from name field value', async () => {
+      const skillDir = path.join(tmpDir, 'trim-test');
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        path.join(skillDir, 'SKILL.md'),
+        'name:   spaced-name   \n',
+      );
+      const name = await resolveSkillName(skillDir);
+      expect(name).toBe('spaced-name');
+    });
+  });
+
+  describe('scanSkills', () => {
+    let tmpDir: string;
+
+    beforeEach(async () => {
+      tmpDir = await mkdtemp(path.join(tmpdir(), 'scan-skills-'));
+    });
+
+    afterEach(async () => {
+      await rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should return empty array when skills directories do not exist', async () => {
+      const result = await scanSkills(
+        { legacy: path.join(tmpDir, 'legacy'), xdg: path.join(tmpDir, 'xdg') },
+        [],
+      );
+      expect(result).toEqual([]);
+    });
+
+    it('should discover directories in global legacy skills/', async () => {
+      const skillsDir = path.join(tmpDir, 'legacy', 'skills');
+      await mkdir(path.join(skillsDir, 'deploy'), { recursive: true });
+      await mkdir(path.join(skillsDir, 'lint'), { recursive: true });
+
+      const result = await scanSkills(
+        { legacy: path.join(tmpDir, 'legacy'), xdg: path.join(tmpDir, 'xdg') },
+        [],
+      );
+      expect(result).toHaveLength(2);
+      const names = result.map(r => r.name).sort();
+      expect(names).toEqual(['deploy', 'lint']);
+      for (const item of result) {
+        expect(item.scope).toBe('global');
+        expect(item.category).toBe('skill');
+        expect(item.projectPath).toBeNull();
+      }
+    });
+
+    it('should skip dotfiles in skills directory', async () => {
+      const skillsDir = path.join(tmpDir, 'legacy', 'skills');
+      await mkdir(path.join(skillsDir, 'visible-skill'), { recursive: true });
+      await mkdir(path.join(skillsDir, '.hidden-skill'), { recursive: true });
+
+      const result = await scanSkills(
+        { legacy: path.join(tmpDir, 'legacy'), xdg: path.join(tmpDir, 'xdg') },
+        [],
+      );
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('visible-skill');
+    });
+
+    it('should skip regular files (not directories or symlinks)', async () => {
+      const skillsDir = path.join(tmpDir, 'legacy', 'skills');
+      await mkdir(skillsDir, { recursive: true });
+      await mkdir(path.join(skillsDir, 'real-skill'), { recursive: true });
+      await writeFile(path.join(skillsDir, 'not-a-skill.txt'), 'just a file');
+
+      const result = await scanSkills(
+        { legacy: path.join(tmpDir, 'legacy'), xdg: path.join(tmpDir, 'xdg') },
+        [],
+      );
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('real-skill');
+    });
+
+    it('should include symlinks as skill entries', async () => {
+      const skillsDir = path.join(tmpDir, 'legacy', 'skills');
+      const targetDir = path.join(tmpDir, 'target-skill');
+      await mkdir(skillsDir, { recursive: true });
+      await mkdir(targetDir, { recursive: true });
+      await symlink(targetDir, path.join(skillsDir, 'linked-skill'));
+
+      const result = await scanSkills(
+        { legacy: path.join(tmpDir, 'legacy'), xdg: path.join(tmpDir, 'xdg') },
+        [],
+      );
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('linked-skill');
+    });
+
+    it('should discover project-local skills with scope=project', async () => {
+      const projPath = path.join(tmpDir, 'my-project');
+      const skillsDir = path.join(projPath, '.claude', 'skills');
+      await mkdir(path.join(skillsDir, 'project-skill'), { recursive: true });
+
+      const result = await scanSkills(
+        { legacy: path.join(tmpDir, 'legacy'), xdg: path.join(tmpDir, 'xdg') },
+        [projPath],
+      );
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('project-skill');
+      expect(result[0].scope).toBe('project');
+      expect(result[0].projectPath).toBe(projPath);
+    });
+
+    it('should discover both global and project skills', async () => {
+      // Global skill
+      const globalDir = path.join(tmpDir, 'legacy', 'skills');
+      await mkdir(path.join(globalDir, 'global-skill'), { recursive: true });
+
+      // Project skill
+      const projPath = path.join(tmpDir, 'project');
+      const projDir = path.join(projPath, '.claude', 'skills');
+      await mkdir(path.join(projDir, 'local-skill'), { recursive: true });
+
+      const result = await scanSkills(
+        { legacy: path.join(tmpDir, 'legacy'), xdg: path.join(tmpDir, 'xdg') },
+        [projPath],
+      );
+      expect(result).toHaveLength(2);
+      const global = result.find(r => r.name === 'global-skill');
+      const local = result.find(r => r.name === 'local-skill');
+      expect(global?.scope).toBe('global');
+      expect(local?.scope).toBe('project');
+      expect(local?.projectPath).toBe(projPath);
+    });
+  });
+}
