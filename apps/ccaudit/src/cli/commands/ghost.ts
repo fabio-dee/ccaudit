@@ -9,8 +9,12 @@ import {
   formatTotalOverhead,
   calculateHealthScore,
   classifyRecommendation,
+  buildChangePlan,
+  computeGhostHash,
+  writeCheckpoint,
+  resolveCheckpointPath,
 } from '@ccaudit/internal';
-import type { InvocationRecord, CategorySummary } from '@ccaudit/internal';
+import type { InvocationRecord, CategorySummary, Checkpoint } from '@ccaudit/internal';
 import {
   renderHeader,
   humanizeSinceWindow,
@@ -21,9 +25,12 @@ import {
   initColor,
   csvTable,
   tsvRow,
+  renderChangePlan,
+  renderChangePlanVerbose,
 } from '@ccaudit/terminal';
 import { outputArgs } from '../_shared-args.ts';
 import { resolveOutputMode, buildJsonEnvelope } from '../_output-mode.ts';
+import { CCAUDIT_VERSION } from '../../_version.ts';
 
 export const ghostCommand = define({
   name: 'ghost',
@@ -46,6 +53,11 @@ export const ghostCommand = define({
       type: 'boolean',
       short: 'v',
       description: 'Show scan details',
+      default: false,
+    },
+    dryRun: {
+      type: 'boolean',
+      description: 'Preview changes without mutating files (writes checkpoint to ~/.claude/ccaudit/.last-dry-run)',
       default: false,
     },
   },
@@ -109,6 +121,92 @@ export const ghostCommand = define({
 
     // Step 3.5: Enrich with token estimates
     const enriched = await enrichScanResults(results);
+
+    // Step 3.6: Dry-run branch (Phase 7, D-01 through D-20)
+    // Lifted before the inventory rendering chain per RESEARCH §CLI Integration —
+    // single decision point, four output modes per command mode (8 test cases total).
+    if (ctx.values.dryRun) {
+      const plan = buildChangePlan(enriched);
+
+      // Compute the hash over archive-eligible items (D-10 through D-16)
+      const ghostHash = await computeGhostHash(enriched);
+
+      // Build the checkpoint object (D-17 schema — all 7 fields mandatory)
+      const checkpoint: Checkpoint = {
+        checkpoint_version: 1,
+        ccaudit_version: CCAUDIT_VERSION,
+        timestamp: new Date().toISOString(),
+        since_window: sinceStr,
+        ghost_hash: ghostHash,
+        item_count: plan.counts,
+        savings: plan.savings,
+      };
+
+      // Render to stdout FIRST per D-20 (user sees output even if checkpoint write fails)
+      if (mode.json) {
+        // D-02: dry-run honors --json. Envelope payload = { dryRun, changePlan, checkpoint }.
+        const envelope = buildJsonEnvelope('ghost', sinceStr, 0, {
+          dryRun: true,
+          changePlan: {
+            archive: plan.archive,
+            disable: plan.disable,
+            flag: plan.flag,
+            counts: plan.counts,
+            savings: plan.savings,
+          },
+          checkpoint: {
+            path: resolveCheckpointPath(),
+            ghost_hash: ghostHash,
+            timestamp: checkpoint.timestamp,
+            ccaudit_version: checkpoint.ccaudit_version,
+            checkpoint_version: checkpoint.checkpoint_version,
+          },
+        });
+        const indent = mode.quiet ? 0 : 2;
+        console.log(JSON.stringify(envelope, null, indent));
+      } else if (mode.csv) {
+        // D-02: dry-run honors --csv. Schema: action,category,name,scope,projectPath,path,tokens,tier
+        const headers = ['action', 'category', 'name', 'scope', 'projectPath', 'path', 'tokens', 'tier'];
+        const rows = [...plan.archive, ...plan.disable, ...plan.flag].map((i) => [
+          i.action, i.category, i.name, i.scope, i.projectPath ?? '', i.path, String(i.tokens), i.tier,
+        ]);
+        console.log(csvTable(headers, rows, !mode.quiet));
+      } else if (mode.quiet) {
+        // D-02: dry-run honors --quiet. TSV with same 8 columns as CSV, no header.
+        for (const item of [...plan.archive, ...plan.disable, ...plan.flag]) {
+          console.log(tsvRow([
+            item.action, item.category, item.name, item.scope,
+            item.projectPath ?? '', item.path, String(item.tokens), item.tier,
+          ]));
+        }
+      } else {
+        // Default rendered output (D-05, D-06): header + grouped body + verbose + checkpoint footer
+        console.log('');
+        console.log(renderHeader('\u{1F47B}', 'Dry-Run', humanizeSinceWindow(sinceStr)));
+        console.log('');
+        console.log(renderChangePlan(plan));
+        console.log('');
+        if (mode.verbose) {
+          console.log(renderChangePlanVerbose(plan));
+          console.log('');
+        }
+        // Footer (D-05): replaces the Phase 5 "Dry-run coming in v1.1" line
+        console.log(`Checkpoint: ${resolveCheckpointPath()}`);
+        console.log(`Next: ccaudit --dangerously-bust-ghosts`);
+      }
+
+      // Checkpoint write happens LAST. Any error converts to exit code 2 (D-20).
+      try {
+        await writeCheckpoint(checkpoint, resolveCheckpointPath());
+      } catch (err) {
+        console.error(`[ccaudit] Failed to write checkpoint: ${(err as Error).message}`);
+        process.exitCode = 2;
+        return;
+      }
+
+      // D-03, D-04: dry-run exits 0 on success even when plan is empty
+      return;
+    }
 
     // Step 4: Calculate health score
     const healthScore = calculateHealthScore(enriched);
