@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-04-03T21:58:37.158Z"
-last_activity: 2026-04-03
+status: executing
+stopped_at: Completed 03-01-PLAN.md
+last_updated: "2026-04-04T06:40:16.524Z"
+last_activity: 2026-04-04
 progress:
   total_phases: 10
   completed_phases: 2
-  total_plans: 4
-  completed_plans: 4
+  total_plans: 7
+  completed_plans: 5
   percent: 0
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-03)
 
 **Core value:** Show users exactly how many tokens their ghost inventory wastes -- and give them one safe, reversible command to reclaim them.
-**Current focus:** Phase 02 — jsonl-parser
+**Current focus:** Phase 03 — inventory-scanner
 
 ## Current Position
 
-Phase: 3
-Plan: Not started
-Status: Phase complete — ready for verification
-Last activity: 2026-04-03
+Phase: 03 (inventory-scanner) — EXECUTING
+Plan: 2 of 3
+Status: Ready to execute
+Last activity: 2026-04-04
 
 Progress: [..........] 0%
 
@@ -55,6 +55,7 @@ Progress: [..........] 0%
 | Phase 01-foundation-scaffold P02 | 3min | 2 tasks | 8 files |
 | Phase 02-jsonl-parser P01 | 4min | 2 tasks | 7 files |
 | Phase 02-jsonl-parser P02 | 21min | 2 tasks | 10 files |
+| Phase 03-inventory-scanner P01 | 4min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -79,6 +80,9 @@ Recent decisions affecting current work:
 - [Phase 02-jsonl-parser]: MCP name parsing splits on first __ after mcp__ prefix, supporting server names with single underscores
 - [Phase 02-jsonl-parser]: isSidechain detection uses both file path pattern AND JSONL data field for robustness
 - [Phase 02-jsonl-parser]: emitDeclarationOnly + declaration replaces noEmit in composite project tsconfig for TypeScript project references
+- [Phase 03-inventory-scanner]: classifyGhost uses inclusive <= boundaries: exactly 7d is used, exactly 30d is likely-ghost
+- [Phase 03-inventory-scanner]: InvocationSummary.projects uses Set<string> for automatic deduplication
+- [Phase 03-inventory-scanner]: ISO 8601 string comparison used for lastTimestamp ordering (lexicographically correct)
 
 ### Pending Todos
 
@@ -93,6 +97,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-03T21:55:27.619Z
-Stopped at: Completed 02-02-PLAN.md
+Last session: 2026-04-04T06:40:16.522Z
+Stopped at: Completed 03-01-PLAN.md
 Resume file: None

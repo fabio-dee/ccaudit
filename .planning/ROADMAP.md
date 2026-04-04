@@ -73,7 +73,7 @@ Plans:
   5. Per-project breakdown is available alongside the global cross-project view
 **Plans:** 3 plans
 Plans:
-- [ ] 03-01-PLAN.md — Scanner type contracts, ghost classification, invocation map builder
+- [x] 03-01-PLAN.md — Scanner type contracts, ghost classification, invocation map builder
 - [ ] 03-02-PLAN.md — Four scanner modules (agents, skills, MCP servers, memory files)
 - [ ] 03-03-PLAN.md — Coordinator, barrel exports, ghost CLI wiring
 
