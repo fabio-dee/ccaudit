@@ -63,9 +63,9 @@
 
 ### Dry-Run (v1.1)
 
-- [ ] **DRYR-01**: `ccaudit --dry-run` shows full change plan (which agents archived, which MCP servers disabled, estimated token savings) without touching the filesystem
-- [ ] **DRYR-02**: Checkpoint written to `~/.claude/ccaudit/.last-dry-run` on successful dry-run: timestamp + SHA-256 hash of current ghost inventory (agent file paths + mtimes + MCP configs)
-- [ ] **DRYR-03**: Checkpoint invalidated when ghost inventory hash changes (hash-based, not time-based expiry)
+- [x] **DRYR-01**: `ccaudit --dry-run` shows full change plan (which agents archived, which MCP servers disabled, estimated token savings) without touching the filesystem
+- [x] **DRYR-02**: Checkpoint written to `~/.claude/ccaudit/.last-dry-run` on successful dry-run: timestamp + SHA-256 hash of current ghost inventory (agent file paths + mtimes + MCP configs)
+- [x] **DRYR-03**: Checkpoint invalidated when ghost inventory hash changes (hash-based, not time-based expiry)
 
 ### Remediation (v1.2)
 

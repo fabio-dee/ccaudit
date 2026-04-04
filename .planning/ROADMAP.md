@@ -141,7 +141,7 @@ Plans:
   2. A checkpoint file is written to `~/.claude/ccaudit/.last-dry-run` containing timestamp and SHA-256 hash of the current ghost inventory
   3. The checkpoint is invalidated when the ghost inventory hash changes (hash-based, not time-based expiry)
 **Plans:** 3 plans
-- [ ] 07-01-PLAN.md — @ccaudit/internal remediation module: buildChangePlan, calculateDryRunSavings, computeGhostHash, writeCheckpoint, readCheckpoint + in-source tests
+- [x] 07-01-PLAN.md — @ccaudit/internal remediation module: buildChangePlan, calculateDryRunSavings, computeGhostHash, writeCheckpoint, readCheckpoint + in-source tests
 - [ ] 07-02-PLAN.md — @ccaudit/terminal renderChangePlan renderer + CLI --dry-run flag wiring + CCAUDIT_VERSION prebuild injection
 - [ ] 07-03-PLAN.md — End-to-end integration test (dry-run-command.test.ts) against tmpdir fixture + workspace coverage gate
 
