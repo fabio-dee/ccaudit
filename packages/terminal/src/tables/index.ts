@@ -4,3 +4,4 @@ export { renderGhostSummary, renderTopGhosts, renderGhostFooter } from './ghost-
 export { renderInventoryTable } from './inventory-table.ts';
 export { renderMcpTable } from './mcp-table.ts';
 export { renderTrendTable } from './trend-table.ts';
+export { renderChangePlan, renderChangePlanVerbose } from './change-plan.ts';

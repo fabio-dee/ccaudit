@@ -10,6 +10,8 @@ export {
   renderInventoryTable,
   renderMcpTable,
   renderTrendTable,
+  renderChangePlan,
+  renderChangePlanVerbose,
 } from './tables/index.ts';
 
 export { initColor, isColorEnabled, getTableStyle, colorize } from './color.ts';
