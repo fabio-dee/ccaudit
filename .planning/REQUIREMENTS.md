@@ -25,10 +25,10 @@
 
 ### Inventory Scanner
 
-- [ ] **SCAN-01**: Ghost agents detected: files in `~/.claude/agents/` and `.claude/agents/` with zero invocations in time window
-- [ ] **SCAN-02**: Ghost skills detected: `~/.claude/skills/` and `.claude/skills/` files with zero `Skill` tool_use invocations in time window
-- [ ] **SCAN-03**: Ghost MCP servers detected: entries in `~/.claude.json` (`mcpServers` root key + `projects.<path>.mcpServers`) and `.mcp.json` with zero `mcp__<server>__*` invocations in time window
-- [ ] **SCAN-04**: Stale memory files detected: CLAUDE.md and `rules/` files with no modification in >30 days (file mod-date heuristic)
+- [x] **SCAN-01**: Ghost agents detected: files in `~/.claude/agents/` and `.claude/agents/` with zero invocations in time window
+- [x] **SCAN-02**: Ghost skills detected: `~/.claude/skills/` and `.claude/skills/` files with zero `Skill` tool_use invocations in time window
+- [x] **SCAN-03**: Ghost MCP servers detected: entries in `~/.claude.json` (`mcpServers` root key + `projects.<path>.mcpServers`) and `.mcp.json` with zero `mcp__<server>__*` invocations in time window
+- [x] **SCAN-04**: Stale memory files detected: CLAUDE.md and `rules/` files with no modification in >30 days (file mod-date heuristic)
 - [x] **SCAN-05**: "Likely ghost" tier (7-30d since last invocation) vs "definite ghost" tier (>30d / never) shown in default output
 - [x] **SCAN-06**: `lastUsed` date shown in every ghost row -- never "ghost" without "last seen N days ago"
 - [ ] **SCAN-07**: Per-project breakdown available alongside global cross-project view
