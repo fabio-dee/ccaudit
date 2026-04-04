@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "generatedAt": "2026-04-04T00:00:00Z",
+  "contextWindowSize": 200000,
+  "methodology": "Token estimates based on tool definition JSON schema sizes. MCP servers register tools via tools/list; each tool definition consumes ~700 tokens on average. Estimates labeled 'estimated' are derived from toolCount * 700. Estimates labeled 'community-reported' are from user measurements. Estimates labeled 'measured' are from live tools/list token counting.",
+  "entries": [
+    {
+      "name": "context7",
+      "toolCount": 2,
+      "estimatedTokens": 1500,
+      "confidence": "estimated",
+      "lastUpdated": "2026-04-04T00:00:00Z",
+      "notes": "resolve-library-id + get-library-docs"
+    },
+    {
+      "name": "sequential-thinking",
+      "toolCount": 1,
+      "estimatedTokens": 800,
+      "confidence": "estimated",
+      "lastUpdated": "2026-04-04T00:00:00Z",
+      "notes": "Single tool with moderate schema"
+    },
+    {
+      "name": "playwright",
+      "toolCount": 20,
+      "estimatedTokens": 14000,
+      "confidence": "community-reported",
+      "lastUpdated": "2026-04-04T00:00:00Z",
+      "notes": "~700 tokens per tool, 20 tools"
+    },
+    {
+      "name": "filesystem",
+      "toolCount": 11,
+      "estimatedTokens": 7700,
+      "confidence": "estimated",
+      "lastUpdated": "2026-04-04T00:00:00Z",
+      "notes": "Standard filesystem operations"
+    },
+    {
+      "name": "github",
+      "toolCount": 30,
+      "estimatedTokens": 21000,
+      "confidence": "estimated",
+      "lastUpdated": "2026-04-04T00:00:00Z",
+      "notes": "Large tool set with complex schemas"
+    },
+    {
+      "name": "fetch",
+      "toolCount": 1,
+      "estimatedTokens": 700,
+      "confidence": "estimated",
+      "lastUpdated": "2026-04-04T00:00:00Z",
+      "notes": "Single fetch tool"
+    },
+    {
+      "name": "memory",
+      "toolCount": 3,
+      "estimatedTokens": 2100,
+      "confidence": "estimated",
+      "lastUpdated": "2026-04-04T00:00:00Z",
+      "notes": "store/retrieve/search"
+    },
+    {
+      "name": "brave-search",
+      "toolCount": 2,
+      "estimatedTokens": 1400,
+      "confidence": "estimated",
+      "lastUpdated": "2026-04-04T00:00:00Z",
+      "notes": "web_search + local_search"
+    },
+    {
+      "name": "puppeteer",
+      "toolCount": 12,
+      "estimatedTokens": 8400,
+      "confidence": "estimated",
+      "lastUpdated": "2026-04-04T00:00:00Z",
+      "notes": "Browser automation tools"
+    },
+    {
+      "name": "slack",
+      "toolCount": 8,
+      "estimatedTokens": 5600,
+      "confidence": "estimated",
+      "lastUpdated": "2026-04-04T00:00:00Z",
+      "notes": "Messaging and channel tools"
+    }
+  ]
+}
