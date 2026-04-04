@@ -90,7 +90,7 @@ Plans:
 Plans:
 - [x] 04-01-PLAN.md — Token types, bundled JSON data, file-size estimator, format functions
 - [x] 04-02-PLAN.md — Minimal MCP JSON-RPC client for --live measurement
-- [ ] 04-03-PLAN.md — Enrichment pipeline, ghost command token display, mcp subcommand
+- [x] 04-03-PLAN.md — Enrichment pipeline, ghost command token display, mcp subcommand
 
 ### Phase 5: Report & CLI Commands
 **Goal**: Users can run `ccaudit ghost`, `ccaudit inventory`, `ccaudit mcp`, and `ccaudit trend` to see ghost tables with Defined/Used/Ghost/Token-cost columns, a health score, per-item recommendations, and the `--since` window prominently displayed
