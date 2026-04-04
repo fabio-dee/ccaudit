@@ -4,12 +4,16 @@ import {
   parseSession,
   parseDuration,
   buildTrendData,
+  scanAll,
+  enrichScanResults,
+  calculateHealthScore,
 } from '@ccaudit/internal';
 import type { InvocationRecord } from '@ccaudit/internal';
 import {
   renderHeader,
   humanizeSinceWindow,
   renderTrendTable,
+  renderHealthScore,
 } from '@ccaudit/terminal';
 
 export const trendCommand = define({
@@ -56,18 +60,35 @@ export const trendCommand = define({
     }
 
     const allInvocations: InvocationRecord[] = [];
+    const projectPaths = new Set<string>();
     for (const file of files) {
       const result = await parseSession(file, sinceMs);
       allInvocations.push(...result.invocations);
+      if (result.meta.projectPath) {
+        projectPaths.add(result.meta.projectPath);
+      }
     }
 
     const buckets = buildTrendData(allInvocations, sinceMs);
+
+    // Run inventory scan for health score calculation
+    const { results } = await scanAll(allInvocations, {
+      projectPaths: [...projectPaths],
+    });
+    const enriched = await enrichScanResults(results);
+    const healthScore = calculateHealthScore(enriched);
 
     if (ctx.values.json) {
       console.log(JSON.stringify({
         window: sinceStr,
         files: files.length,
         buckets,
+        healthScore: {
+          score: healthScore.score,
+          grade: healthScore.grade,
+          ghostPenalty: healthScore.ghostPenalty,
+          tokenPenalty: healthScore.tokenPenalty,
+        },
       }, null, 2));
     } else {
       console.log('');
@@ -80,6 +101,9 @@ export const trendCommand = define({
       } else {
         console.log(renderTrendTable(buckets));
       }
+
+      console.log('');
+      console.log(renderHealthScore(healthScore));
     }
   },
 });
