@@ -75,7 +75,7 @@ Plans:
 Plans:
 - [x] 03-01-PLAN.md — Scanner type contracts, ghost classification, invocation map builder
 - [x] 03-02-PLAN.md — Four scanner modules (agents, skills, MCP servers, memory files)
-- [ ] 03-03-PLAN.md — Coordinator, barrel exports, ghost CLI wiring
+- [x] 03-03-PLAN.md — Coordinator, barrel exports, ghost CLI wiring
 
 ### Phase 4: Token Cost Attribution
 **Goal**: Every ghost item has an estimated token cost from the bundled `mcp-token-estimates.json`, with clear confidence labeling and a `--live` path for exact MCP server measurements

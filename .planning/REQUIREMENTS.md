@@ -31,7 +31,7 @@
 - [x] **SCAN-04**: Stale memory files detected: CLAUDE.md and `rules/` files with no modification in >30 days (file mod-date heuristic)
 - [x] **SCAN-05**: "Likely ghost" tier (7-30d since last invocation) vs "definite ghost" tier (>30d / never) shown in default output
 - [x] **SCAN-06**: `lastUsed` date shown in every ghost row -- never "ghost" without "last seen N days ago"
-- [ ] **SCAN-07**: Per-project breakdown available alongside global cross-project view
+- [x] **SCAN-07**: Per-project breakdown available alongside global cross-project view
 
 ### Token Cost Attribution
 
