@@ -3,8 +3,9 @@ import {
   discoverSessionFiles,
   parseSession,
   parseDuration,
+  scanAll,
 } from '@ccaudit/internal';
-import type { InvocationRecord } from '@ccaudit/internal';
+import type { InvocationRecord, ScanResult } from '@ccaudit/internal';
 
 export const ghostCommand = define({
   name: 'ghost',
@@ -54,7 +55,6 @@ export const ghostCommand = define({
     // Step 2: Parse all session files
     const allInvocations: InvocationRecord[] = [];
     const projectPaths = new Set<string>();
-    let parsedCount = 0;
 
     for (const file of files) {
       const result = await parseSession(file, sinceMs);
@@ -62,37 +62,72 @@ export const ghostCommand = define({
       if (result.meta.projectPath) {
         projectPaths.add(result.meta.projectPath);
       }
-      parsedCount++;
     }
 
-    // Step 3: Summarize by kind
-    const agents = allInvocations.filter(r => r.kind === 'agent');
-    const skills = allInvocations.filter(r => r.kind === 'skill');
-    const mcps = allInvocations.filter(r => r.kind === 'mcp');
+    // Step 3: Run inventory scanner
+    if (ctx.values.verbose) {
+      console.log('Scanning inventory...');
+    }
+
+    const { results, byProject } = await scanAll(allInvocations, {
+      projectPaths: [...projectPaths],
+    });
+
+    // Step 4: Filter to ghosts only
+    const ghosts = results.filter(r => r.tier !== 'used');
+    const likelyGhosts = ghosts.filter(r => r.tier === 'likely-ghost');
+    const definiteGhosts = ghosts.filter(r => r.tier === 'definite-ghost');
 
     if (ctx.values.json) {
       console.log(JSON.stringify({
         window: sinceStr,
         files: files.length,
         projects: projectPaths.size,
-        invocations: {
-          total: allInvocations.length,
-          agents: agents.length,
-          skills: skills.length,
-          mcp: mcps.length,
+        inventory: results.length,
+        ghosts: {
+          total: ghosts.length,
+          likely: likelyGhosts.length,
+          definite: definiteGhosts.length,
         },
+        items: ghosts.map(r => ({
+          name: r.item.name,
+          category: r.item.category,
+          scope: r.item.scope,
+          tier: r.tier,
+          lastUsed: r.lastUsed?.toISOString() ?? null,
+          invocations: r.invocationCount,
+          path: r.item.path,
+          projectPath: r.item.projectPath,
+        })),
       }, null, 2));
     } else {
       console.log(`\nccaudit ghost (window: ${sinceStr})`);
-      console.log(`${'─'.repeat(40)}`);
-      console.log(`Files scanned: ${files.length}`);
-      console.log(`Projects: ${projectPaths.size}`);
-      console.log(`\nInvocations found:`);
-      console.log(`  Agents: ${agents.length}`);
-      console.log(`  Skills: ${skills.length}`);
-      console.log(`  MCP:    ${mcps.length}`);
-      console.log(`  Total:  ${allInvocations.length}`);
-      console.log(`\n(Ghost detection requires inventory scan -- Phase 3)`);
+      console.log('\u2500'.repeat(50));
+      console.log(`Scanned: ${files.length} files, ${projectPaths.size} projects`);
+      console.log(`Inventory: ${results.length} items`);
+      console.log(`Ghosts: ${ghosts.length} (${likelyGhosts.length} likely, ${definiteGhosts.length} definite)\n`);
+
+      if (ghosts.length === 0) {
+        console.log('No ghosts found. Your inventory is clean!');
+        return;
+      }
+
+      // Group ghosts by category for display
+      const categories = ['agent', 'skill', 'mcp-server', 'memory'] as const;
+      for (const cat of categories) {
+        const catGhosts = ghosts.filter(r => r.item.category === cat);
+        if (catGhosts.length === 0) continue;
+
+        console.log(`${cat.toUpperCase()}S (${catGhosts.length} ghost${catGhosts.length === 1 ? '' : 's'}):`);
+        for (const r of catGhosts) {
+          const lastUsedStr = r.lastUsed
+            ? `last used ${Math.floor((Date.now() - r.lastUsed.getTime()) / 86_400_000)}d ago`
+            : 'never used';
+          const tierLabel = r.tier === 'definite-ghost' ? 'GHOST' : 'LIKELY';
+          console.log(`  [${tierLabel}] ${r.item.name} \u2014 ${lastUsedStr} (${r.item.scope})`);
+        }
+        console.log('');
+      }
     }
   },
 });

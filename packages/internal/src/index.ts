@@ -36,3 +36,27 @@ export {
   contentBlockSchema,
 } from './schemas/tool-use.ts';
 export type { ToolUseBlock, ContentBlock } from './schemas/tool-use.ts';
+
+// Scanner module (Phase 3)
+export {
+  scanAll,
+  scanAgents,
+  scanSkills,
+  scanMcpServers,
+  scanMemoryFiles,
+  classifyGhost,
+  buildInvocationMaps,
+  readClaudeConfig,
+  resolveSkillName,
+  matchInventory,
+  groupByProject,
+  LIKELY_GHOST_MS,
+  DEFINITE_GHOST_MS,
+} from './scanner/index.ts';
+export type {
+  InventoryItem,
+  ScanResult,
+  ScannerOptions,
+  InvocationSummary,
+} from './scanner/index.ts';
+export type { ClaudeConfig } from './scanner/index.ts';
