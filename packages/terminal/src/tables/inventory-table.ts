@@ -132,5 +132,47 @@ if (import.meta.vitest) {
       const output = renderInventoryTable(results);
       expect(output).toContain('Monitor');
     });
+
+    it('renders "today" when lastUsed is now (used tier with real Date)', () => {
+      const results = [makeResult('active-agent', 'used', 1000)];
+      const output = renderInventoryTable(results);
+      expect(output).toContain('today');
+    });
+
+    it('renders "1d ago" for a 1-day-old lastUsed', () => {
+      const result: TokenCostResult = {
+        item: {
+          name: 'yesterday-agent',
+          path: '/x',
+          scope: 'global',
+          category: 'agent',
+          projectPath: null,
+        },
+        tier: 'used',
+        lastUsed: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000 - 60000),
+        invocationCount: 1,
+        tokenEstimate: null,
+      };
+      const output = renderInventoryTable([result]);
+      expect(output).toContain('1d ago');
+    });
+
+    it('renders "Nd ago" for a multi-day-old lastUsed', () => {
+      const result: TokenCostResult = {
+        item: {
+          name: 'week-old-agent',
+          path: '/x',
+          scope: 'global',
+          category: 'agent',
+          projectPath: null,
+        },
+        tier: 'likely-ghost',
+        lastUsed: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+        invocationCount: 0,
+        tokenEstimate: null,
+      };
+      const output = renderInventoryTable([result]);
+      expect(output).toContain('7d ago');
+    });
   });
 }

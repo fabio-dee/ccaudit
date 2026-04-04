@@ -237,4 +237,70 @@ if (import.meta.vitest) {
       expect(result).toContain('Dry-run coming in v1.1');
     });
   });
+
+  describe('formatLastUsed branches (via renderTopGhosts)', () => {
+    /**
+     * These tests exercise the private formatLastUsed helper through the
+     * public renderTopGhosts renderer, covering the today / 1d ago / Nd ago
+     * branches that null-only fixtures cannot reach.
+     */
+    function makeDatedGhost(name: string, tokens: number, lastUsed: Date | null): TokenCostResult {
+      return {
+        item: {
+          name,
+          path: `/test/${name}`,
+          scope: 'global',
+          category: 'agent',
+          projectPath: null,
+        },
+        tier: 'definite-ghost',
+        lastUsed,
+        invocationCount: 0,
+        tokenEstimate: { tokens, confidence: 'estimated', source: 'test' },
+      };
+    }
+
+    it('renders "today" when lastUsed is now', () => {
+      const ghosts = [makeDatedGhost('fresh', 500, new Date())];
+      const output = renderTopGhosts(ghosts);
+      expect(output).toContain('today');
+    });
+
+    it('renders "1d ago" when lastUsed is exactly 1 day old', () => {
+      const oneDayAgo = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000 - 60000);
+      const ghosts = [makeDatedGhost('yesterday', 500, oneDayAgo)];
+      const output = renderTopGhosts(ghosts);
+      expect(output).toContain('1d ago');
+    });
+
+    it('renders "Nd ago" for multi-day-old lastUsed', () => {
+      const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+      const ghosts = [makeDatedGhost('stale', 500, fiveDaysAgo)];
+      const output = renderTopGhosts(ghosts);
+      expect(output).toContain('5d ago');
+    });
+  });
+
+  describe('formatTokenShort branches (via renderGhostSummary)', () => {
+    /**
+     * Exercise the private formatTokenShort helper through renderGhostSummary,
+     * covering the mid-range (1000 <= tokens < 10000) and small (< 1000)
+     * branches that the fixture summaries (all >= 10000) do not reach.
+     */
+    it('renders mid-range tokens as ~X.Yk tokens/session', () => {
+      const summaries: CategorySummary[] = [
+        { category: 'agent', defined: 5, used: 2, ghost: 3, tokenCost: 3500 },
+      ];
+      const output = renderGhostSummary(summaries);
+      expect(output).toContain('~3.5k tokens/session');
+    });
+
+    it('renders small tokens as ~N tokens/session (no k suffix)', () => {
+      const summaries: CategorySummary[] = [
+        { category: 'skill', defined: 5, used: 3, ghost: 2, tokenCost: 250 },
+      ];
+      const output = renderGhostSummary(summaries);
+      expect(output).toContain('~250 tokens/session');
+    });
+  });
 }

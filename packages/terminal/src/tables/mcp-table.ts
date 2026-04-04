@@ -116,5 +116,118 @@ if (import.meta.vitest) {
       const output = renderMcpTable(results);
       expect(output).toContain('42');
     });
+
+    it('formats likely-ghost tier with yellow LIKELY label', () => {
+      const results: TokenCostResult[] = [{
+        item: {
+          name: 'edge-case',
+          path: '/x',
+          scope: 'global',
+          category: 'mcp-server',
+          projectPath: null,
+        },
+        tier: 'likely-ghost',
+        lastUsed: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+        invocationCount: 0,
+        tokenEstimate: { tokens: 1000, confidence: 'estimated', source: 'test' },
+      }];
+      const output = renderMcpTable(results);
+      expect(output).toContain('edge-case');
+      expect(output).toContain('LIKELY');
+    });
+
+    it('formats monitor recommendation for likely-ghost', () => {
+      const results: TokenCostResult[] = [{
+        item: {
+          name: 'watch-me',
+          path: '/x',
+          scope: 'global',
+          category: 'mcp-server',
+          projectPath: null,
+        },
+        tier: 'likely-ghost',
+        lastUsed: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000),
+        invocationCount: 0,
+        tokenEstimate: null,
+      }];
+      const output = renderMcpTable(results);
+      expect(output).toContain('Monitor');
+    });
+
+    it('formats keep recommendation and ACTIVE tier with today lastUsed', () => {
+      const results: TokenCostResult[] = [{
+        item: {
+          name: 'active',
+          path: '/x',
+          scope: 'global',
+          category: 'mcp-server',
+          projectPath: null,
+        },
+        tier: 'used',
+        lastUsed: new Date(),
+        invocationCount: 10,
+        tokenEstimate: { tokens: 500, confidence: 'measured', source: 'live' },
+      }];
+      const output = renderMcpTable(results);
+      expect(output).toContain('Keep');
+      expect(output).toContain('ACTIVE');
+      expect(output).toContain('today');
+    });
+
+    it('formats 1d ago for exactly 1 day lastUsed', () => {
+      const results: TokenCostResult[] = [{
+        item: {
+          name: 'yesterday',
+          path: '/x',
+          scope: 'global',
+          category: 'mcp-server',
+          projectPath: null,
+        },
+        lastUsed: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000 - 60000),
+        tier: 'used',
+        invocationCount: 1,
+        tokenEstimate: null,
+      }];
+      const output = renderMcpTable(results);
+      expect(output).toContain('1d ago');
+    });
+
+    it('formats Nd ago for multi-day lastUsed', () => {
+      const results: TokenCostResult[] = [{
+        item: {
+          name: 'last-week',
+          path: '/x',
+          scope: 'global',
+          category: 'mcp-server',
+          projectPath: null,
+        },
+        tier: 'definite-ghost',
+        lastUsed: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
+        invocationCount: 0,
+        tokenEstimate: { tokens: 2000, confidence: 'community-reported', source: 'test' },
+      }];
+      const output = renderMcpTable(results);
+      expect(output).toContain('5d ago');
+    });
+
+    it('formats never for null lastUsed on definite-ghost with Archive action', () => {
+      const results: TokenCostResult[] = [{
+        item: {
+          name: 'dead',
+          path: '/x',
+          scope: 'global',
+          category: 'mcp-server',
+          projectPath: null,
+        },
+        tier: 'definite-ghost',
+        lastUsed: null,
+        invocationCount: 0,
+        tokenEstimate: null,
+      }];
+      const output = renderMcpTable(results);
+      expect(output).toContain('never');
+      expect(output).toContain('GHOST');
+      expect(output).toContain('Archive');
+    });
   });
 }
