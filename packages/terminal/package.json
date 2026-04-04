@@ -12,6 +12,8 @@
   },
   "devDependencies": {
     "cli-table3": "catalog:",
+    "picocolors": "catalog:",
+    "@ccaudit/internal": "workspace:*",
     "typescript": "catalog:",
     "vitest": "catalog:",
     "@types/node": "catalog:"
