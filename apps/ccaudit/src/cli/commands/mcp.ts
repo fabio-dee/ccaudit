@@ -6,13 +6,19 @@ import {
   scanAll,
   enrichScanResults,
   calculateTotalOverhead,
+  formatTotalOverhead,
   readClaudeConfig,
   measureMcpTokens,
-  formatTokenEstimate,
-  formatTotalOverhead,
-  CONTEXT_WINDOW_SIZE,
+  calculateHealthScore,
+  classifyRecommendation,
 } from '@ccaudit/internal';
-import type { InvocationRecord, McpServerConfig, TokenCostResult } from '@ccaudit/internal';
+import type { InvocationRecord, TokenCostResult } from '@ccaudit/internal';
+import {
+  renderHeader,
+  humanizeSinceWindow,
+  renderMcpTable,
+  renderHealthScore,
+} from '@ccaudit/terminal';
 
 export const mcpCommand = define({
   name: 'mcp',
@@ -143,17 +149,21 @@ export const mcpCommand = define({
     }
 
     // Step 7: Display results
-    const totalTokens = calculateTotalOverhead(enriched);
-
     if (ctx.values.json) {
+      const totalTokens = calculateTotalOverhead(enriched);
+      const healthScore = calculateHealthScore(enriched);
       console.log(JSON.stringify({
         window: sinceStr,
         live: ctx.values.live ?? false,
         servers: enriched.length,
         totalOverhead: {
           tokens: totalTokens,
-          percentage: ((totalTokens / CONTEXT_WINDOW_SIZE) * 100).toFixed(1),
-          contextWindow: CONTEXT_WINDOW_SIZE,
+        },
+        healthScore: {
+          score: healthScore.score,
+          grade: healthScore.grade,
+          ghostPenalty: healthScore.ghostPenalty,
+          tokenPenalty: healthScore.tokenPenalty,
         },
         items: enriched.map(r => ({
           name: r.item.name,
@@ -167,32 +177,55 @@ export const mcpCommand = define({
             confidence: r.tokenEstimate.confidence,
             source: r.tokenEstimate.source,
           } : null,
+          recommendation: classifyRecommendation(r.tier),
         })),
       }, null, 2));
     } else {
-      const mode = ctx.values.live ? 'live' : 'estimated';
-      console.log(`\nccaudit mcp (window: ${sinceStr}, mode: ${mode})`);
-      console.log('\u2500'.repeat(50));
-      console.log(`MCP servers: ${enriched.length}\n`);
+      console.log('');
+      const modeLabel = ctx.values.live ? ' (live)' : '';
+      console.log(renderHeader('\u{1F50C}', `MCP Servers${modeLabel}`, humanizeSinceWindow(sinceStr)));
+      console.log('');
 
       if (enriched.length === 0) {
         console.log('No MCP servers found in inventory.');
-        return;
-      }
+      } else {
+        console.log(renderMcpTable(enriched));
+        console.log('');
 
-      for (const r of enriched) {
-        const tierLabel = r.tier === 'used' ? 'ACTIVE' : r.tier === 'likely-ghost' ? 'LIKELY' : 'GHOST';
-        const lastUsedStr = r.lastUsed
-          ? `last used ${Math.floor((Date.now() - r.lastUsed.getTime()) / 86_400_000)}d ago`
-          : 'never used';
-        const tokenStr = formatTokenEstimate(r.tokenEstimate);
-        console.log(`  [${tierLabel}] ${r.item.name} (${r.item.scope}) | ${tokenStr} | ${lastUsedStr}`);
+        const totalOverhead = calculateTotalOverhead(enriched);
+        if (totalOverhead > 0) {
+          console.log(`Total MCP overhead: ${formatTotalOverhead(totalOverhead)}`);
+        }
       }
 
       console.log('');
-      if (totalTokens > 0) {
-        console.log(`Total MCP overhead: ${formatTotalOverhead(totalTokens)}`);
-      }
+      console.log(renderHealthScore(calculateHealthScore(enriched)));
     }
   },
 });
+
+if (import.meta.vitest) {
+  const { describe, it, expect } = import.meta.vitest;
+
+  describe('mcp command wiring', () => {
+    it('renderMcpTable is callable', () => {
+      expect(typeof renderMcpTable).toBe('function');
+    });
+
+    it('classifyRecommendation maps tiers correctly', () => {
+      expect(classifyRecommendation('definite-ghost')).toBe('archive');
+      expect(classifyRecommendation('likely-ghost')).toBe('monitor');
+      expect(classifyRecommendation('used')).toBe('keep');
+    });
+
+    it('mcpCommand has correct name and args', () => {
+      expect(mcpCommand.name).toBe('mcp');
+      expect(mcpCommand.args).toBeDefined();
+      const argKeys = Object.keys(mcpCommand.args!);
+      expect(argKeys).toContain('since');
+      expect(argKeys).toContain('json');
+      expect(argKeys).toContain('verbose');
+      expect(argKeys).toContain('live');
+    });
+  });
+}

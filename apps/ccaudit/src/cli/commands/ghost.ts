@@ -6,11 +6,19 @@ import {
   scanAll,
   enrichScanResults,
   calculateTotalOverhead,
-  formatTokenEstimate,
   formatTotalOverhead,
-  CONTEXT_WINDOW_SIZE,
+  calculateHealthScore,
+  classifyRecommendation,
 } from '@ccaudit/internal';
-import type { InvocationRecord, TokenCostResult } from '@ccaudit/internal';
+import type { InvocationRecord, CategorySummary } from '@ccaudit/internal';
+import {
+  renderHeader,
+  humanizeSinceWindow,
+  renderGhostSummary,
+  renderTopGhosts,
+  renderGhostFooter,
+  renderHealthScore,
+} from '@ccaudit/terminal';
 
 export const ghostCommand = define({
   name: 'ghost',
@@ -57,6 +65,12 @@ export const ghostCommand = define({
       console.log(`Found ${files.length} session file(s)`);
     }
 
+    if (files.length === 0) {
+      console.log('No session files found. Check that Claude Code has been used recently.');
+      console.log('Session files are stored in ~/.claude/projects/ and ~/.config/claude/projects/');
+      return;
+    }
+
     // Step 2: Parse all session files
     const allInvocations: InvocationRecord[] = [];
     const projectPaths = new Set<string>();
@@ -74,17 +88,37 @@ export const ghostCommand = define({
       console.log('Scanning inventory...');
     }
 
-    const { results, byProject } = await scanAll(allInvocations, {
+    const { results } = await scanAll(allInvocations, {
       projectPaths: [...projectPaths],
     });
 
     // Step 3.5: Enrich with token estimates
     const enriched = await enrichScanResults(results);
 
-    // Step 4: Filter to ghosts only
+    // Step 4: Calculate health score
+    const healthScore = calculateHealthScore(enriched);
+
+    // Step 5: Filter to ghosts only
     const ghosts = enriched.filter(r => r.tier !== 'used');
-    const likelyGhosts = ghosts.filter(r => r.tier === 'likely-ghost');
-    const definiteGhosts = ghosts.filter(r => r.tier === 'definite-ghost');
+
+    // Step 6: Build category summaries
+    const categories = ['agent', 'skill', 'mcp-server', 'memory'] as const;
+    const summaries: CategorySummary[] = categories.map(cat => {
+      const catItems = enriched.filter(r => r.item.category === cat);
+      const catUsed = catItems.filter(r => r.tier === 'used');
+      const catGhosts = catItems.filter(r => r.tier !== 'used');
+      const tokenCost = catGhosts.reduce(
+        (sum, r) => sum + (r.tokenEstimate?.tokens ?? 0),
+        0,
+      );
+      return {
+        category: cat,
+        defined: catItems.length,
+        used: catUsed.length,
+        ghost: catGhosts.length,
+        tokenCost,
+      };
+    });
 
     if (ctx.values.json) {
       const totalTokens = calculateTotalOverhead(ghosts);
@@ -95,13 +129,17 @@ export const ghostCommand = define({
         inventory: enriched.length,
         ghosts: {
           total: ghosts.length,
-          likely: likelyGhosts.length,
-          definite: definiteGhosts.length,
+          likely: ghosts.filter(r => r.tier === 'likely-ghost').length,
+          definite: ghosts.filter(r => r.tier === 'definite-ghost').length,
+        },
+        healthScore: {
+          score: healthScore.score,
+          grade: healthScore.grade,
+          ghostPenalty: healthScore.ghostPenalty,
+          tokenPenalty: healthScore.tokenPenalty,
         },
         totalOverhead: {
           tokens: totalTokens,
-          percentage: ((totalTokens / CONTEXT_WINDOW_SIZE) * 100).toFixed(1),
-          contextWindow: CONTEXT_WINDOW_SIZE,
         },
         items: ghosts.map(r => ({
           name: r.item.name,
@@ -117,43 +155,35 @@ export const ghostCommand = define({
             confidence: r.tokenEstimate.confidence,
             source: r.tokenEstimate.source,
           } : null,
+          recommendation: classifyRecommendation(r.tier),
         })),
       }, null, 2));
     } else {
-      console.log(`\nccaudit ghost (window: ${sinceStr})`);
-      console.log('\u2500'.repeat(50));
-      console.log(`Scanned: ${files.length} files, ${projectPaths.size} projects`);
-      console.log(`Inventory: ${enriched.length} items`);
-      console.log(`Ghosts: ${ghosts.length} (${likelyGhosts.length} likely, ${definiteGhosts.length} definite)\n`);
+      console.log('');
+      console.log(renderHeader('\u{1F47B}', 'Ghost Inventory', humanizeSinceWindow(sinceStr)));
+      console.log('');
+      console.log(renderGhostSummary(summaries));
+      console.log('');
 
-      if (ghosts.length === 0) {
-        console.log('No ghosts found. Your inventory is clean!');
-        return;
-      }
-
-      // Group ghosts by category for display
-      const categories = ['agent', 'skill', 'mcp-server', 'memory'] as const;
-      for (const cat of categories) {
-        const catGhosts = ghosts.filter(r => r.item.category === cat);
-        if (catGhosts.length === 0) continue;
-
-        console.log(`${cat.toUpperCase()}S (${catGhosts.length} ghost${catGhosts.length === 1 ? '' : 's'}):`);
-        for (const r of catGhosts) {
-          const lastUsedStr = r.lastUsed
-            ? `last used ${Math.floor((Date.now() - r.lastUsed.getTime()) / 86_400_000)}d ago`
-            : 'never used';
-          const tierLabel = r.tier === 'definite-ghost' ? 'GHOST' : 'LIKELY';
-          const tokenStr = formatTokenEstimate(r.tokenEstimate);
-          console.log(`  [${tierLabel}] ${r.item.name} \u2014 ${lastUsedStr} (${r.item.scope}) | ${tokenStr}`);
-        }
+      const totalOverhead = calculateTotalOverhead(ghosts);
+      if (totalOverhead > 0) {
+        console.log(`Total ghost overhead: ${formatTotalOverhead(totalOverhead)}`);
         console.log('');
       }
 
-      // Token overhead summary
-      const totalOverhead = calculateTotalOverhead(ghosts);
-      if (totalOverhead > 0) {
-        console.log(formatTotalOverhead(totalOverhead));
+      if (ghosts.length === 0) {
+        console.log('No ghosts found. Your inventory is clean!');
+      } else {
+        const topGhostsStr = renderTopGhosts(ghosts, 5);
+        if (topGhostsStr) {
+          console.log(topGhostsStr);
+          console.log('');
+        }
       }
+
+      console.log(renderHealthScore(healthScore));
+      console.log('');
+      console.log(renderGhostFooter(sinceStr));
     }
   },
 });
