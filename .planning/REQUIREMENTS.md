@@ -54,8 +54,8 @@
 ### Output Control
 
 - [ ] **OUTP-01**: Exit codes: 0 = no ghosts found, 1 = ghosts found (enables CI/pre-commit use)
-- [ ] **OUTP-02**: `NO_COLOR` environment variable respected; `--no-color` flag available (ANSI-free for piped/CI output)
-- [ ] **OUTP-03**: `--quiet` / `-q` flag: machine-readable data only, no decorative output
+- [x] **OUTP-02**: `NO_COLOR` environment variable respected; `--no-color` flag available (ANSI-free for piped/CI output)
+- [x] **OUTP-03**: `--quiet` / `-q` flag: machine-readable data only, no decorative output
 - [ ] **OUTP-04**: `--verbose` / `-v` flag: show files scanned, skipped, and parsing decisions
 - [ ] **OUTP-05**: `--ci` flag: combines exit-code + quiet + JSON for GitHub Actions / CI pipelines
 - [x] **OUTP-06**: `--json` export on all read commands (structured output)
