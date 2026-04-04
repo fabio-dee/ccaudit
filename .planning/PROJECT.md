@@ -46,9 +46,9 @@ Show users exactly how many tokens their ghost inventory wastes — and give the
 
 
 **v1.1 — Dry-run**
-- [ ] `ccaudit --dry-run`: full change plan output, no filesystem changes
-- [ ] Write checkpoint to `~/.claude/ccaudit/.last-dry-run` on successful dry-run
-- [ ] Checkpoint contains: timestamp, ghost inventory hash (sha256 of agents/skills/settings dirs), item counts
+- [x] `ccaudit --dry-run`: full change plan output, no filesystem changes (Validated in Phase 7: Dry-Run & Checkpoint)
+- [x] Write checkpoint to `~/.claude/ccaudit/.last-dry-run` on successful dry-run (Validated in Phase 7: Dry-Run & Checkpoint)
+- [x] Checkpoint contains: timestamp, ghost inventory hash (sha256 over canonicalized agent/skill/MCP inventory + mtimes), item counts, savings, ccaudit_version (Validated in Phase 7: Dry-Run & Checkpoint)
 
 **v1.2 — Remediation**
 - [ ] `ccaudit --dangerously-bust-ghosts`: gated remediation with triple confirmation
@@ -120,7 +120,7 @@ Before any conversation: ~108k tokens consumed (54% of 200k window) — MCP tool
 | Name: `ccaudit` not `ccghostbuster` | "Ghostbusters" is Sony trademark — legal risk at virality | — Pending |
 | Ghost concept lives in UX, not name | Viral asset (`--dangerously-bust-ghosts`) without trademark exposure | — Pending |
 | v1.0 analysis-only | Build trust before touching files; ccusage proved read-only earns adoption | — Pending |
-| Hash-based checkpoint expiry | Time-based (24h) is wrong — a 5-min-old dry-run is invalid if user added agents; hash is correct | — Pending |
+| Hash-based checkpoint expiry | Time-based (24h) is wrong — a 5-min-old dry-run is invalid if user added agents; hash is correct | ✓ Implemented (Phase 7) |
 | Archive not delete for agents/skills | Reversibility; users won't trust a tool that deletes their work | — Pending |
 | Key-rename not comment-out for MCP | JSON doesn't support comments — `// foo` in JSON = parse error; key-rename to `ccaudit-disabled:<name>` preserves valid JSON | ✓ Corrected |
 | MCP config source: `~/.claude.json` not `settings.json` | MCP servers are in `~/.claude.json` and `.mcp.json`; `settings.json` contains permissions/hooks only | ✓ Corrected |
@@ -148,4 +148,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-04 after Phase 6 completion (v1.0 launch candidate — output control, CI coverage enforcement, publishable npm package)*
+*Last updated: 2026-04-04 after Phase 7 completion (v1.1 dry-run + hash-based checkpoint — `ccaudit --dry-run` ships the full change plan preview across all four output modes and writes `~/.claude/ccaudit/.last-dry-run` gated by SHA-256 inventory hash; 353/353 tests, coverage 93.49% stmt / 84.71% br / 95.95% fn / 94.3% lines)*
