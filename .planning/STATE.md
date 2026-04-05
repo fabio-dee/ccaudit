@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: verifying
-stopped_at: Completed 07-03-PLAN.md (Phase 7 ready for verification)
-last_updated: "2026-04-04T21:32:40.562Z"
+stopped_at: "Completed 07-04-PLAN.md (gap closure: ENOENT fix for broken-symlink skills — real-world smoke test passes)"
+last_updated: "2026-04-05T05:11:54.494Z"
 last_activity: 2026-04-04
 progress:
   total_phases: 10
   completed_phases: 7
-  total_plans: 23
-  completed_plans: 23
+  total_plans: 24
+  completed_plans: 24
   percent: 100
 ---
 
@@ -74,6 +74,7 @@ Progress: [████████████████████] 14/14 p
 | Phase 07-dry-run-checkpoint P01 | 14min | 3 tasks | 5 files |
 | Phase 07-dry-run-checkpoint P02 | 5min | 3 tasks | 9 files |
 | Phase 07-dry-run-checkpoint P03 | 6min | 2 tasks | 3 files |
+| Phase 07-dry-run-checkpoint P04 | 7min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -149,6 +150,10 @@ Recent decisions affecting current work:
 - [Phase 07-dry-run-checkpoint]: Subprocess integration test pattern: spawn dist/index.js with HOME override, mkdtemp fixture, NO_COLOR=1 for deterministic stdout assertions
 - [Phase 07-dry-run-checkpoint]: gunshi toKebab: true required at command level for camelCase arg keys to expose as --kebab-case on CLI (Plan 02's auto-kebab assumption was wrong)
 - [Phase 07-dry-run-checkpoint]: gunshi renderHeader: null at cli() call site suppresses decorative banner that was leaking into --json/--csv/--quiet output for all commands (pre-existing Phase 6 bug)
+- [Phase 07-dry-run-checkpoint]: Broad bare catch{} in try/catch-stat scanner loops mirrors scan-memory.ts precedent — handles ENOENT/ELOOP/EACCES/ENOTDIR uniformly without error-code discrimination
+- [Phase 07-dry-run-checkpoint]: stat() not lstat() in scanners — follows symlinks so valid linked skills resolve through to target mtime; only broken links throw and get skipped
+- [Phase 07-dry-run-checkpoint]: computeGhostHash null-sentinel safety net (HashRecord | null + type-predicate filter) preserves Promise.all parallelism and D-17 'items enter/leave eligible set' contract — un-stat-able items effectively leave the set
+- [Phase 07-dry-run-checkpoint]: Two-layer fix for file-disappearance: scanner fix is primary root cause (populates mtimeMs at discovery), hash safety net is belt-and-suspenders against future scanner regressions
 
 ### Pending Todos
 
@@ -163,6 +168,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-04T21:27:34.030Z
-Stopped at: Completed 07-03-PLAN.md (Phase 7 ready for verification)
+Last session: 2026-04-05T05:11:54.492Z
+Stopped at: Completed 07-04-PLAN.md (gap closure: ENOENT fix for broken-symlink skills — real-world smoke test passes)
 Resume file: None

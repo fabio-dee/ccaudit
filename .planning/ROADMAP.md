@@ -144,7 +144,7 @@ Plans:
 - [x] 07-01-PLAN.md — @ccaudit/internal remediation module: buildChangePlan, calculateDryRunSavings, computeGhostHash, writeCheckpoint, readCheckpoint + in-source tests
 - [x] 07-02-PLAN.md — @ccaudit/terminal renderChangePlan renderer + CLI --dry-run flag wiring + CCAUDIT_VERSION prebuild injection
 - [x] 07-03-PLAN.md — End-to-end integration test (dry-run-command.test.ts) against tmpdir fixture + workspace coverage gate
-- [ ] 07-04-PLAN.md — Gap closure: fix scanner mtimeMs + computeGhostHash safety net for un-stat-able paths (broken-symlink skills)
+- [x] 07-04-PLAN.md — Gap closure: fix scanner mtimeMs + computeGhostHash safety net for un-stat-able paths (broken-symlink skills)
 
 ### Phase 8: Remediation Core
 **Goal**: `ccaudit --dangerously-bust-ghosts` safely remediates all ghost items -- archiving agents/skills, disabling MCP servers via key-rename, flagging stale memory -- with running-process detection, atomic writes, and triple confirmation
