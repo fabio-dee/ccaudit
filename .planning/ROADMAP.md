@@ -162,14 +162,14 @@ Plans:
   9. CI matrix extended to `windows-latest`; `fs.rename` EPERM retry logic verified on Windows with exponential backoff test
 **Plans:** 8 plans
 Plans:
-- [ ] 08-01-PLAN.md — Wave 0: extract atomic-write.ts + Windows EPERM retry + CI windows-latest + REQUIREMENTS.md RMED-02 amendment
-- [ ] 08-02-PLAN.md — Wave 0: collisions.ts ISO-suffix helpers + processes.ts ps/tasklist scan with parent-chain
-- [ ] 08-03-PLAN.md — Wave 0: frontmatter.ts hand-rolled YAML patcher with 10-fixture test set
-- [ ] 08-04-PLAN.md — Wave 0: manifest.ts JSONL append writer with header/footer + 5 op type schemas
-- [ ] 08-05-PLAN.md — Wave 1: bust.ts orchestrator (checkpoint gate + preflight + ceremony + execute + manifest)
-- [ ] 08-06-PLAN.md — Wave 2: CLI wiring — --dangerously-bust-ghosts + --yes-proceed-busting flags + output matrix + exit ladder
-- [ ] 08-07-PLAN.md — Wave 3: subprocess integration test covering exit codes 0/1/3/4 + full pipeline side effects
-- [ ] 08-08-PLAN.md — Wave 3: README bust section + JSON-SCHEMA bust envelope + handoff doc D-15 amendment
+- [x] 08-01-PLAN.md — Wave 0: extract atomic-write.ts + Windows EPERM retry + CI windows-latest + REQUIREMENTS.md RMED-02 amendment
+- [x] 08-02-PLAN.md — Wave 0: collisions.ts ISO-suffix helpers + processes.ts ps/tasklist scan with parent-chain
+- [x] 08-03-PLAN.md — Wave 0: frontmatter.ts hand-rolled YAML patcher with 10-fixture test set
+- [x] 08-04-PLAN.md — Wave 0: manifest.ts JSONL append writer with header/footer + 5 op type schemas
+- [x] 08-05-PLAN.md — Wave 1: bust.ts orchestrator (checkpoint gate + preflight + ceremony + execute + manifest)
+- [x] 08-06-PLAN.md — Wave 2: CLI wiring — --dangerously-bust-ghosts + --yes-proceed-busting flags + output matrix + exit ladder
+- [x] 08-07-PLAN.md — Wave 3: subprocess integration test covering exit codes 0/1/3/4 + full pipeline side effects
+- [x] 08-08-PLAN.md — Wave 3: README bust section + JSON-SCHEMA bust envelope + handoff doc D-15 amendment
 
 ### Phase 9: Restore & Rollback
 **Goal**: Users can fully reverse any remediation -- restoring all archived items at once, restoring a single item by name, or listing what was archived
