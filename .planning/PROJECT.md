@@ -148,4 +148,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-04 after Phase 7 completion (v1.1 dry-run + hash-based checkpoint — `ccaudit --dry-run` ships the full change plan preview across all four output modes and writes `~/.claude/ccaudit/.last-dry-run` gated by SHA-256 inventory hash; 353/353 tests, coverage 93.49% stmt / 84.71% br / 95.95% fn / 94.3% lines)*
+*Last updated: 2026-04-05 after Phase 7 gap closure (07-04 fix for ENOENT on broken-symlink skills — scanner mtimeMs gap + `computeGhostHash` defensive safety net; first real-world smoke test against live `~/.claude/` now succeeds with stable hash across runs; 357/357 tests, coverage 93.61% stmt / 84.71% br / 96% fn / 94.4% lines; Phase 7 v1.1 milestone sealed)*
