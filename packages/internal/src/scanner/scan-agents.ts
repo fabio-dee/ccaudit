@@ -1,4 +1,5 @@
 import { glob } from 'tinyglobby';
+import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { InventoryItem } from './types.ts';
 import type { ClaudePaths } from '../types.ts';
@@ -26,13 +27,19 @@ export async function scanAgents(
         dot: false,
       });
       for (const filePath of files) {
-        items.push({
-          name: path.basename(filePath, '.md'),
-          path: filePath,
-          scope: 'global',
-          category: 'agent',
-          projectPath: null,
-        });
+        try {
+          const s = await stat(filePath);
+          items.push({
+            name: path.basename(filePath, '.md'),
+            path: filePath,
+            scope: 'global',
+            category: 'agent',
+            projectPath: null,
+            mtimeMs: s.mtimeMs,
+          });
+        } catch {
+          // File disappeared between glob and stat -- skip
+        }
       }
     } catch {
       // Directory doesn't exist -- silently skip
@@ -49,13 +56,19 @@ export async function scanAgents(
         dot: false,
       });
       for (const filePath of files) {
-        items.push({
-          name: path.basename(filePath, '.md'),
-          path: filePath,
-          scope: 'project',
-          category: 'agent',
-          projectPath: projPath,
-        });
+        try {
+          const s = await stat(filePath);
+          items.push({
+            name: path.basename(filePath, '.md'),
+            path: filePath,
+            scope: 'project',
+            category: 'agent',
+            projectPath: projPath,
+            mtimeMs: s.mtimeMs,
+          });
+        } catch {
+          // File disappeared between glob and stat -- skip
+        }
       }
     } catch {
       // Directory doesn't exist -- silently skip
@@ -67,7 +80,7 @@ export async function scanAgents(
 
 if (import.meta.vitest) {
   const { describe, it, expect, beforeEach, afterEach } = import.meta.vitest;
-  const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
+  const { mkdtemp, mkdir, writeFile, rm, unlink } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
 
   describe('scanAgents', () => {
@@ -189,6 +202,32 @@ if (import.meta.vitest) {
       expect(global?.scope).toBe('global');
       expect(local?.scope).toBe('project');
       expect(local?.projectPath).toBe(projPath);
+    });
+
+    it('should skip files that disappear between glob and stat (missing-file race)', async () => {
+      const agentsDir = path.join(tmpDir, 'legacy', 'agents');
+      await mkdir(agentsDir, { recursive: true });
+      // Create two agent files
+      await writeFile(path.join(agentsDir, 'stable-agent.md'), '# Stable agent');
+      const racyPath = path.join(agentsDir, 'racy-agent.md');
+      await writeFile(racyPath, '# Will be deleted');
+
+      // Delete one file before scanAgents runs. tinyglobby may or may not
+      // re-observe the deletion depending on OS caching -- the defensive
+      // try/catch-stat must swallow ENOENT regardless.
+      await unlink(racyPath);
+
+      const result = await scanAgents(
+        { legacy: path.join(tmpDir, 'legacy'), xdg: path.join(tmpDir, 'xdg') },
+        [],
+      );
+      // At minimum, the stable agent survives. The racy one may or may not
+      // appear in the glob result; if it does, it was caught by the try/catch.
+      const names = result.map(r => r.name);
+      expect(names).toContain('stable-agent');
+      expect(names).not.toContain('racy-agent');
+      // Every returned item must have mtimeMs populated
+      expect(result.every(r => typeof r.mtimeMs === 'number')).toBe(true);
     });
   });
 }

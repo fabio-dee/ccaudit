@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { InventoryItem } from './types.ts';
 import type { ClaudePaths } from '../types.ts';
@@ -48,13 +48,20 @@ export async function scanSkills(
     for (const entry of entries) {
       if (entry.name.startsWith('.')) continue; // Skip dotfiles
       if (entry.isDirectory() || entry.isSymbolicLink()) {
-        items.push({
-          name: entry.name,
-          path: path.join(skillsDir, entry.name),
-          scope: 'global',
-          category: 'skill',
-          projectPath: null,
-        });
+        const skillPath = path.join(skillsDir, entry.name);
+        try {
+          const s = await stat(skillPath);
+          items.push({
+            name: entry.name,
+            path: skillPath,
+            scope: 'global',
+            category: 'skill',
+            projectPath: null,
+            mtimeMs: s.mtimeMs,
+          });
+        } catch {
+          // Broken symlink, deleted target, or path disappeared between readdir and stat -- skip
+        }
       }
     }
   }
@@ -72,13 +79,20 @@ export async function scanSkills(
     for (const entry of entries) {
       if (entry.name.startsWith('.')) continue; // Skip dotfiles
       if (entry.isDirectory() || entry.isSymbolicLink()) {
-        items.push({
-          name: entry.name,
-          path: path.join(skillsDir, entry.name),
-          scope: 'project',
-          category: 'skill',
-          projectPath: projPath,
-        });
+        const skillPath = path.join(skillsDir, entry.name);
+        try {
+          const s = await stat(skillPath);
+          items.push({
+            name: entry.name,
+            path: skillPath,
+            scope: 'project',
+            category: 'skill',
+            projectPath: projPath,
+            mtimeMs: s.mtimeMs,
+          });
+        } catch {
+          // Broken symlink, deleted target, or path disappeared between readdir and stat -- skip
+        }
       }
     }
   }
@@ -218,6 +232,25 @@ if (import.meta.vitest) {
       );
       expect(result).toHaveLength(1);
       expect(result[0].name).toBe('linked-skill');
+      expect(result[0].mtimeMs).toBeTypeOf('number');
+    });
+
+    it('should skip broken symlinks (target deleted)', async () => {
+      const skillsDir = path.join(tmpDir, 'legacy', 'skills');
+      const missingTarget = path.join(tmpDir, 'deleted-target');
+      await mkdir(skillsDir, { recursive: true });
+      // Create a symlink whose target does NOT exist
+      await symlink(missingTarget, path.join(skillsDir, 'broken-link'));
+      // And a valid skill alongside to prove the filter is selective
+      await mkdir(path.join(skillsDir, 'valid-skill'), { recursive: true });
+
+      const result = await scanSkills(
+        { legacy: path.join(tmpDir, 'legacy'), xdg: path.join(tmpDir, 'xdg') },
+        [],
+      );
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('valid-skill');
+      expect(result[0].mtimeMs).toBeTypeOf('number');
     });
 
     it('should discover project-local skills with scope=project', async () => {
