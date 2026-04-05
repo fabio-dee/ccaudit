@@ -31,3 +31,8 @@ export {
   CLAUDE_NAME_REGEX,
 } from './processes.ts';
 export type { ClaudeProcess, DetectResult, ProcessDetectorDeps } from './processes.ts';
+
+// Phase 8: hand-rolled YAML frontmatter patcher for memory-file flagging
+// (D-07 idempotent refresh, D-08 three-case handling: prepend / inject / skip)
+export { patchFrontmatter } from './frontmatter.ts';
+export type { FrontmatterPatchResult } from './frontmatter.ts';

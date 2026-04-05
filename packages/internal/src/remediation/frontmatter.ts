@@ -255,7 +255,7 @@ if (import.meta.vitest) {
       return p;
     }
 
-    it('fixture 01: no frontmatter -> prepends block', async () => {
+    it('fixture 01: no frontmatter → prepends block', async () => {
       const file = await writeFixture('01.md', '# Heading\nBody text\n');
       const result = await patchFrontmatter(file, NOW);
       expect(result.status).toBe('patched');
@@ -270,7 +270,7 @@ if (import.meta.vitest) {
       );
     });
 
-    it('fixture 02: empty frontmatter -> injects both keys', async () => {
+    it('fixture 02: empty frontmatter → injects both keys', async () => {
       const file = await writeFixture('02.md', '---\n---\n\nBody\n');
       const result = await patchFrontmatter(file, NOW);
       expect(result.status).toBe('patched');
@@ -280,7 +280,7 @@ if (import.meta.vitest) {
       expect(out).toContain('\nBody\n');
     });
 
-    it('fixture 03: unrelated keys -> injects ccaudit keys, preserves others', async () => {
+    it('fixture 03: unrelated keys → injects ccaudit keys, preserves others', async () => {
       const file = await writeFixture('03.md', '---\ntitle: X\nauthor: Y\n---\n\nBody\n');
       const result = await patchFrontmatter(file, NOW);
       expect(result.status).toBe('patched');
@@ -294,7 +294,7 @@ if (import.meta.vitest) {
       expect(out).toContain('ccaudit-flagged: 2026-04-05T18:30:00.000Z');
     });
 
-    it('fixture 04: has ccaudit-stale -> refreshed (D-07)', async () => {
+    it('fixture 04: has ccaudit-stale → refreshed (D-07)', async () => {
       const file = await writeFixture(
         '04.md',
         '---\ntitle: X\nccaudit-stale: true\nccaudit-flagged: 2026-01-01T00:00:00Z\n---\n\nBody\n',
@@ -312,7 +312,7 @@ if (import.meta.vitest) {
       expect(out).toContain('title: X');
     });
 
-    it('fixture 05: folded scalar -> skipped exotic-yaml', async () => {
+    it('fixture 05: folded scalar → skipped exotic-yaml', async () => {
       const file = await writeFixture(
         '05.md',
         '---\ndescription: >\n  multi-line\n  folded\n---\nBody\n',
@@ -321,19 +321,19 @@ if (import.meta.vitest) {
       expect(result).toEqual({ status: 'skipped', reason: 'exotic-yaml' });
     });
 
-    it('fixture 06: array item -> skipped exotic-yaml', async () => {
+    it('fixture 06: array item → skipped exotic-yaml', async () => {
       const file = await writeFixture('06.md', '---\ntools:\n  - Read\n  - Write\n---\nBody\n');
       const result = await patchFrontmatter(file, NOW);
       expect(result).toEqual({ status: 'skipped', reason: 'exotic-yaml' });
     });
 
-    it('fixture 07: nested key -> skipped exotic-yaml', async () => {
+    it('fixture 07: nested key → skipped exotic-yaml', async () => {
       const file = await writeFixture('07.md', '---\nconfig:\n  nested: true\n---\nBody\n');
       const result = await patchFrontmatter(file, NOW);
       expect(result).toEqual({ status: 'skipped', reason: 'exotic-yaml' });
     });
 
-    it('fixture 08: CRLF line endings -> preserved on write', async () => {
+    it('fixture 08: CRLF line endings → preserved on write', async () => {
       const file = await writeFixture('08.md', '# Heading\r\nBody\r\n');
       const result = await patchFrontmatter(file, NOW);
       expect(result.status).toBe('patched');
@@ -345,7 +345,7 @@ if (import.meta.vitest) {
       expect(loneLF).toBe(false);
     });
 
-    it('fixture 09: unterminated frontmatter -> skipped exotic-yaml', async () => {
+    it('fixture 09: unterminated frontmatter → skipped exotic-yaml', async () => {
       const file = await writeFixture(
         '09.md',
         '---\nkey: value\n\n# Body (no closing fence)\n',
@@ -354,7 +354,7 @@ if (import.meta.vitest) {
       expect(result).toEqual({ status: 'skipped', reason: 'exotic-yaml' });
     });
 
-    it('fixture 10: empty file -> prepends fresh block', async () => {
+    it('fixture 10: empty file → prepends fresh block', async () => {
       const file = await writeFixture('10.md', '');
       const result = await patchFrontmatter(file, NOW);
       expect(result.status).toBe('patched');
@@ -377,7 +377,7 @@ if (import.meta.vitest) {
       }
     });
 
-    it('non-existent file -> skipped read-error', async () => {
+    it('non-existent file → skipped read-error', async () => {
       const result = await patchFrontmatter(path.join(tmp, 'nope.md'), NOW);
       expect(result).toEqual({ status: 'skipped', reason: 'read-error' });
     });
