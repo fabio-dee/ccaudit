@@ -129,7 +129,7 @@ export const mcpCommand = define({
     json: {
       type: 'boolean',
       short: 'j',
-      description: 'Output as JSON',
+      description: 'Output as JSON (see docs/JSON-SCHEMA.md for schema)',
       default: false,
     },
     verbose: {
