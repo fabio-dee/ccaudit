@@ -105,45 +105,54 @@ export async function computeGhostHash(
   // numbers would race-fail under Promise.all because all mcp records check
   // the empty map synchronously before any stat completes.
   const mcpConfigMtimeCache = new Map<string, Promise<number>>();
-  const records: HashRecord[] = await Promise.all(
-    eligible.map(async (r): Promise<HashRecord> => {
-      if (r.item.category === 'mcp-server') {
-        let configMtimePromise = mcpConfigMtimeCache.get(r.item.path);
-        if (configMtimePromise === undefined) {
-          configMtimePromise = statFn(r.item.path).then((s) => s.mtimeMs);
-          mcpConfigMtimeCache.set(r.item.path, configMtimePromise);
+  const maybeRecords: (HashRecord | null)[] = await Promise.all(
+    eligible.map(async (r): Promise<HashRecord | null> => {
+      try {
+        if (r.item.category === 'mcp-server') {
+          let configMtimePromise = mcpConfigMtimeCache.get(r.item.path);
+          if (configMtimePromise === undefined) {
+            configMtimePromise = statFn(r.item.path).then((s) => s.mtimeMs);
+            mcpConfigMtimeCache.set(r.item.path, configMtimePromise);
+          }
+          const configMtimeMs = await configMtimePromise;
+          return {
+            category: 'mcp-server',
+            scope: r.item.scope,
+            projectPath: r.item.projectPath,
+            serverName: r.item.name,
+            sourcePath: r.item.path,
+            configMtimeMs,
+          };
         }
-        const configMtimeMs = await configMtimePromise;
-        return {
-          category: 'mcp-server',
-          scope: r.item.scope,
-          projectPath: r.item.projectPath,
-          serverName: r.item.name,
-          sourcePath: r.item.path,
-          configMtimeMs,
-        };
-      }
-      if (r.item.category === 'memory') {
-        // Memory scanner populates mtimeMs (scan-memory.ts); fallback for safety.
+        if (r.item.category === 'memory') {
+          // Memory scanner populates mtimeMs (scan-memory.ts); fallback for safety.
+          const mtimeMs = r.item.mtimeMs ?? (await statFn(r.item.path)).mtimeMs;
+          return {
+            category: 'memory',
+            scope: r.item.scope,
+            path: r.item.path,
+            mtimeMs,
+          };
+        }
+        // Agent / skill: scanners now populate mtimeMs (Phase 7 gap fix 07-04).
+        // Fallback retained as a defensive safety net for any future regression.
         const mtimeMs = r.item.mtimeMs ?? (await statFn(r.item.path)).mtimeMs;
         return {
-          category: 'memory',
+          category: r.item.category as 'agent' | 'skill',
           scope: r.item.scope,
+          projectPath: r.item.projectPath,
           path: r.item.path,
           mtimeMs,
         };
+      } catch {
+        // Path cannot be stat'd (broken symlink, deleted file, EACCES, ELOOP, ENOTDIR).
+        // Consistent with frozen D-17 contract "items enter/leave eligible set":
+        // an un-stat-able item effectively leaves the set.
+        return null;
       }
-      // Agent / skill: scanners do NOT populate mtimeMs -- stat on demand.
-      const mtimeMs = r.item.mtimeMs ?? (await statFn(r.item.path)).mtimeMs;
-      return {
-        category: r.item.category as 'agent' | 'skill',
-        scope: r.item.scope,
-        projectPath: r.item.projectPath,
-        path: r.item.path,
-        mtimeMs,
-      };
     }),
   );
+  const records: HashRecord[] = maybeRecords.filter((r): r is HashRecord => r !== null);
 
   // Step 5: deterministic sort with stable POSIX locale (D-12)
   records.sort((a, b) => {
@@ -460,6 +469,36 @@ if (import.meta.vitest) {
       // concurrent requests under Promise.all.
       expect(calls).toHaveLength(2);
       expect(calls.sort()).toEqual([cfgA, cfgB].sort());
+    });
+
+    it('should skip items whose path cannot be stat\'d (broken symlink, deleted file)', async () => {
+      // Real ENOENT path -- no StatFn injection, so the error hits the actual
+      // node:fs/promises stat and must be swallowed by the defensive try/catch.
+      const tmp = await mkdtemp(path.join(tmpdir(), 'hash-enoent-'));
+      try {
+        // Valid control agent: backs onto a real file
+        const validPath = path.join(tmp, 'valid-agent.md');
+        await wf(validPath, 'valid agent body', 'utf8');
+
+        // Un-stat-able path: never existed
+        const missingPath = path.join(tmp, 'does-not-exist.md');
+
+        const withMissing = [
+          makeResult({ category: 'agent', tier: 'definite-ghost', name: 'missing', path: missingPath }),
+          makeResult({ category: 'agent', tier: 'definite-ghost', name: 'valid',   path: validPath }),
+        ];
+        const hash = await computeGhostHash(withMissing);
+        expect(hash).toMatch(/^sha256:[0-9a-f]{64}$/);
+
+        // Hash must match the "only valid item" control -- missing item is
+        // filtered out exactly as if it were never in the eligible set.
+        const controlHash = await computeGhostHash([
+          makeResult({ category: 'agent', tier: 'definite-ghost', name: 'valid', path: validPath }),
+        ]);
+        expect(hash).toBe(controlHash);
+      } finally {
+        await rm(tmp, { recursive: true, force: true });
+      }
     });
   });
 
