@@ -112,3 +112,22 @@ export type {
   Checkpoint,
   ReadCheckpointResult,
 } from './remediation/index.ts';
+
+// Remediation module (Phase 8 — bust orchestrator + wiring primitives)
+// Surfaced here so the CLI layer (apps/ccaudit) can import from
+// `@ccaudit/internal` without reaching into subpath modules.
+export {
+  runBust,
+  runConfirmationCeremony,
+  ManifestWriter,
+  resolveManifestPath,
+  patchFrontmatter,
+  atomicWriteJson,
+  defaultProcessDeps,
+} from './remediation/index.ts';
+export type {
+  BustResult,
+  BustDeps,
+  BustCounts,
+  CeremonyResult,
+} from './remediation/index.ts';

@@ -1,3 +1,6 @@
+import { rename, mkdir, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { platform as osPlatform } from 'node:os';
 import { define } from 'gunshi';
 import {
   discoverSessionFiles,
@@ -13,8 +16,22 @@ import {
   computeGhostHash,
   writeCheckpoint,
   resolveCheckpointPath,
+  runBust,
+  runConfirmationCeremony,
+  readCheckpoint,
+  ManifestWriter,
+  resolveManifestPath,
+  patchFrontmatter,
+  atomicWriteJson,
+  defaultProcessDeps,
 } from '@ccaudit/internal';
-import type { InvocationRecord, CategorySummary, Checkpoint } from '@ccaudit/internal';
+import type {
+  InvocationRecord,
+  CategorySummary,
+  Checkpoint,
+  BustResult,
+  BustDeps,
+} from '@ccaudit/internal';
 import {
   renderHeader,
   humanizeSinceWindow,
@@ -65,6 +82,18 @@ export const ghostCommand = define({
       type: 'boolean',
       description:
         'Preview changes without mutating files (writes checkpoint to ~/.claude/ccaudit/.last-dry-run)',
+      default: false,
+    },
+    dangerouslyBustGhosts: {
+      type: 'boolean',
+      description:
+        'Execute the bust plan: archive ghost agents/skills, disable ghost MCP, flag stale memory. Requires a prior successful --dry-run and matching inventory hash.',
+      default: false,
+    },
+    yesProceedBusting: {
+      type: 'boolean',
+      description:
+        'Skip the confirmation ceremony (required for non-TTY/CI). Name is intentionally unwieldy — do not copy-paste from the internet.',
       default: false,
     },
   },
@@ -241,6 +270,186 @@ export const ghostCommand = define({
       return;
     }
 
+    // Step 3.7: Bust branch (Phase 8, D-01 through D-18)
+    // Runs AFTER the existing scan+enrich pipeline for the ghost command, but
+    // drives its OWN scan+enrich via BustDeps.scanAndEnrich (self-contained,
+    // no closure capture of the outer `enriched` variable — Issue 3 Option A
+    // per 08-06-PLAN.md). Placed BEFORE the default ghost display path so
+    // `ghost --dangerously-bust-ghosts` never falls through.
+    if (ctx.values.dangerouslyBustGhosts) {
+      // Rule #1: --csv is REJECTED on bust (08-RESEARCH Output Mode matrix)
+      if (mode.csv) {
+        console.error(
+          '--csv is not supported on --dangerously-bust-ghosts; use --json for a structured report.',
+        );
+        process.exitCode = 1;
+        return;
+      }
+
+      // Rule #2: --ci implies --yes-proceed-busting on bust (08-RESEARCH matrix, D-16).
+      // This is the ONLY place where --ci implies destructive consent.
+      //
+      // Issue 2 fix: the expression is a direct ctx.values.ci check so it does
+      // NOT couple to Phase 6's resolveOutputMode internals. An earlier draft
+      // used a form that AND-gated the --ci check against the resolved json
+      // mode, which was fragile — it conflated "--ci implies --json" with
+      // "--ci implies --yes-proceed-busting" and would break silently if
+      // resolveOutputMode ever changed how it derives json. The matrix says
+      // --ci implies BOTH independently; check them independently.
+      const yes = ctx.values.yesProceedBusting === true || ctx.values.ci === true;
+
+      // Rule #3: Non-TTY without --yes-proceed-busting → exit 4 (D-17)
+      // Detect via truthy check (pitfall 3: isTTY can be undefined in CI).
+      const isTty = Boolean(process.stdin.isTTY);
+      if (!isTty && !yes) {
+        console.error(
+          'ccaudit --dangerously-bust-ghosts requires an interactive terminal.\n' +
+            'To run non-interactively, pass --yes-proceed-busting (only if you understand what you are doing).',
+        );
+        process.exitCode = 4;
+        return;
+      }
+
+      // Rule #4: Build BustDeps with a SELF-CONTAINED scanAndEnrich.
+      // scanAndEnrich drives the FULL discover → parse → scan → enrich pipeline
+      // internally rather than closing over the outer `enriched` variable. This
+      // makes runBust's dependency on the scan+enrich pipeline explicit and
+      // lets runBust be driven by test fixtures in unit tests without any
+      // outer ghost-command state.
+      //
+      // Note: the real scanAll signature is `scanAll(invocations, { projectPaths })`,
+      // not `scanAll(since)` — the Plan 06 text used a simplified shorthand.
+      // See 08-06-SUMMARY.md for the deviation rationale.
+      const deps: BustDeps = {
+        readCheckpoint,
+        checkpointPath: () => resolveCheckpointPath(),
+        scanAndEnrich: async () => {
+          const sessionFiles = await discoverSessionFiles({ sinceMs });
+          const invocations: InvocationRecord[] = [];
+          const projPaths = new Set<string>();
+          for (const file of sessionFiles) {
+            const result = await parseSession(file, sinceMs);
+            invocations.push(...result.invocations);
+            if (result.meta.projectPath) projPaths.add(result.meta.projectPath);
+          }
+          const { results: scanResults } = await scanAll(invocations, {
+            projectPaths: [...projPaths],
+          });
+          return enrichScanResults(scanResults);
+        },
+        computeHash: (e) => computeGhostHash(e),
+        processDetector: defaultProcessDeps,
+        selfPid: process.pid,
+        runCeremony: async ({ plan, yes: ceremonyYes }) => {
+          // Print the change plan to stdout BEFORE the prompts (D-15) so the
+          // user can read exactly what will be busted before they type `y`.
+          if (!ceremonyYes && !mode.quiet) {
+            console.log('');
+            console.log(renderChangePlan(plan));
+            console.log('');
+          }
+          return runConfirmationCeremony({ plan, yes: ceremonyYes });
+        },
+        renameFile: async (from, to) => {
+          await rename(from, to);
+        },
+        mkdirRecursive: async (dir, modeArg) => {
+          await mkdir(dir, { recursive: true, mode: modeArg });
+        },
+        readFileUtf8: (p) => readFile(p, 'utf8'),
+        patchMemoryFrontmatter: patchFrontmatter,
+        atomicWriteJson: (target, value) => atomicWriteJson(target, value),
+        pathExistsSync: existsSync,
+        createManifestWriter: (p) => new ManifestWriter(p),
+        manifestPath: () => resolveManifestPath(),
+        now: () => new Date(),
+        ccauditVersion: CCAUDIT_VERSION,
+        nodeVersion: process.version,
+        sinceWindow: sinceStr,
+        os: osPlatform(),
+      };
+
+      // Per-op verbose stderr log hook (wraps runCeremony to add progress output)
+      if (mode.verbose) {
+        console.error('[ccaudit] Starting bust pipeline...');
+      }
+
+      const result = await runBust({ yes, deps });
+
+      // ── Output rendering per BustResult variant ────────────────
+      if (mode.json) {
+        const envelope = buildJsonEnvelope(
+          'ghost',
+          sinceStr,
+          bustResultToExitCode(result),
+          { bust: bustResultToJson(result) },
+        );
+        const indent = mode.quiet ? 0 : 2;
+        console.log(JSON.stringify(envelope, null, indent));
+      } else {
+        // Human-readable rendering per BustResult discriminant.
+        switch (result.status) {
+          case 'success':
+            if (!mode.quiet) {
+              console.log('');
+              console.log(
+                `Done. Archive ${result.counts.archive.completed}, disable ${result.counts.disable.completed}, flag ${result.counts.flag.completed + result.counts.flag.refreshed}.`,
+              );
+              console.log(`Manifest: ${result.manifestPath}`);
+              console.log(`Duration: ${result.duration_ms}ms`);
+            }
+            break;
+          case 'partial-success':
+            if (!mode.quiet) {
+              console.log('');
+              console.log(
+                `Done with failures. ${result.failed} op(s) failed — see manifest for details.`,
+              );
+              console.log(`Manifest: ${result.manifestPath}`);
+            }
+            break;
+          case 'checkpoint-missing':
+            console.error(`No checkpoint found at ${result.checkpointPath}.`);
+            console.error('Run `ccaudit --dry-run` first to create a checkpoint.');
+            break;
+          case 'checkpoint-invalid':
+            console.error(`Checkpoint invalid: ${result.reason}`);
+            console.error('Run `ccaudit --dry-run` again to regenerate the checkpoint.');
+            break;
+          case 'hash-mismatch':
+            console.error('Inventory has changed since the last --dry-run.');
+            console.error(`Expected: ${result.expected}`);
+            console.error(`Actual:   ${result.actual}`);
+            console.error(
+              'Run `ccaudit --dry-run` again to see the current plan, then re-run bust.',
+            );
+            break;
+          case 'running-process':
+            console.error(result.message);
+            break;
+          case 'process-detection-failed':
+            console.error(`Could not verify Claude Code is stopped: ${result.error}`);
+            console.error(
+              'Run from a clean shell where ps (Unix) or tasklist (Windows) is available.',
+            );
+            break;
+          case 'user-aborted':
+            if (!mode.quiet) console.log(`Aborted at ${result.stage}.`);
+            break;
+          case 'config-parse-error':
+            console.error(`Could not parse ${result.path}: ${result.error}`);
+            console.error('Fix the file manually or restore from backup before re-running.');
+            break;
+          case 'config-write-error':
+            console.error(`Could not write ${result.path}: ${result.error}`);
+            break;
+        }
+      }
+
+      process.exitCode = bustResultToExitCode(result);
+      return;
+    }
+
     // Step 4: Calculate health score
     const healthScore = calculateHealthScore(enriched);
 
@@ -381,3 +590,85 @@ export const ghostCommand = define({
     }
   },
 });
+
+/**
+ * Map BustResult to process exit code per the exit code ladder:
+ *   0 = success (clean) or user-aborted (graceful abort is not a failure)
+ *   1 = partial-success / checkpoint-missing / checkpoint-invalid / hash-mismatch / config errors
+ *   2 = reserved (Phase 7 checkpoint write failure, not bust)
+ *   3 = running-process / process-detection-failed
+ *   4 = non-TTY without bypass (handled before runBust is called)
+ *
+ * Exhaustive switch — TypeScript will flag a missing case as a compile error
+ * if a new BustResult variant is added upstream.
+ */
+function bustResultToExitCode(result: BustResult): number {
+  switch (result.status) {
+    case 'success':
+      return 0;
+    case 'user-aborted':
+      return 0;
+    case 'partial-success':
+      return 1;
+    case 'checkpoint-missing':
+      return 1;
+    case 'checkpoint-invalid':
+      return 1;
+    case 'hash-mismatch':
+      return 1;
+    case 'config-parse-error':
+      return 1;
+    case 'config-write-error':
+      return 1;
+    case 'running-process':
+      return 3;
+    case 'process-detection-failed':
+      return 3;
+  }
+}
+
+/**
+ * Convert a BustResult to the JSON envelope payload shape. Every variant maps
+ * to a consistent structure Phase 9 / automation can parse deterministically.
+ */
+function bustResultToJson(result: BustResult): Record<string, unknown> {
+  const base: Record<string, unknown> = { status: result.status };
+  switch (result.status) {
+    case 'success':
+      return {
+        ...base,
+        manifestPath: result.manifestPath,
+        counts: result.counts,
+        duration_ms: result.duration_ms,
+      };
+    case 'partial-success':
+      return {
+        ...base,
+        manifestPath: result.manifestPath,
+        counts: result.counts,
+        duration_ms: result.duration_ms,
+        failed: result.failed,
+      };
+    case 'checkpoint-missing':
+      return { ...base, checkpointPath: result.checkpointPath };
+    case 'checkpoint-invalid':
+      return { ...base, reason: result.reason };
+    case 'hash-mismatch':
+      return { ...base, expected: result.expected, actual: result.actual };
+    case 'running-process':
+      return {
+        ...base,
+        pids: result.pids,
+        selfInvocation: result.selfInvocation,
+        message: result.message,
+      };
+    case 'process-detection-failed':
+      return { ...base, error: result.error };
+    case 'user-aborted':
+      return { ...base, stage: result.stage };
+    case 'config-parse-error':
+      return { ...base, path: result.path, error: result.error };
+    case 'config-write-error':
+      return { ...base, path: result.path, error: result.error };
+  }
+}
