@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: "Completed 06-07-PLAN.md (gap closure: all 4 escaped gaps from Phase 6 VERIFICATION.md closed — JSON schema docs, --no-color help visibility, mcp cross-project dedup, pnpm -r build subpackage stubs)"
-last_updated: "2026-04-05T06:40:46.569Z"
+last_updated: "2026-04-05T06:57:10.777Z"
 last_activity: 2026-04-05
 progress:
   total_phases: 10
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-04)
 
 **Core value:** Show users exactly how many tokens their ghost inventory wastes -- and give them one safe, reversible command to reclaim them.
-**Current focus:** Phase 06 — output-control-polish
+**Current focus:** Phase 08 — remediation-core (next incomplete phase; Phases 06 and 07 both sealed)
 
 ## Current Position
 
-Phase: 06 (output-control-polish) — EXECUTING
-Plan: 2 of 7
-Status: Ready to execute
+Phase: 08
+Plan: Not started
+Status: Ready to plan
 Last activity: 2026-04-05
 
 Progress: [████████████████████] 14/14 plans (100%)
