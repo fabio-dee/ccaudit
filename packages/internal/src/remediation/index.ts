@@ -12,3 +12,11 @@ export type { Checkpoint, ReadCheckpointResult, StatFn } from './checkpoint.ts';
 // Phase 8: atomic write primitive (D-18 extraction, reused by bust orchestrator)
 export { atomicWriteJson, renameWithRetry } from './atomic-write.ts';
 export type { AtomicWriteOptions } from './atomic-write.ts';
+
+// Phase 8: collision helpers (D-05, D-06) + nested-path-preserving archive builder
+export {
+  timestampSuffixForFilename,
+  timestampSuffixForJsonKey,
+  buildArchivePath,
+  buildDisabledMcpKey,
+} from './collisions.ts';
