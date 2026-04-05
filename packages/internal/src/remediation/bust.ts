@@ -760,3 +760,599 @@ function defaultCeremonyIo(): CeremonyIO {
     },
   };
 }
+
+// -- In-source tests ----------------------------------------------
+
+if (import.meta.vitest) {
+  const { describe, it, expect, beforeEach, afterEach } = import.meta.vitest;
+  const { mkdtemp, writeFile: wf, rm, readFile: rf, mkdir: mk } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { readManifest } = await import('./manifest.ts');
+  type ArchiveOp = import('./manifest.ts').ArchiveOp;
+  type DisableOp = import('./manifest.ts').DisableOp;
+
+  // Factory: minimal BustDeps with all-passing defaults. Individual tests
+  // spread `makeDeps(tmp, { ...overrides })` to vary one knob at a time.
+  function makeDeps(tmp: string, overrides: Partial<BustDeps> = {}): BustDeps {
+    const manifestPath = path.join(tmp, 'manifest.jsonl');
+    const checkpointPath = path.join(tmp, '.last-dry-run');
+    return {
+      readCheckpoint: async () => ({
+        status: 'ok',
+        checkpoint: {
+          checkpoint_version: 1,
+          ccaudit_version: '0.0.1',
+          timestamp: '2026-04-05T18:30:00.000Z',
+          since_window: '7d',
+          ghost_hash: 'sha256:test',
+          item_count: { agents: 0, skills: 0, mcp: 0, memory: 0 },
+          savings: { tokens: 0 },
+        },
+      }),
+      checkpointPath: () => checkpointPath,
+      scanAndEnrich: async () => [],
+      computeHash: async () => 'sha256:test',
+      processDetector: {
+        runCommand: async () => '',
+        getParentPid: async () => null,
+        platform: 'linux' as NodeJS.Platform,
+      },
+      selfPid: 999,
+      runCeremony: async () => ({ status: 'accepted' }),
+      renameFile: async (from, to) => {
+        await rename(from, to);
+      },
+      mkdirRecursive: async (dir, mode) => {
+        await mk(dir, { recursive: true, mode });
+      },
+      readFileUtf8: async (p) => rf(p, 'utf8'),
+      patchMemoryFrontmatter: patchFrontmatter,
+      atomicWriteJson: async (target, value) => {
+        await wf(target, JSON.stringify(value, null, 2), 'utf8');
+      },
+      pathExistsSync: () => false,
+      createManifestWriter: (p) => new ManifestWriter(p),
+      manifestPath: () => manifestPath,
+      now: () => new Date('2026-04-05T18:30:00.000Z'),
+      ccauditVersion: '0.0.1',
+      nodeVersion: 'v22',
+      sinceWindow: '7d',
+      os: 'linux' as NodeJS.Platform,
+      ...overrides,
+    };
+  }
+
+  // ── Gate verification ────────────────────────────────────────────
+  describe('runBust — gate verification', () => {
+    let tmp: string;
+    beforeEach(async () => {
+      tmp = await mkdtemp(path.join(tmpdir(), 'bust-'));
+    });
+    afterEach(async () => {
+      await rm(tmp, { recursive: true, force: true });
+    });
+
+    it('returns checkpoint-missing when readCheckpoint reports missing', async () => {
+      const result = await runBust({
+        yes: true,
+        deps: makeDeps(tmp, { readCheckpoint: async () => ({ status: 'missing' }) }),
+      });
+      expect(result.status).toBe('checkpoint-missing');
+    });
+
+    it('returns checkpoint-invalid on parse-error', async () => {
+      const result = await runBust({
+        yes: true,
+        deps: makeDeps(tmp, {
+          readCheckpoint: async () => ({ status: 'parse-error', message: 'bad json' }),
+        }),
+      });
+      expect(result.status).toBe('checkpoint-invalid');
+    });
+
+    it('returns hash-mismatch when inventory hash differs from checkpoint', async () => {
+      const result = await runBust({
+        yes: true,
+        deps: makeDeps(tmp, { computeHash: async () => 'sha256:different' }),
+      });
+      expect(result.status).toBe('hash-mismatch');
+      if (result.status === 'hash-mismatch') {
+        expect(result.expected).toBe('sha256:test');
+        expect(result.actual).toBe('sha256:different');
+      }
+    });
+  });
+
+  // ── Preflight running-process detection (D-02/D-03/D-04) ────────
+  describe('runBust — preflight running process detection', () => {
+    let tmp: string;
+    beforeEach(async () => {
+      tmp = await mkdtemp(path.join(tmpdir(), 'bust-pre-'));
+    });
+    afterEach(async () => {
+      await rm(tmp, { recursive: true, force: true });
+    });
+
+    it('returns running-process when detector finds Claude pids', async () => {
+      const deps = makeDeps(tmp, {
+        processDetector: {
+          runCommand: async () => '  100 claude\n',
+          getParentPid: async () => null,
+          platform: 'linux',
+        },
+      });
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('running-process');
+      if (result.status === 'running-process') {
+        expect(result.pids).toEqual([100]);
+        expect(result.selfInvocation).toBe(false);
+      }
+    });
+
+    it('detects self-invocation via parent chain (D-04)', async () => {
+      // Parent tree: ccaudit (999) -> shell (500) -> claude (100) -> init (1)
+      const tree: Record<number, number> = { 999: 500, 500: 100, 100: 1 };
+      const deps = makeDeps(tmp, {
+        selfPid: 999,
+        processDetector: {
+          runCommand: async () => '  100 claude\n',
+          getParentPid: async (pid: number) => tree[pid] ?? null,
+          platform: 'darwin',
+        },
+      });
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('running-process');
+      if (result.status === 'running-process') {
+        expect(result.selfInvocation).toBe(true);
+        expect(result.message).toMatch(/inside a Claude Code session/);
+      }
+    });
+
+    it('returns process-detection-failed when spawn fails', async () => {
+      const deps = makeDeps(tmp, {
+        processDetector: {
+          runCommand: async () => {
+            throw new Error('ENOENT: ps not found');
+          },
+          getParentPid: async () => null,
+          platform: 'linux',
+        },
+      });
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('process-detection-failed');
+    });
+  });
+
+  // ── Ceremony integration ─────────────────────────────────────────
+  describe('runBust — ceremony', () => {
+    let tmp: string;
+    beforeEach(async () => {
+      tmp = await mkdtemp(path.join(tmpdir(), 'bust-cer-'));
+    });
+    afterEach(async () => {
+      await rm(tmp, { recursive: true, force: true });
+    });
+
+    it('returns user-aborted when ceremony rejects', async () => {
+      const deps = makeDeps(tmp, {
+        runCeremony: async () => ({ status: 'aborted', stage: 'prompt1', reason: 'declined' }),
+      });
+      const result = await runBust({ yes: false, deps });
+      expect(result.status).toBe('user-aborted');
+      if (result.status === 'user-aborted') {
+        expect(result.stage).toBe('prompt1');
+      }
+    });
+
+    it('happy path: empty plan yields success + header+footer manifest', async () => {
+      const deps = makeDeps(tmp);
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('success');
+      const manifest = await readManifest(deps.manifestPath());
+      expect(manifest.header).toBeTruthy();
+      expect(manifest.footer).toBeTruthy();
+      expect(manifest.ops).toHaveLength(0);
+    });
+  });
+
+  // ── runConfirmationCeremony unit tests ───────────────────────────
+  describe('runConfirmationCeremony', () => {
+    function makeIo(inputs: string[]): { io: CeremonyIO; lines: string[] } {
+      let idx = 0;
+      const lines: string[] = [];
+      return {
+        lines,
+        io: {
+          readLine: async () => inputs[idx++] ?? '',
+          print: (s) => {
+            lines.push(s);
+          },
+        },
+      };
+    }
+
+    function emptyPlan(): ChangePlan {
+      return {
+        archive: [],
+        disable: [],
+        flag: [],
+        counts: { agents: 0, skills: 0, mcp: 0, memory: 0 },
+        savings: { tokens: 0 },
+      };
+    }
+
+    it('yes flag bypasses both prompts', async () => {
+      const result = await runConfirmationCeremony({ plan: emptyPlan(), yes: true });
+      expect(result.status).toBe('accepted');
+    });
+
+    it('y at prompt1 then "proceed busting" at prompt2 → accepted', async () => {
+      const { io } = makeIo(['y', 'proceed busting']);
+      const result = await runConfirmationCeremony({ plan: emptyPlan(), yes: false, io });
+      expect(result.status).toBe('accepted');
+    });
+
+    it('n at prompt1 → aborted at prompt1', async () => {
+      const { io } = makeIo(['n']);
+      const result = await runConfirmationCeremony({ plan: emptyPlan(), yes: false, io });
+      expect(result.status).toBe('aborted');
+      if (result.status === 'aborted') expect(result.stage).toBe('prompt1');
+    });
+
+    it('y then 3× wrong phrase → aborted at prompt2', async () => {
+      const { io, lines } = makeIo(['y', 'wrong', 'still wrong', 'nope']);
+      const result = await runConfirmationCeremony({ plan: emptyPlan(), yes: false, io });
+      expect(result.status).toBe('aborted');
+      if (result.status === 'aborted') {
+        expect(result.stage).toBe('prompt2');
+        expect(result.reason).toMatch(/phrase mismatch/);
+      }
+      expect(lines.some((l) => /typo/.test(l))).toBe(true);
+    });
+
+    it('case sensitive: "Proceed Busting" does not match', async () => {
+      const { io } = makeIo(['y', 'Proceed Busting', 'Proceed Busting', 'Proceed Busting']);
+      const result = await runConfirmationCeremony({ plan: emptyPlan(), yes: false, io });
+      expect(result.status).toBe('aborted');
+    });
+  });
+
+  // ── Execution order + failure policies ───────────────────────────
+  describe('runBust — execution order and failure policies', () => {
+    let tmp: string;
+    beforeEach(async () => {
+      tmp = await mkdtemp(path.join(tmpdir(), 'bust-exec-'));
+    });
+    afterEach(async () => {
+      await rm(tmp, { recursive: true, force: true });
+    });
+
+    it('full pipeline: 2 agents + 1 MCP + 1 memory in correct order (D-13)', async () => {
+      // Build a real fixture tree under tmp.
+      const claudeRoot = path.join(tmp, '.claude');
+      await mk(path.join(claudeRoot, 'agents'), { recursive: true });
+      await mk(path.join(claudeRoot, 'skills'), { recursive: true });
+      await wf(path.join(claudeRoot, 'agents', 'foo.md'), 'agent body', 'utf8');
+      await wf(path.join(claudeRoot, 'skills', 'bar.md'), 'skill body', 'utf8');
+      await wf(path.join(claudeRoot, 'CLAUDE.md'), '# Memory\nBody\n', 'utf8');
+      const configPath = path.join(tmp, '.claude.json');
+      await wf(
+        configPath,
+        JSON.stringify({ mcpServers: { playwright: { command: 'npx' } } }),
+        'utf8',
+      );
+
+      // Synthetic enriched for the plan (real callers would use scanAll + enrichScanResults)
+      const enriched: TokenCostResult[] = [
+        {
+          item: {
+            name: 'foo',
+            path: path.join(claudeRoot, 'agents', 'foo.md'),
+            scope: 'global',
+            category: 'agent',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 100, confidence: 'estimated', source: 'test' },
+        },
+        {
+          item: {
+            name: 'bar',
+            path: path.join(claudeRoot, 'skills', 'bar.md'),
+            scope: 'global',
+            category: 'skill',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 50, confidence: 'estimated', source: 'test' },
+        },
+        {
+          item: {
+            name: 'playwright',
+            path: configPath,
+            scope: 'global',
+            category: 'mcp-server',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 1000, confidence: 'estimated', source: 'test' },
+        },
+        {
+          item: {
+            name: 'CLAUDE.md',
+            path: path.join(claudeRoot, 'CLAUDE.md'),
+            scope: 'global',
+            category: 'memory',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 20, confidence: 'estimated', source: 'test' },
+        },
+      ];
+
+      const deps = makeDeps(tmp, {
+        scanAndEnrich: async () => enriched,
+        // The default readCheckpoint returns ghost_hash 'sha256:test';
+        // computeHash also returns 'sha256:test' by default, so Gate 2 passes.
+      });
+
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('success');
+
+      const manifest = await readManifest(deps.manifestPath());
+      expect(manifest.ops).toHaveLength(4);
+      expect(manifest.ops.map((o) => o.op_type)).toEqual([
+        'archive',
+        'archive',
+        'disable',
+        'flag',
+      ]);
+      // Archive agent before skill (D-13)
+      expect((manifest.ops[0] as ArchiveOp).category).toBe('agent');
+      expect((manifest.ops[1] as ArchiveOp).category).toBe('skill');
+
+      // MCP was key-renamed in config
+      const updatedConfig = JSON.parse(await rf(configPath, 'utf8'));
+      expect(updatedConfig.mcpServers.playwright).toBeUndefined();
+      expect(updatedConfig['ccaudit-disabled:playwright']).toBeTruthy();
+
+      // Memory file has frontmatter stale key
+      const memoryContent = await rf(path.join(claudeRoot, 'CLAUDE.md'), 'utf8');
+      expect(memoryContent).toContain('ccaudit-stale: true');
+
+      // Footer present; archive agent path records _archived
+      expect(manifest.footer).toBeTruthy();
+      const archiveAgentOp = manifest.ops[0] as ArchiveOp;
+      expect(archiveAgentOp.archive_path).toContain('_archived');
+      expect(archiveAgentOp.archive_path).toMatch(/foo\.md$/);
+    });
+
+    it('config-parse-error on malformed ~/.claude.json: fail-fast, no disable ops in manifest', async () => {
+      const configPath = path.join(tmp, '.claude.json');
+      await wf(configPath, 'not valid json {{{', 'utf8');
+      const enriched: TokenCostResult[] = [
+        {
+          item: {
+            name: 'playwright',
+            path: configPath,
+            scope: 'global',
+            category: 'mcp-server',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 100, confidence: 'estimated', source: 'test' },
+        },
+      ];
+      const deps = makeDeps(tmp, { scanAndEnrich: async () => enriched });
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('config-parse-error');
+    });
+
+    it('archive continue-on-error: one failed rename does not stop remaining ops (D-14)', async () => {
+      const claudeRoot = path.join(tmp, '.claude');
+      await mk(path.join(claudeRoot, 'agents'), { recursive: true });
+      await wf(path.join(claudeRoot, 'agents', 'foo.md'), 'a', 'utf8');
+      await wf(path.join(claudeRoot, 'agents', 'bar.md'), 'b', 'utf8');
+
+      const enriched: TokenCostResult[] = [
+        {
+          item: {
+            name: 'foo',
+            path: path.join(claudeRoot, 'agents', 'foo.md'),
+            scope: 'global',
+            category: 'agent',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 10, confidence: 'estimated', source: 'test' },
+        },
+        {
+          item: {
+            name: 'bar',
+            path: path.join(claudeRoot, 'agents', 'bar.md'),
+            scope: 'global',
+            category: 'agent',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 10, confidence: 'estimated', source: 'test' },
+        },
+      ];
+
+      let renameCalls = 0;
+      const deps = makeDeps(tmp, {
+        scanAndEnrich: async () => enriched,
+        renameFile: async (from, to) => {
+          renameCalls++;
+          if (renameCalls === 1) throw new Error('EACCES: simulated failure');
+          await rename(from, to);
+        },
+      });
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('partial-success');
+      if (result.status === 'partial-success') {
+        expect(result.counts.archive.completed).toBe(1);
+        expect(result.counts.archive.failed).toBe(1);
+      }
+      const manifest = await readManifest(deps.manifestPath());
+      expect(manifest.ops).toHaveLength(2);
+      expect((manifest.ops[0] as ArchiveOp).status).toBe('failed');
+      expect((manifest.ops[1] as ArchiveOp).status).toBe('completed');
+    });
+  });
+
+  // ── Issue 1 fix: .mcp.json flat schema disable ──────────────────
+  describe('runBust — .mcp.json flat schema (Issue 1 fix)', () => {
+    let tmp: string;
+    beforeEach(async () => {
+      tmp = await mkdtemp(path.join(tmpdir(), 'bust-mcpjson-'));
+    });
+    afterEach(async () => {
+      await rm(tmp, { recursive: true, force: true });
+    });
+
+    it('.mcp.json disable: key moves to top level (NOT nested under projects), manifest op reflects path', async () => {
+      // Create a project dir with a .mcp.json containing a ghost MCP server.
+      // .mcp.json uses the FLAT top-level schema:
+      //   { "mcpServers": { "ghost-server": {...} } }
+      // with NO `projects` wrapper. See scanMcpServers in scan-mcp.ts lines 84-106.
+      const projDir = path.join(tmp, 'proj');
+      await mk(projDir, { recursive: true });
+      const mcpJsonPath = path.join(projDir, '.mcp.json');
+      const originalValue = { command: 'x' };
+      await wf(
+        mcpJsonPath,
+        JSON.stringify({ mcpServers: { 'ghost-server': originalValue } }),
+        'utf8',
+      );
+
+      // Synthetic enriched InventoryItem matching what scanMcpServers produces
+      // for a .mcp.json-sourced ghost server: scope 'project', path pointing
+      // AT the .mcp.json file, projectPath set to the project dir.
+      const enriched: TokenCostResult[] = [
+        {
+          item: {
+            name: 'ghost-server',
+            path: mcpJsonPath,
+            scope: 'project',
+            category: 'mcp-server',
+            projectPath: projDir,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 500, confidence: 'estimated', source: 'test' },
+        },
+      ];
+
+      const deps = makeDeps(tmp, { scanAndEnrich: async () => enriched });
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('success');
+
+      // Assert file mutation: FLAT schema, key at document root.
+      const after = JSON.parse(await rf(mcpJsonPath, 'utf8'));
+      // `ghost-server` removed from `mcpServers`.
+      expect(after.mcpServers?.['ghost-server']).toBeUndefined();
+      // Disabled key lives at TOP LEVEL (not nested under `projects`).
+      expect(after['ccaudit-disabled:ghost-server']).toEqual(originalValue);
+      // No `projects` key was synthesized -- .mcp.json is a flat document.
+      expect(after.projects).toBeUndefined();
+
+      // Assert manifest op.
+      const manifest = await readManifest(deps.manifestPath());
+      expect(manifest.ops).toHaveLength(1);
+      const disableOp = manifest.ops[0] as DisableOp;
+      expect(disableOp.op_type).toBe('disable');
+      expect(disableOp.config_path).toBe(mcpJsonPath);
+      expect(disableOp.original_key).toBe('mcpServers.ghost-server');
+      expect(disableOp.new_key).toBe('ccaudit-disabled:ghost-server');
+      expect(disableOp.original_value).toEqual(originalValue);
+      expect(disableOp.scope).toBe('project');
+      expect(disableOp.project_path).toBe(projDir);
+    });
+
+    it('mixed sources: .mcp.json AND ~/.claude.json disabled in same bust — each file is its own transaction', async () => {
+      // Global server in ~/.claude.json
+      const claudeJsonPath = path.join(tmp, '.claude.json');
+      await wf(
+        claudeJsonPath,
+        JSON.stringify({ mcpServers: { 'global-ghost': { command: 'a' } } }),
+        'utf8',
+      );
+      // Project server in .mcp.json
+      const projDir = path.join(tmp, 'proj');
+      await mk(projDir, { recursive: true });
+      const mcpJsonPath = path.join(projDir, '.mcp.json');
+      await wf(
+        mcpJsonPath,
+        JSON.stringify({ mcpServers: { 'proj-ghost': { command: 'b' } } }),
+        'utf8',
+      );
+
+      const enriched: TokenCostResult[] = [
+        {
+          item: {
+            name: 'global-ghost',
+            path: claudeJsonPath,
+            scope: 'global',
+            category: 'mcp-server',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 100, confidence: 'estimated', source: 'test' },
+        },
+        {
+          item: {
+            name: 'proj-ghost',
+            path: mcpJsonPath,
+            scope: 'project',
+            category: 'mcp-server',
+            projectPath: projDir,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 100, confidence: 'estimated', source: 'test' },
+        },
+      ];
+
+      const deps = makeDeps(tmp, { scanAndEnrich: async () => enriched });
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('success');
+
+      // ~/.claude.json: global server moved to top level
+      const claudeAfter = JSON.parse(await rf(claudeJsonPath, 'utf8'));
+      expect(claudeAfter.mcpServers?.['global-ghost']).toBeUndefined();
+      expect(claudeAfter['ccaudit-disabled:global-ghost']).toEqual({ command: 'a' });
+
+      // .mcp.json: project server moved to top level of THAT file (not ~/.claude.json)
+      const mcpAfter = JSON.parse(await rf(mcpJsonPath, 'utf8'));
+      expect(mcpAfter.mcpServers?.['proj-ghost']).toBeUndefined();
+      expect(mcpAfter['ccaudit-disabled:proj-ghost']).toEqual({ command: 'b' });
+      expect(mcpAfter.projects).toBeUndefined();
+
+      // Manifest has one disable op per file
+      const manifest = await readManifest(deps.manifestPath());
+      const disableOps = manifest.ops.filter((o) => o.op_type === 'disable') as DisableOp[];
+      expect(disableOps).toHaveLength(2);
+      const paths = disableOps.map((o) => o.config_path).sort();
+      expect(paths).toEqual([claudeJsonPath, mcpJsonPath].sort());
+    });
+  });
+}
