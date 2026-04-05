@@ -179,7 +179,12 @@ Plans:
   1. `ccaudit restore` fully reverses the last bust operation (agents moved back, MCP keys renamed back, frontmatter removed)
   2. `ccaudit restore <name>` restores a single archived item by name
   3. `ccaudit restore --list` shows all archived items with their dates
-**Plans**: TBD
+**Plans:** 4 plans
+Plans:
+- [ ] 09-01-PLAN.md — Wave 1: manifest discovery (discoverManifests) + restore.ts core orchestrator (RestoreDeps, RestoreResult, process gate, executeRestore skeleton)
+- [ ] 09-02-PLAN.md — Wave 2: restore executors (archive unmove, transactional MCP re-enable, removeFrontmatterKeys, setFrontmatterValue) + wired executeOpsOnManifest
+- [ ] 09-03-PLAN.md — Wave 3: CLI command restore.ts (gunshi positional name + --list flag, exit ladder 0/1/3/4, output matrix rendered/quiet/json/csv) + cli/index.ts registration
+- [ ] 09-04-PLAN.md — Wave 4: subprocess integration test (fake ps fixture, tmpdir HOME, 10+ cases covering all RestoreResult variants + RMED-11/12/13)
 
 ### Phase 10: Community Contribution
 **Goal**: Users with `--live` measurements can generate a PR payload to contribute back to the community `mcp-token-estimates.json`, closing the data quality loop
