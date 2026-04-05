@@ -12,7 +12,7 @@
  */
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile, rm, stat, utimes } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, stat, utimes, symlink, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -66,6 +66,13 @@ interface FixtureSpec {
   sessionProject?: string;
   /** Whether to create the agents directory at all (default: true if agents.length > 0) */
   createAgentsDir?: boolean;
+  /**
+   * Skill names to create as broken symlinks under ~/.claude/skills/.
+   * Each name becomes a symlink pointing at a path that does NOT exist,
+   * reproducing the real-world escape where `scanSkills` returns items whose
+   * paths cannot be stat'd. Regression fixture for Phase 7 gap 07-04.
+   */
+  brokenSymlinkSkills?: string[];
 }
 
 async function buildFixture(
@@ -117,6 +124,19 @@ async function buildFixture(
       // by scan-all.ts, but backdating is belt-and-suspenders.
       const oldTime = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000); // 60 days ago
       await utimes(agentPath, oldTime, oldTime);
+    }
+  }
+
+  if (spec.brokenSymlinkSkills && spec.brokenSymlinkSkills.length > 0) {
+    const skillsDir = path.join(claudeDir, 'skills');
+    await mkdir(skillsDir, { recursive: true });
+    for (const name of spec.brokenSymlinkSkills) {
+      const linkPath = path.join(skillsDir, name);
+      const deadTarget = path.join(tmpHome, '_never_exists_', name);
+      // Create a symlink pointing at a path that does NOT exist.
+      // This reproduces the real-world `~/.claude/skills/full-output-enforcement`
+      // crash that escaped Phase 7 verification.
+      await symlink(deadTarget, linkPath);
     }
   }
 
@@ -300,4 +320,31 @@ describe('ccaudit --dry-run (integration, DRYR-01/02/03)', () => {
 
     expect(hash1).not.toBe(hash2);
   }, 60_000);
+
+  it('should succeed when ~/.claude/skills/ contains a broken symlink (gap 07-04 regression)', async () => {
+    await buildFixture(tmpHome, {
+      agents: ['stale-agent.md'],
+      brokenSymlinkSkills: ['full-output-enforcement', 'orphaned-skill'],
+    });
+
+    const { code, stdout, stderr } = await runDryRun(tmpHome, ['--dry-run']);
+
+    // Must not crash. Exit code is 0 (per Phase 7 D-03: dry-run always exits 0
+    // on successful scan+checkpoint-write, even with ghosts present).
+    expect(code).toBe(0);
+
+    // Stderr must contain no ENOENT stack trace and no uncaught error text.
+    expect(stderr).not.toContain('ENOENT');
+    expect(stderr).not.toContain('Error:');
+    expect(stderr).not.toMatch(/at async Promise\.all/);
+
+    // Stdout should include the dry-run header (Phase 7 D-06).
+    expect(stdout).toMatch(/Dry.?Run/i);
+
+    // Checkpoint file must exist and carry a valid sha256 hash.
+    const checkpointPath = path.join(tmpHome, '.claude', 'ccaudit', '.last-dry-run');
+    const body = await readFile(checkpointPath, 'utf8');
+    const checkpoint = JSON.parse(body) as { ghost_hash: string };
+    expect(checkpoint.ghost_hash).toMatch(/^sha256:[a-f0-9]{64}$/);
+  });
 });
