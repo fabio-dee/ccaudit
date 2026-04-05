@@ -145,6 +145,29 @@ Run `ccaudit --dry-run` to preview cleanup.
 
 ---
 
+## Machine-readable output
+
+All read commands support structured JSON and spreadsheet-friendly CSV output:
+
+```sh
+# JSON envelope with meta + items (see docs/JSON-SCHEMA.md for the full schema)
+ccaudit ghost --json | jq '.items | length'
+ccaudit ghost --json | jq '.meta.exitCode'
+
+# CSV for Google Sheets / Excel
+ccaudit ghost --csv > ghosts.csv
+
+# --ci is sugar for --json --quiet with exit codes (GitHub Actions, pre-commit)
+ccaudit --ci
+```
+
+The JSON envelope uses **camelCase** field names (`items`, `meta.timestamp`,
+`meta.exitCode`) to match TypeScript internals and the `gh` CLI convention.
+See [JSON Schema](./docs/JSON-SCHEMA.md) for the canonical schema, per-command
+payload keys, and jq recipes.
+
+---
+
 ## Remediation Mechanics
 
 All operations are reversible. Nothing is deleted.
