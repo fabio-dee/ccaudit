@@ -8,3 +8,7 @@ export { calculateDryRunSavings } from './savings.ts';
 
 export { computeGhostHash, resolveCheckpointPath, writeCheckpoint, readCheckpoint } from './checkpoint.ts';
 export type { Checkpoint, ReadCheckpointResult, StatFn } from './checkpoint.ts';
+
+// Phase 8: atomic write primitive (D-18 extraction, reused by bust orchestrator)
+export { atomicWriteJson, renameWithRetry } from './atomic-write.ts';
+export type { AtomicWriteOptions } from './atomic-write.ts';

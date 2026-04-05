@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import { mkdir, writeFile, rename, unlink, readFile, stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { atomicWriteJson } from './atomic-write.ts';
 import type { TokenCostResult } from '../token/types.ts';
 
 // -- Checkpoint schema (D-17) ------------------------------------
@@ -223,32 +224,20 @@ export function resolveCheckpointPath(): string {
  *                      production callers pass resolveCheckpointPath().
  *
  * Semantics:
+ * - Delegates to atomicWriteJson (packages/internal/src/remediation/atomic-write.ts)
  * - Ensures parent dir exists with mode 0o700 (rwx for owner only)
- * - Writes to a .tmp-<pid> sibling file with mode 0o600 (rw for owner only)
- * - Renames onto the final path (atomic on POSIX; overwrite-semantics on Windows)
+ * - Writes to a .tmp-<pid>-<random8> sibling file with mode 0o600
+ * - Renames onto the final path with graceful-fs EPERM retry on Windows (D-18, SC-9)
  * - On any failure, attempts to unlink the tmp file before rethrowing
  *
  * Errors are propagated unchanged -- the dry-run command handler converts
  * them into process.exitCode = 2 per D-20.
  */
 export async function writeCheckpoint(checkpoint: Checkpoint, targetPath: string): Promise<void> {
-  const dir = path.dirname(targetPath);
-  const tmpPath = `${targetPath}.tmp-${process.pid}`;
-
-  // D-18: mkdir with mode 0o700, recursive:true. On Windows, mode is a no-op.
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-
-  const body = JSON.stringify(checkpoint, null, 2);
-
-  try {
-    // D-18: file mode 0o600 (owner rw only). Best-effort on Windows.
-    await writeFile(tmpPath, body, { mode: 0o600, encoding: 'utf8' });
-    await rename(tmpPath, targetPath);
-  } catch (err) {
-    // Best-effort cleanup of the tmp file (ignore unlink errors)
-    try { await unlink(tmpPath); } catch { /* swallow */ }
-    throw err;
-  }
+  await atomicWriteJson(targetPath, checkpoint, {
+    mode: 0o600,
+    dirMode: 0o700,
+  });
 }
 
 // -- Checkpoint read API (for Phase 8 consumption) ---------------
