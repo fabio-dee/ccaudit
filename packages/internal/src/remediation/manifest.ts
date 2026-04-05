@@ -1,7 +1,30 @@
 // @ccaudit/internal -- JSONL restore manifest writer (Phase 8 D-09 / D-10 / D-11 / D-12)
 //
-// RED-phase stub: types, exports, and in-source tests. Implementation intentionally
-// throws so the test suite fails loudly until the GREEN commit lands.
+// Append-only JSONL restore manifest for --dangerously-bust-ghosts. Every
+// operation the bust orchestrator executes is recorded as one JSON object per
+// line, fsynced after every append (D-09), so the manifest survives
+// crash-at-any-point with at most one truncated trailing line.
+//
+// File layout (D-10, D-12):
+//   line 1               header record (manifest_version, ccaudit_version,
+//                        checkpoint_ghost_hash, planned_ops, ...)
+//   lines 2..N-1         one op record per line (archive / disable / flag /
+//                        refresh / skipped per D-11 discriminated union)
+//   line N (optional)    footer record -- written ONLY on successful bust
+//                        completion. Phase 9 detects "header present + footer
+//                        absent" as a partial bust and warns before restoring
+//                        what was recorded.
+//
+// Path: ~/.claude/ccaudit/manifests/bust-<iso-dashed>.jsonl
+// Mode: 0o600 (file), 0o700 (directory)
+// Zero runtime deps -- uses only node:fs/promises, node:path, node:os,
+// node:crypto and the local collisions.ts helper.
+
+import { open, mkdir, chmod, readFile, type FileHandle } from 'node:fs/promises';
+import path from 'node:path';
+import { homedir } from 'node:os';
+import { createHash, randomUUID } from 'node:crypto';
+import { timestampSuffixForFilename } from './collisions.ts';
 
 // -- Header type (D-12) ------------------------------------------
 
@@ -110,23 +133,52 @@ export interface ReadManifestResult {
   truncated: boolean;
 }
 
-// -- Stubs (RED phase -- intentionally fail) ---------------------
+// -- Path resolver (D-10) -----------------------------------------
 
-export function resolveManifestPath(_now: Date = new Date()): string {
-  throw new Error('resolveManifestPath not implemented (RED phase stub)');
+/**
+ * Resolve the canonical manifest path for a new bust (D-10).
+ *
+ * Per-bust file keyed by UTC ISO timestamp with colons replaced by dashes for
+ * cross-platform filesystem safety (NTFS forbids `:` in filenames). Milliseconds
+ * are stripped to keep the suffix human-readable and to match the Phase 8 archive
+ * filename suffix format from collisions.ts.
+ *
+ * @example
+ *   resolveManifestPath(new Date('2026-04-05T18:30:00Z'))
+ *   // -> '~/.claude/ccaudit/manifests/bust-2026-04-05T18-30-00Z.jsonl'
+ */
+export function resolveManifestPath(now: Date = new Date()): string {
+  const stamp = timestampSuffixForFilename(now);
+  return path.join(homedir(), '.claude', 'ccaudit', 'manifests', `bust-${stamp}.jsonl`);
 }
+
+// -- Header / Footer builders (D-12) ------------------------------
 
 export function buildHeader(
-  _input: Omit<ManifestHeader, 'record_type' | 'manifest_version'>,
+  input: Omit<ManifestHeader, 'record_type' | 'manifest_version'>,
 ): ManifestHeader {
-  throw new Error('buildHeader not implemented (RED phase stub)');
+  return {
+    record_type: 'header',
+    manifest_version: MANIFEST_VERSION,
+    ...input,
+  };
 }
 
-export function buildFooter(_input: Omit<ManifestFooter, 'record_type'>): ManifestFooter {
-  throw new Error('buildFooter not implemented (RED phase stub)');
+export function buildFooter(input: Omit<ManifestFooter, 'record_type'>): ManifestFooter {
+  return {
+    record_type: 'footer',
+    ...input,
+  };
 }
 
-export function buildArchiveOp(_input: {
+// -- Op builders (D-11) -------------------------------------------
+
+function sha256Hex(content: Buffer | string): string {
+  const buf = typeof content === 'string' ? Buffer.from(content, 'utf8') : content;
+  return createHash('sha256').update(buf).digest('hex');
+}
+
+export function buildArchiveOp(input: {
   category: 'agent' | 'skill';
   scope: 'global' | 'project';
   source_path: string;
@@ -135,10 +187,21 @@ export function buildArchiveOp(_input: {
   status?: 'completed' | 'failed';
   error?: string;
 }): ArchiveOp {
-  throw new Error('buildArchiveOp not implemented (RED phase stub)');
+  return {
+    op_id: randomUUID(),
+    op_type: 'archive',
+    timestamp: new Date().toISOString(),
+    status: input.status ?? 'completed',
+    ...(input.error !== undefined ? { error: input.error } : {}),
+    category: input.category,
+    scope: input.scope,
+    source_path: input.source_path,
+    archive_path: input.archive_path,
+    content_sha256: sha256Hex(input.content),
+  };
 }
 
-export function buildDisableOp(_input: {
+export function buildDisableOp(input: {
   config_path: string;
   scope: 'global' | 'project';
   project_path: string | null;
@@ -148,10 +211,22 @@ export function buildDisableOp(_input: {
   status?: 'completed' | 'failed';
   error?: string;
 }): DisableOp {
-  throw new Error('buildDisableOp not implemented (RED phase stub)');
+  return {
+    op_id: randomUUID(),
+    op_type: 'disable',
+    timestamp: new Date().toISOString(),
+    status: input.status ?? 'completed',
+    ...(input.error !== undefined ? { error: input.error } : {}),
+    config_path: input.config_path,
+    scope: input.scope,
+    project_path: input.project_path,
+    original_key: input.original_key,
+    new_key: input.new_key,
+    original_value: input.original_value,
+  };
 }
 
-export function buildFlagOp(_input: {
+export function buildFlagOp(input: {
   file_path: string;
   scope: 'global' | 'project';
   had_frontmatter: boolean;
@@ -161,49 +236,184 @@ export function buildFlagOp(_input: {
   status?: 'completed' | 'failed';
   error?: string;
 }): FlagOp {
-  throw new Error('buildFlagOp not implemented (RED phase stub)');
+  return {
+    op_id: randomUUID(),
+    op_type: 'flag',
+    timestamp: new Date().toISOString(),
+    status: input.status ?? 'completed',
+    ...(input.error !== undefined ? { error: input.error } : {}),
+    file_path: input.file_path,
+    scope: input.scope,
+    had_frontmatter: input.had_frontmatter,
+    had_ccaudit_stale: input.had_ccaudit_stale,
+    patched_keys: input.patched_keys,
+    original_content_sha256: sha256Hex(input.original_content),
+  };
 }
 
-export function buildRefreshOp(_input: {
+export function buildRefreshOp(input: {
   file_path: string;
   scope: 'global' | 'project';
   previous_flagged_at: string;
   status?: 'completed' | 'failed';
   error?: string;
 }): RefreshOp {
-  throw new Error('buildRefreshOp not implemented (RED phase stub)');
+  return {
+    op_id: randomUUID(),
+    op_type: 'refresh',
+    timestamp: new Date().toISOString(),
+    status: input.status ?? 'completed',
+    ...(input.error !== undefined ? { error: input.error } : {}),
+    file_path: input.file_path,
+    scope: input.scope,
+    previous_flagged_at: input.previous_flagged_at,
+  };
 }
 
-export function buildSkippedOp(_input: {
+export function buildSkippedOp(input: {
   file_path: string;
   category: 'agent' | 'skill' | 'memory' | 'mcp';
   reason: string;
 }): SkippedOp {
-  throw new Error('buildSkippedOp not implemented (RED phase stub)');
+  return {
+    op_id: randomUUID(),
+    op_type: 'skipped',
+    timestamp: new Date().toISOString(),
+    status: 'completed',
+    file_path: input.file_path,
+    category: input.category,
+    reason: input.reason,
+  };
 }
 
+// -- ManifestWriter (D-09) ----------------------------------------
+
+/**
+ * Append-only JSONL writer with per-op fsync (D-09).
+ *
+ * Lifecycle:
+ * ```
+ * const w = new ManifestWriter(resolveManifestPath());
+ * await w.open(buildHeader(...));        // writes header + fsync
+ * for (const op of ops) await w.writeOp(op);  // each append fsynced
+ * await w.close(buildFooter(...));       // footer only on success
+ * // on failure path: await w.close(null) -- closes without footer
+ * ```
+ *
+ * Crash-survival contract (D-09): after `open()` returns, the header line is
+ * durable on disk. After every `writeOp()`, the op line is durable on disk. If
+ * the process is SIGKILL'd between ops, the manifest is truncated to the last
+ * fsynced line; the worst case is a trailing partially-written line, which
+ * `readManifest` tolerates.
+ */
 export class ManifestWriter {
+  private fd: FileHandle | null = null;
+  private startMs = 0;
+
   constructor(public readonly filePath: string) {}
 
-  async open(_header: ManifestHeader): Promise<void> {
-    throw new Error('ManifestWriter.open not implemented (RED phase stub)');
+  async open(header: ManifestHeader): Promise<void> {
+    // D-10: parent directory created recursively with 0o700 (POSIX) mode.
+    await mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o700 });
+    // D-10: file mode 0o600 via open()'s mode arg. Note: the mode is applied
+    // ONLY when the file is created; on re-open of an existing file the
+    // existing mode is preserved -- the chmod below is the belt-and-suspenders
+    // safeguard (no-op on Windows, swallow errors silently).
+    this.fd = await open(this.filePath, 'a', 0o600);
+    try {
+      await chmod(this.filePath, 0o600);
+    } catch {
+      // Windows doesn't honor POSIX modes; ignore EPERM/ENOTSUP.
+    }
+    this.startMs = Date.now();
+    // Pitfall 5: single write, NOT separate stringify + newline, to avoid a
+    // partial-line race between the two syscalls.
+    await this.fd.write(JSON.stringify(header) + '\n');
+    await this.fd.sync();
   }
 
-  async writeOp(_op: ManifestOp): Promise<void> {
-    throw new Error('ManifestWriter.writeOp not implemented (RED phase stub)');
+  async writeOp(op: ManifestOp): Promise<void> {
+    if (!this.fd) {
+      throw new Error('ManifestWriter.writeOp: not opened (call open() first)');
+    }
+    // Pitfall 5: concatenate JSON + newline in ONE write.
+    await this.fd.write(JSON.stringify(op) + '\n');
+    await this.fd.sync();
   }
 
-  async close(_footer: ManifestFooter | null): Promise<void> {
-    throw new Error('ManifestWriter.close not implemented (RED phase stub)');
+  /**
+   * Close the manifest file. Pass a footer record on successful bust
+   * completion; pass `null` on failure so Phase 9 sees the header-present +
+   * footer-missing crash signature and can warn before restoring.
+   */
+  async close(footer: ManifestFooter | null): Promise<void> {
+    if (!this.fd) return;
+    if (footer !== null) {
+      await this.fd.write(JSON.stringify(footer) + '\n');
+      await this.fd.sync();
+    }
+    await this.fd.close();
+    this.fd = null;
   }
 
+  /** Milliseconds elapsed since {@link open} was called (for footer.duration_ms). */
   get elapsedMs(): number {
-    return 0;
+    return Date.now() - this.startMs;
   }
 }
 
-export async function readManifest(_filePath: string): Promise<ReadManifestResult> {
-  throw new Error('readManifest not implemented (RED phase stub)');
+// -- Reader (crash-tolerant, D-09 contract) ----------------------
+
+/**
+ * Read a JSONL manifest file and parse each line as a discriminated record.
+ *
+ * Per D-09 crash-survival contract: a single trailing truncated line is
+ * tolerated (SIGKILL after partial write). Phase 9 detection rules:
+ *   - header present + footer present  -> clean bust, restore normally
+ *   - header present + footer missing  -> partial bust, warn + best-effort
+ *   - header missing                    -> corrupt manifest, refuse
+ *
+ * A mid-file parse error (a corrupt line that is NOT the last line) is raised
+ * as an exception so callers know the manifest cannot be trusted.
+ */
+export async function readManifest(filePath: string): Promise<ReadManifestResult> {
+  const raw = await readFile(filePath, 'utf8');
+  const lines = raw.split('\n');
+  // Strip trailing empty line from the final '\n' terminator of a clean manifest.
+  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+
+  let header: ManifestHeader | null = null;
+  const ops: ManifestOp[] = [];
+  let footer: ManifestFooter | null = null;
+  let truncated = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      // Trailing truncated line is tolerable ONLY if it's the last line
+      // (D-09 crash-survival contract -- SIGKILL after partial write).
+      if (i === lines.length - 1) {
+        truncated = true;
+        continue;
+      }
+      throw new Error(`Manifest parse error at line ${i + 1}: invalid JSON`);
+    }
+    if (parsed !== null && typeof parsed === 'object') {
+      const obj = parsed as Record<string, unknown>;
+      if (obj['record_type'] === 'header') {
+        header = obj as unknown as ManifestHeader;
+      } else if (obj['record_type'] === 'footer') {
+        footer = obj as unknown as ManifestFooter;
+      } else if (typeof obj['op_type'] === 'string') {
+        ops.push(obj as unknown as ManifestOp);
+      }
+    }
+  }
+
+  return { header, ops, footer, truncated };
 }
 
 // -- In-source tests ---------------------------------------------

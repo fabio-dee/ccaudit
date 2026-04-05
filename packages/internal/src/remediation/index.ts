@@ -36,3 +36,31 @@ export type { ClaudeProcess, DetectResult, ProcessDetectorDeps } from './process
 // (D-07 idempotent refresh, D-08 three-case handling: prepend / inject / skip)
 export { patchFrontmatter } from './frontmatter.ts';
 export type { FrontmatterPatchResult } from './frontmatter.ts';
+
+// Phase 8: JSONL restore manifest writer + reader (D-09 / D-10 / D-11 / D-12)
+// Append-only, fsync-per-op, header+footer bracket, crash-tolerant reader.
+export {
+  ManifestWriter,
+  resolveManifestPath,
+  readManifest,
+  buildHeader,
+  buildFooter,
+  buildArchiveOp,
+  buildDisableOp,
+  buildFlagOp,
+  buildRefreshOp,
+  buildSkippedOp,
+  MANIFEST_VERSION,
+} from './manifest.ts';
+export type {
+  ManifestHeader,
+  ManifestFooter,
+  ManifestOp,
+  ManifestRecord,
+  ArchiveOp,
+  DisableOp,
+  FlagOp,
+  RefreshOp,
+  SkippedOp,
+  ReadManifestResult,
+} from './manifest.ts';
