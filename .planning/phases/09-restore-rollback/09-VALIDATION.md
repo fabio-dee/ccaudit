@@ -2,8 +2,8 @@
 phase: 9
 slug: restore-rollback
 status: draft
-nyquist_compliant: false
-wave_0_complete: false
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-04-05
 ---
 
@@ -52,8 +52,14 @@ created: 2026-04-05
 
 ## Wave 0 Requirements
 
-- [ ] `packages/internal/src/remediation/restore.test.ts` — stubs for RMED-11, RMED-12
-- [ ] `apps/ccaudit/src/__tests__/restore-command.test.ts` — integration test stubs for RMED-11, RMED-12, RMED-13
+Plans use the in-source vitest testing pattern (`if (import.meta.vitest)` blocks embedded at the bottom of implementation files). No separate stub files are required before execution begins.
+
+- [x] `packages/internal/src/remediation/manifest.ts` — tests embedded in-source (Plan 01 Task 1)
+- [x] `packages/internal/src/remediation/restore.ts` — tests embedded in-source (Plan 01 Task 2, Plan 02 Task 2)
+- [x] `packages/internal/src/remediation/frontmatter.ts` — tests embedded in-source (Plan 02 Task 1)
+- [x] `apps/ccaudit/src/__tests__/restore-command.test.ts` — integration test file created by Plan 04 Task 1
+
+*The in-source vitest pattern (`if (import.meta.vitest)`) is the established project convention from Phase 7/8. Test code is stripped from production builds via `define: { 'import.meta.vitest': 'undefined' }` in tsdown config. No external stub files are needed to satisfy Wave 0.*
 
 *Existing `vitest.config.ts` infrastructure covers all phase requirements — no new framework install needed.*
 
