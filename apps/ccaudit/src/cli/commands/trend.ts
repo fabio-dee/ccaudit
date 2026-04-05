@@ -111,7 +111,7 @@ export const trendCommand = define({
     } else if (mode.csv) {
       // CSV output -- trend uses different schema per D-20
       const headers = ['date', 'bucket', 'agents', 'skills', 'mcp', 'total'];
-      const rows = buckets.map(b => [
+      const rows = buckets.map((b) => [
         b.period,
         b.period,
         String(b.agents),
@@ -123,20 +123,16 @@ export const trendCommand = define({
     } else if (mode.quiet) {
       // TSV output (per D-09)
       for (const b of buckets) {
-        console.log(tsvRow([
-          b.period,
-          String(b.agents),
-          String(b.skills),
-          String(b.mcp),
-          String(b.total),
-        ]));
+        console.log(
+          tsvRow([b.period, String(b.agents), String(b.skills), String(b.mcp), String(b.total)]),
+        );
       }
     } else {
       console.log('');
       console.log(renderHeader('\u{1F4C8}', 'Invocation Trend', humanizeSinceWindow(sinceStr)));
       console.log('');
 
-      if (buckets.length === 0 || buckets.every(b => b.total === 0)) {
+      if (buckets.length === 0 || buckets.every((b) => b.total === 0)) {
         console.log('No invocation data found for the selected window.');
         console.log('Try a longer window: ccaudit trend --since 30d');
       } else {

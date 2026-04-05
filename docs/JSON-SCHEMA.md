@@ -27,22 +27,22 @@ Every command wraps its payload in a standard `meta` envelope:
 }
 ```
 
-| Field            | Type     | Description                                                         |
-|------------------|----------|---------------------------------------------------------------------|
-| `meta.command`   | string   | Subcommand name: `ghost`, `inventory`, `mcp`, or `trend`            |
-| `meta.version`   | string   | ccaudit version (semver)                                            |
-| `meta.since`     | string   | Time window as passed to `--since` (e.g., `7d`, `30d`, `2w`)        |
-| `meta.timestamp` | string   | ISO 8601 UTC timestamp of the run                                   |
-| `meta.exitCode`  | number   | Process exit code: `0` = no ghosts, `1` = ghosts found              |
+| Field            | Type   | Description                                                  |
+| ---------------- | ------ | ------------------------------------------------------------ |
+| `meta.command`   | string | Subcommand name: `ghost`, `inventory`, `mcp`, or `trend`     |
+| `meta.version`   | string | ccaudit version (semver)                                     |
+| `meta.since`     | string | Time window as passed to `--since` (e.g., `7d`, `30d`, `2w`) |
+| `meta.timestamp` | string | ISO 8601 UTC timestamp of the run                            |
+| `meta.exitCode`  | number | Process exit code: `0` = no ghosts, `1` = ghosts found       |
 
 ## Payload key by command
 
-| Command     | Payload key | Row shape                                                                              |
-|-------------|-------------|----------------------------------------------------------------------------------------|
-| `ghost`     | `items`     | `{ name, category, tier, invocations, lastUsed, tokenEstimate, recommendation }`       |
-| `inventory` | `items`     | Same as `ghost` (full inventory, not just ghosts)                                      |
-| `mcp`       | `items`     | Adds `projectPaths: string[]` for cross-project traceability (see Note below)          |
-| `trend`     | `buckets`   | `{ date, bucket, agents, skills, mcp, total }` per D-20                                |
+| Command     | Payload key | Row shape                                                                        |
+| ----------- | ----------- | -------------------------------------------------------------------------------- |
+| `ghost`     | `items`     | `{ name, category, tier, invocations, lastUsed, tokenEstimate, recommendation }` |
+| `inventory` | `items`     | Same as `ghost` (full inventory, not just ghosts)                                |
+| `mcp`       | `items`     | Adds `projectPaths: string[]` for cross-project traceability (see Note below)    |
+| `trend`     | `buckets`   | `{ date, bucket, agents, skills, mcp, total }` per D-20                          |
 
 **Note on `mcp.items[].projectPaths`:** the MCP scanner emits one entry per
 `(projectPath, serverName)` pair for Phase 8 remediation traceability. The `mcp`

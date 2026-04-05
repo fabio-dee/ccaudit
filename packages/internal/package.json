@@ -12,12 +12,12 @@
     "typecheck": "tsc"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "catalog:",
-    "valibot": "catalog:",
-    "tinyglobby": "catalog:",
     "@praha/byethrow": "catalog:",
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "tinyglobby": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:",
-    "@types/node": "catalog:"
+    "valibot": "catalog:",
+    "vitest": "catalog:"
   }
 }

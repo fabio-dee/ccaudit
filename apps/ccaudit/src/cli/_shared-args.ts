@@ -65,7 +65,9 @@ if (import.meta.vitest) {
     });
 
     it('ci description mentions CI mode', () => {
-      expect((outputArgs as Record<string, { description?: string }>).ci.description).toContain('CI mode');
+      expect((outputArgs as Record<string, { description?: string }>).ci.description).toContain(
+        'CI mode',
+      );
     });
 
     it('has no-color key with type boolean and default false', () => {

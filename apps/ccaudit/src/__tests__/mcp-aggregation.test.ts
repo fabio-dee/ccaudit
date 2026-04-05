@@ -86,11 +86,11 @@ describe('Gap #5 regression: mcp --csv cross-project duplicate rows', () => {
     const result = aggregateMcpByName(input);
 
     expect(result).toHaveLength(3);
-    const names = result.map(r => r.item.name).sort();
+    const names = result.map((r) => r.item.name).sort();
     expect(names).toEqual(['context7', 'playwright', 'supabase']);
 
     // Regression check: no duplicate names after aggregation.
-    const uniqueNames = new Set(result.map(r => r.item.name));
+    const uniqueNames = new Set(result.map((r) => r.item.name));
     expect(uniqueNames.size).toBe(result.length);
   });
 });

@@ -92,16 +92,16 @@ ccaudit respects the [`NO_COLOR`](https://no-color.org/) environment variable an
 
 ### Flags Reference
 
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--since <duration>` | `-s` | Time window (`7d`, `30d`, `2w`, …) |
-| `--json` | `-j` | JSON output with meta envelope |
-| `--csv` |  | RFC 4180 CSV export |
-| `--quiet` | `-q` | Machine-readable only (TSV, compact JSON, headerless CSV) |
-| `--verbose` | `-v` | Scan details on stderr |
-| `--ci` |  | CI mode: `--json --quiet` plus exit codes |
-| `--no-color` |  | Disable ANSI colors (also respects `NO_COLOR` env var) |
-| `--live` |  | (mcp only) Live MCP server token measurement |
+| Flag                 | Short | Description                                               |
+| -------------------- | ----- | --------------------------------------------------------- |
+| `--since <duration>` | `-s`  | Time window (`7d`, `30d`, `2w`, …)                        |
+| `--json`             | `-j`  | JSON output with meta envelope                            |
+| `--csv`              |       | RFC 4180 CSV export                                       |
+| `--quiet`            | `-q`  | Machine-readable only (TSV, compact JSON, headerless CSV) |
+| `--verbose`          | `-v`  | Scan details on stderr                                    |
+| `--ci`               |       | CI mode: `--json --quiet` plus exit codes                 |
+| `--no-color`         |       | Disable ANSI colors (also respects `NO_COLOR` env var)    |
+| `--live`             |       | (mcp only) Live MCP server token measurement              |
 
 ### Dry-run (preview, no changes)
 
@@ -173,21 +173,24 @@ payload keys, and jq recipes.
 All operations are reversible. Nothing is deleted.
 
 **Agents & Skills** — moved to `_archived/`, not deleted:
+
 ```
 ~/.claude/agents/code-reviewer.md
 → ~/.claude/agents/_archived/code-reviewer.md
 ```
 
 **MCP Servers** — commented out in `settings.json`, not removed:
+
 ```json
 "// ccaudit-disabled playwright": { "command": "npx", "args": ["playwright-mcp"] }
 ```
 
 **Memory Files** — flagged in frontmatter, still load normally:
+
 ```yaml
 ---
 ccaudit-stale: true
-ccaudit-flagged: "2026-04-03T14:26:00Z"
+ccaudit-flagged: '2026-04-03T14:26:00Z'
 ---
 ```
 
@@ -215,20 +218,20 @@ TypeScript · Node · `npx ccaudit@latest` · `gunshi` CLI · `tinyglobby` · `v
 
 ## Roadmap
 
-| Version | Scope |
-|---------|-------|
+| Version  | Scope                                                                                                   |
+| -------- | ------------------------------------------------------------------------------------------------------- |
 | **v1.0** | Analysis only — ghost inventory, per-project breakdown, token waste calculator, `--json`/`--csv` export |
-| **v1.1** | Dry-run mode — full change preview, checkpoint file |
-| **v1.2** | Remediation — `--dangerously-bust-ghosts`, `restore`, `ccaudit contribute` |
+| **v1.1** | Dry-run mode — full change preview, checkpoint file                                                     |
+| **v1.2** | Remediation — `--dangerously-bust-ghosts`, `restore`, `ccaudit contribute`                              |
 
 ---
 
 ## Relationship to ccusage
 
-| Tool | Question |
-|------|----------|
-| [ccusage](https://github.com/ryoppippi/ccusage) | What did you spend? |
-| **ccaudit** | What are you loading vs actually using — and fix it. |
+| Tool                                            | Question                                             |
+| ----------------------------------------------- | ---------------------------------------------------- |
+| [ccusage](https://github.com/ryoppippi/ccusage) | What did you spend?                                  |
+| **ccaudit**                                     | What are you loading vs actually using — and fix it. |
 
 ---
 

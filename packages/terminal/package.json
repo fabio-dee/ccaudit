@@ -12,12 +12,12 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@ccaudit/internal": "workspace:*",
+    "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "cli-table3": "catalog:",
     "picocolors": "catalog:",
-    "@ccaudit/internal": "workspace:*",
     "typescript": "catalog:",
-    "vitest": "catalog:",
-    "@types/node": "catalog:"
+    "vitest": "catalog:"
   }
 }

@@ -45,7 +45,7 @@ import { resolveOutputMode, buildJsonEnvelope } from '../_output-mode.ts';
  * Scanner stays untouched — Phase 8 RMED-06 still knows which config key(s) to rewrite.
  */
 export function aggregateMcpByName(enriched: TokenCostResult[]): TokenCostResult[] {
-  const tierRank = { 'used': 0, 'likely-ghost': 1, 'definite-ghost': 2 } as const;
+  const tierRank = { used: 0, 'likely-ghost': 1, 'definite-ghost': 2 } as const;
   const groups = new Map<string, TokenCostResult[]>();
   for (const r of enriched) {
     const key = r.item.name;
@@ -85,7 +85,9 @@ export function aggregateMcpByName(enriched: TokenCostResult[]): TokenCostResult
 
     const totalInvocations = group.reduce((sum, r) => sum + r.invocationCount, 0);
     const representative = group[0]!;
-    const projectPaths = group.map(r => r.item.projectPath).filter((p): p is string => p !== null);
+    const projectPaths = group
+      .map((r) => r.item.projectPath)
+      .filter((p): p is string => p !== null);
 
     aggregated.push({
       item: {
@@ -183,7 +185,7 @@ export const mcpCommand = define({
     });
 
     // Step 4: Filter to MCP server items only
-    const mcpResults = results.filter(r => r.item.category === 'mcp-server');
+    const mcpResults = results.filter((r) => r.item.category === 'mcp-server');
 
     // Step 5: Enrich with token estimates
     let enriched: TokenCostResult[] = await enrichScanResults(mcpResults);
@@ -203,9 +205,12 @@ export const mcpCommand = define({
         enriched.map(async (r) => {
           const serverConfig = allServerConfigs[r.item.name] as Record<string, unknown> | undefined;
           if (!serverConfig || typeof serverConfig.command !== 'string') {
-            const transport = (serverConfig as Record<string, unknown> | undefined)?.type ?? 'unknown';
+            const transport =
+              (serverConfig as Record<string, unknown> | undefined)?.type ?? 'unknown';
             if (mode.verbose) {
-              console.error(`[ccaudit] ${r.item.name}: live measurement not available (${String(transport)} transport) -- using estimate`);
+              console.error(
+                `[ccaudit] ${r.item.name}: live measurement not available (${String(transport)} transport) -- using estimate`,
+              );
             }
             return r;
           }
@@ -230,7 +235,9 @@ export const mcpCommand = define({
             };
           } catch (err) {
             if (mode.verbose) {
-              console.error(`[ccaudit] ${r.item.name}: measurement failed (${(err as Error).message}) -- using estimate`);
+              console.error(
+                `[ccaudit] ${r.item.name}: measurement failed (${(err as Error).message}) -- using estimate`,
+              );
             }
             return r;
           }
@@ -244,7 +251,7 @@ export const mcpCommand = define({
     enriched = aggregateMcpByName(enriched);
 
     // Determine exit code: 1 if ghosts found (per D-01)
-    const hasGhosts = enriched.some(r => r.tier !== 'used');
+    const hasGhosts = enriched.some((r) => r.tier !== 'used');
     const exitCode = hasGhosts ? 1 : 0;
 
     // Step 7: Display results
@@ -264,7 +271,7 @@ export const mcpCommand = define({
           ghostPenalty: healthScore.ghostPenalty,
           tokenPenalty: healthScore.tokenPenalty,
         },
-        items: enriched.map(r => {
+        items: enriched.map((r) => {
           const itemWithPaths = r.item as typeof r.item & { projectPaths?: string[] };
           return {
             name: r.item.name,
@@ -273,12 +280,15 @@ export const mcpCommand = define({
             invocations: r.invocationCount,
             lastUsed: r.lastUsed?.toISOString() ?? null,
             projectPath: r.item.projectPath,
-            projectPaths: itemWithPaths.projectPaths ?? (r.item.projectPath ? [r.item.projectPath] : []),
-            tokenEstimate: r.tokenEstimate ? {
-              tokens: r.tokenEstimate.tokens,
-              confidence: r.tokenEstimate.confidence,
-              source: r.tokenEstimate.source,
-            } : null,
+            projectPaths:
+              itemWithPaths.projectPaths ?? (r.item.projectPath ? [r.item.projectPath] : []),
+            tokenEstimate: r.tokenEstimate
+              ? {
+                  tokens: r.tokenEstimate.tokens,
+                  confidence: r.tokenEstimate.confidence,
+                  source: r.tokenEstimate.source,
+                }
+              : null,
             recommendation: classifyRecommendation(r.tier),
           };
         }),
@@ -287,8 +297,16 @@ export const mcpCommand = define({
       console.log(JSON.stringify(envelope, null, indent));
     } else if (mode.csv) {
       // CSV output (RFC 4180 per D-18, D-19)
-      const headers = ['name', 'category', 'tier', 'lastUsed', 'tokens', 'recommendation', 'confidence'];
-      const rows = enriched.map(r => [
+      const headers = [
+        'name',
+        'category',
+        'tier',
+        'lastUsed',
+        'tokens',
+        'recommendation',
+        'confidence',
+      ];
+      const rows = enriched.map((r) => [
         r.item.name,
         r.item.category,
         r.tier,
@@ -301,19 +319,23 @@ export const mcpCommand = define({
     } else if (mode.quiet) {
       // TSV output (per D-09)
       for (const r of enriched) {
-        console.log(tsvRow([
-          r.item.name,
-          r.item.category,
-          r.tier,
-          r.lastUsed?.toISOString() ?? 'never',
-          String(r.tokenEstimate?.tokens ?? 0),
-          classifyRecommendation(r.tier),
-        ]));
+        console.log(
+          tsvRow([
+            r.item.name,
+            r.item.category,
+            r.tier,
+            r.lastUsed?.toISOString() ?? 'never',
+            String(r.tokenEstimate?.tokens ?? 0),
+            classifyRecommendation(r.tier),
+          ]),
+        );
       }
     } else {
       console.log('');
       const modeLabel = ctx.values.live ? ' (live)' : '';
-      console.log(renderHeader('\u{1F50C}', `MCP Servers${modeLabel}`, humanizeSinceWindow(sinceStr)));
+      console.log(
+        renderHeader('\u{1F50C}', `MCP Servers${modeLabel}`, humanizeSinceWindow(sinceStr)),
+      );
       console.log('');
 
       if (enriched.length === 0) {

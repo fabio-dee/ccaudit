@@ -63,7 +63,8 @@ export const ghostCommand = define({
     },
     dryRun: {
       type: 'boolean',
-      description: 'Preview changes without mutating files (writes checkpoint to ~/.claude/ccaudit/.last-dry-run)',
+      description:
+        'Preview changes without mutating files (writes checkpoint to ~/.claude/ccaudit/.last-dry-run)',
       default: false,
     },
   },
@@ -99,7 +100,9 @@ export const ghostCommand = define({
     if (files.length === 0) {
       if (!mode.quiet && !mode.json && !mode.csv) {
         console.log('No session files found. Check that Claude Code has been used recently.');
-        console.log('Session files are stored in ~/.claude/projects/ and ~/.config/claude/projects/');
+        console.log(
+          'Session files are stored in ~/.claude/projects/ and ~/.config/claude/projects/',
+        );
       }
       return;
     }
@@ -172,18 +175,42 @@ export const ghostCommand = define({
         console.log(JSON.stringify(envelope, null, indent));
       } else if (mode.csv) {
         // D-02: dry-run honors --csv. Schema: action,category,name,scope,projectPath,path,tokens,tier
-        const headers = ['action', 'category', 'name', 'scope', 'projectPath', 'path', 'tokens', 'tier'];
+        const headers = [
+          'action',
+          'category',
+          'name',
+          'scope',
+          'projectPath',
+          'path',
+          'tokens',
+          'tier',
+        ];
         const rows = [...plan.archive, ...plan.disable, ...plan.flag].map((i) => [
-          i.action, i.category, i.name, i.scope, i.projectPath ?? '', i.path, String(i.tokens), i.tier,
+          i.action,
+          i.category,
+          i.name,
+          i.scope,
+          i.projectPath ?? '',
+          i.path,
+          String(i.tokens),
+          i.tier,
         ]);
         console.log(csvTable(headers, rows, !mode.quiet));
       } else if (mode.quiet) {
         // D-02: dry-run honors --quiet. TSV with same 8 columns as CSV, no header.
         for (const item of [...plan.archive, ...plan.disable, ...plan.flag]) {
-          console.log(tsvRow([
-            item.action, item.category, item.name, item.scope,
-            item.projectPath ?? '', item.path, String(item.tokens), item.tier,
-          ]));
+          console.log(
+            tsvRow([
+              item.action,
+              item.category,
+              item.name,
+              item.scope,
+              item.projectPath ?? '',
+              item.path,
+              String(item.tokens),
+              item.tier,
+            ]),
+          );
         }
       } else {
         // Default rendered output (D-05, D-06): header + grouped body + verbose + checkpoint footer
@@ -218,18 +245,15 @@ export const ghostCommand = define({
     const healthScore = calculateHealthScore(enriched);
 
     // Step 5: Filter to ghosts only
-    const ghosts = enriched.filter(r => r.tier !== 'used');
+    const ghosts = enriched.filter((r) => r.tier !== 'used');
 
     // Step 6: Build category summaries
     const categories = ['agent', 'skill', 'mcp-server', 'memory'] as const;
-    const summaries: CategorySummary[] = categories.map(cat => {
-      const catItems = enriched.filter(r => r.item.category === cat);
-      const catUsed = catItems.filter(r => r.tier === 'used');
-      const catGhosts = catItems.filter(r => r.tier !== 'used');
-      const tokenCost = catGhosts.reduce(
-        (sum, r) => sum + (r.tokenEstimate?.tokens ?? 0),
-        0,
-      );
+    const summaries: CategorySummary[] = categories.map((cat) => {
+      const catItems = enriched.filter((r) => r.item.category === cat);
+      const catUsed = catItems.filter((r) => r.tier === 'used');
+      const catGhosts = catItems.filter((r) => r.tier !== 'used');
+      const tokenCost = catGhosts.reduce((sum, r) => sum + (r.tokenEstimate?.tokens ?? 0), 0);
       return {
         category: cat,
         defined: catItems.length,
@@ -240,7 +264,7 @@ export const ghostCommand = define({
     });
 
     // Determine exit code: 1 if ghosts found (per D-01)
-    const hasGhosts = enriched.some(r => r.tier !== 'used');
+    const hasGhosts = enriched.some((r) => r.tier !== 'used');
     const exitCode = hasGhosts ? 1 : 0;
 
     // Output routing (in order of precedence per D-17)
@@ -254,8 +278,8 @@ export const ghostCommand = define({
         inventory: enriched.length,
         ghosts: {
           total: ghosts.length,
-          likely: ghosts.filter(r => r.tier === 'likely-ghost').length,
-          definite: ghosts.filter(r => r.tier === 'definite-ghost').length,
+          likely: ghosts.filter((r) => r.tier === 'likely-ghost').length,
+          definite: ghosts.filter((r) => r.tier === 'definite-ghost').length,
         },
         healthScore: {
           score: healthScore.score,
@@ -266,7 +290,7 @@ export const ghostCommand = define({
         totalOverhead: {
           tokens: totalTokens,
         },
-        items: ghosts.map(r => ({
+        items: ghosts.map((r) => ({
           name: r.item.name,
           category: r.item.category,
           scope: r.item.scope,
@@ -275,11 +299,13 @@ export const ghostCommand = define({
           invocations: r.invocationCount,
           path: r.item.path,
           projectPath: r.item.projectPath,
-          tokenEstimate: r.tokenEstimate ? {
-            tokens: r.tokenEstimate.tokens,
-            confidence: r.tokenEstimate.confidence,
-            source: r.tokenEstimate.source,
-          } : null,
+          tokenEstimate: r.tokenEstimate
+            ? {
+                tokens: r.tokenEstimate.tokens,
+                confidence: r.tokenEstimate.confidence,
+                source: r.tokenEstimate.source,
+              }
+            : null,
           recommendation: classifyRecommendation(r.tier),
         })),
       });
@@ -287,8 +313,16 @@ export const ghostCommand = define({
       console.log(JSON.stringify(envelope, null, indent));
     } else if (mode.csv) {
       // CSV output (RFC 4180 per D-18, D-19)
-      const headers = ['name', 'category', 'tier', 'lastUsed', 'tokens', 'recommendation', 'confidence'];
-      const rows = enriched.map(r => [
+      const headers = [
+        'name',
+        'category',
+        'tier',
+        'lastUsed',
+        'tokens',
+        'recommendation',
+        'confidence',
+      ];
+      const rows = enriched.map((r) => [
         r.item.name,
         r.item.category,
         r.tier,
@@ -301,14 +335,16 @@ export const ghostCommand = define({
     } else if (mode.quiet) {
       // TSV output (per D-09)
       for (const r of enriched) {
-        console.log(tsvRow([
-          r.item.name,
-          r.item.category,
-          r.tier,
-          r.lastUsed?.toISOString() ?? 'never',
-          String(r.tokenEstimate?.tokens ?? 0),
-          classifyRecommendation(r.tier),
-        ]));
+        console.log(
+          tsvRow([
+            r.item.name,
+            r.item.category,
+            r.tier,
+            r.lastUsed?.toISOString() ?? 'never',
+            String(r.tokenEstimate?.tokens ?? 0),
+            classifyRecommendation(r.tier),
+          ]),
+        );
       }
     } else {
       // Default rendered output (tables, headers, footer)
