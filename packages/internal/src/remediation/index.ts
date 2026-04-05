@@ -64,3 +64,8 @@ export type {
   SkippedOp,
   ReadManifestResult,
 } from './manifest.ts';
+
+// Phase 8: bust orchestrator -- the Wave 1 pipeline that wires Wave 0
+// primitives into the full --dangerously-bust-ghosts flow (D-01..D-18).
+export { runBust, runConfirmationCeremony } from './bust.ts';
+export type { BustResult, BustDeps, BustCounts, CeremonyResult, CeremonyIO } from './bust.ts';
