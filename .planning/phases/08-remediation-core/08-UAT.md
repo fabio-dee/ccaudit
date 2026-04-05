@@ -26,8 +26,8 @@ result: pass
 
 ### 4. Running process detection (exit 3)
 expected: bust exits 3 when a Claude Code process is detected. Verified via integration test fake-ps shim.
-result: skipped
-reason: covered by bust-command.test.ts 'PATH stripped → exit 3' (passes as part of test group 5-9)
+result: pass
+note: manually verified — detected pids 6929, 10269 (live Claude Code windows), exited 3
 
 ### 5. Ghost agents archived to _archived/ (not deleted)
 expected: Integration suite confirms ghost agent files archived to `~/.claude/agents/_archived/`; originals removed.
@@ -64,10 +64,10 @@ result: pass
 ## Summary
 
 total: 12
-passed: 11
+passed: 12
 issues: 0
 pending: 0
-skipped: 1
+skipped: 0
 blocked: 0
 
 ## Gaps
