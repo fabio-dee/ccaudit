@@ -158,9 +158,18 @@ Plans:
   5. Stale memory files receive `ccaudit-stale: true` frontmatter (not moved, not deleted)
   6. All `~/.claude.json` mutations use atomic write-to-temp-then-rename pattern
   7. An incremental restore manifest is written as operations complete (crash mid-operation allows partial restore)
-  8. Triple confirmation UX: proceed? -> are you sure? -> type "I accept full responsibility"
+  8. Two-prompt confirmation UX (D-15): `[1/2] Proceed busting? [y/N]` -> `[2/2] Type exactly: proceed busting`. Non-TTY bypass via `--yes-proceed-busting` flag (D-16).
   9. CI matrix extended to `windows-latest`; `fs.rename` EPERM retry logic verified on Windows with exponential backoff test
-**Plans**: TBD
+**Plans:** 8 plans
+Plans:
+- [ ] 08-01-PLAN.md — Wave 0: extract atomic-write.ts + Windows EPERM retry + CI windows-latest + REQUIREMENTS.md RMED-02 amendment
+- [ ] 08-02-PLAN.md — Wave 0: collisions.ts ISO-suffix helpers + processes.ts ps/tasklist scan with parent-chain
+- [ ] 08-03-PLAN.md — Wave 0: frontmatter.ts hand-rolled YAML patcher with 10-fixture test set
+- [ ] 08-04-PLAN.md — Wave 0: manifest.ts JSONL append writer with header/footer + 5 op type schemas
+- [ ] 08-05-PLAN.md — Wave 1: bust.ts orchestrator (checkpoint gate + preflight + ceremony + execute + manifest)
+- [ ] 08-06-PLAN.md — Wave 2: CLI wiring — --dangerously-bust-ghosts + --yes-proceed-busting flags + output matrix + exit ladder
+- [ ] 08-07-PLAN.md — Wave 3: subprocess integration test covering exit codes 0/1/3/4 + full pipeline side effects
+- [ ] 08-08-PLAN.md — Wave 3: README bust section + JSON-SCHEMA bust envelope + handoff doc D-15 amendment
 
 ### Phase 9: Restore & Rollback
 **Goal**: Users can fully reverse any remediation -- restoring all archived items at once, restoring a single item by name, or listing what was archived
