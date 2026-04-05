@@ -20,3 +20,14 @@ export {
   buildArchivePath,
   buildDisabledMcpKey,
 } from './collisions.ts';
+
+// Phase 8: running-process detection for --dangerously-bust-ghosts preflight
+// (D-02 spawn ps/tasklist, D-03 exit code 3 on detection, D-04 self-invocation)
+export {
+  detectClaudeProcesses,
+  walkParentChain,
+  parsePsComm,
+  parseTasklistCsv,
+  CLAUDE_NAME_REGEX,
+} from './processes.ts';
+export type { ClaudeProcess, DetectResult, ProcessDetectorDeps } from './processes.ts';
