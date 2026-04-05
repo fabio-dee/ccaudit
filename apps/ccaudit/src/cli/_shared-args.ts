@@ -2,9 +2,11 @@
  * Shared CLI flag definitions for all subcommands.
  *
  * These flags are spread into every command's `args` object.
- * IMPORTANT: --no-color is NOT here (per D-07). It is detected at root level
- * by initColor() reading process.argv directly. This means both
- * `ccaudit --no-color ghost` and `ccaudit ghost --no-color` work.
+ *
+ * --no-color is declared here for --help visibility (gunshi help metadata).
+ * The authoritative runtime source is initColor() in @ccaudit/terminal/color.ts,
+ * which reads process.argv directly for root-level positioning robustness (per D-07).
+ * Both sources agree because gunshi parsing does not modify process.argv.
  */
 export const outputArgs = {
   quiet: {
@@ -21,6 +23,11 @@ export const outputArgs = {
   ci: {
     type: 'boolean' as const,
     description: 'CI mode: --json --quiet with exit codes (implies --json --quiet)',
+    default: false,
+  },
+  'no-color': {
+    type: 'boolean' as const,
+    description: 'Disable ANSI colors in output (also respects NO_COLOR env var)',
     default: false,
   },
 } as const;
@@ -61,9 +68,18 @@ if (import.meta.vitest) {
       expect((outputArgs as Record<string, { description?: string }>).ci.description).toContain('CI mode');
     });
 
-    it('does NOT have no-color key', () => {
-      expect(outputArgs).not.toHaveProperty('no-color');
-      expect(outputArgs).not.toHaveProperty('noColor');
+    it('has no-color key with type boolean and default false', () => {
+      expect(outputArgs).toHaveProperty('no-color');
+      expect((outputArgs as Record<string, unknown>)['no-color']).toMatchObject({
+        type: 'boolean',
+        default: false,
+      });
+    });
+
+    it('no-color description mentions NO_COLOR env var', () => {
+      const desc = (outputArgs as Record<string, { description?: string }>)['no-color'].description;
+      expect(typeof desc).toBe('string');
+      expect(desc).toContain('NO_COLOR');
     });
   });
 }
