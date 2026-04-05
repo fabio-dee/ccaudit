@@ -1,15 +1,22 @@
 ---
 phase: 06-output-control-polish
-verified: 2026-04-04T17:10:00Z
-status: passed
-score: 7/7 must-haves verified
+verified: 2026-04-05T06:00:00Z
+status: gaps_found
+score: 7/7 ROADMAP truths verified, 4 escaped gaps discovered during first end-to-end manual test
 re_verification:
-  previous_status: gaps_found
-  previous_score: 5/7
+  previous_status: passed
+  previous_verified: 2026-04-04T17:10:00Z
+  previous_score: 7/7 must-haves verified
+  escaped_gaps:
+    - "Gap #3 — JSON schema is undocumented; three camelCase fields (items / meta.timestamp / meta.exitCode) correctly implement D-16 but have no public discoverability (README, JSON-SCHEMA.md, per-command --json help text all silent)"
+    - "Gap #4 — --no-color functional but invisible in every --help output (D-07 initColor() bypasses gunshi parsing → zero help metadata)"
+    - "Gap #5 — ccaudit mcp --csv and rendered table emit duplicate rows when the same MCP server is defined in multiple project-level .mcp.json files (scanner per-project dedup is by design for future Phase 8 RMED-06; missing presentation-layer aggregation)"
+    - "Gap #6 — pnpm -r build errors from subpackage directories (packages/internal and packages/terminal lack a build script; CI only works because pnpm -r tolerates partial matches when apps/ccaudit has the script)"
   gaps_closed:
     - "CI test job fails if any coverage metric drops below 80% (Gap #1 closed by Plan 06-05)"
     - "npm pack --dry-run succeeds and shows zero runtime dependencies (Gap #2 closed by Plan 06-06)"
-  gaps_remaining: []
+  gaps_remaining:
+    - "Gaps #3–#6 — see Escaped Gaps section below; to be closed by Plan 06-07"
   regressions: []
 ---
 
@@ -169,3 +176,81 @@ All 7 observable truths pass. All 7 OUTP requirements are satisfied. All 14 beha
 
 *Verified: 2026-04-04T17:10:00Z*
 *Verifier: Claude (gsd-verifier, re-verification run after Plans 06-05 and 06-06 gap closure)*
+
+---
+
+## Escaped Gaps (discovered 2026-04-05 during first end-to-end manual test)
+
+**Context.** After Phase 6 sealed passed on 2026-04-04 and Phase 7 (dry-run & checkpoint) landed on 2026-04-05, the user ran the first full 15-section manual test of the v1.0 candidate binary (`apps/ccaudit/dist/index.js`) against their live `~/.claude/` environment. 12 sections passed. 4 real gaps surfaced — none fatal, but all block a credible v1.0 launch. Results are in `docs/manual-test-results.md`. Parallel analysis across three angles (JSON contract, MCP data flow, help/build hygiene) confirms the scope.
+
+**Why these escaped the 2026-04-04 verification.** The 14 behavioral spot-checks all ran `ghost --ci`, `ghost --csv`, `ghost --quiet`, `trend --json` etc. and validated the *body* of the output. No spot-check greps the `--help` text of any command for flag visibility, no spot-check attempts cross-project MCP dedup (the live fixture happens to not duplicate any servers in the same way Phase 3's test fixture didn't), no spot-check runs `pnpm -r build` from a subpackage directory, and no spot-check validates the discoverability of the JSON field contract outside of the vitest suite. The gaps are all discoverability / edge-case / cross-directory issues that the verification matrix never probed.
+
+### Gap #3 — JSON schema contract is undocumented (Category A in plan-file analysis)
+
+**Symptom.** Tester expected `ghost --json | jq '.data'`, `jq '.meta.generated_at'`, `jq '.meta.exit_code'` (snake_case). Actual: `.items`, `.meta.timestamp`, `.meta.exitCode` (camelCase). Tester flagged as "breaks spec contract".
+
+**Diagnosis.** Code is correct per Phase 6 D-16: *"Every command's JSON output includes a `meta` envelope with `{ command, version, since, timestamp, exitCode }` alongside the command-specific data."* camelCase matches TypeScript internals and the `gh` CLI convention. The contract is locked by vitest at `apps/ccaudit/src/cli/_output-mode.ts:125` (`expect(envelope).toHaveProperty('items')`) and enforced across all 4 commands. **The tester's expectation came from a JSON REST-API snake_case default; no documentation exists outside the phase files to correct that assumption.** This is a discoverability gap, not a code bug — renaming would violate D-16, fail vitest, and break any script that already uses the camelCase form.
+
+**Requirements impact.** OUTP-06 (`--json` export on all read commands). The requirement is structurally satisfied, but the absence of public schema documentation means the contract is effectively invisible to first-time users. Fix is documentation: `docs/JSON-SCHEMA.md` + README section + per-command `--json` help text enhancement.
+
+**Fix owner.** Plan 06-07, Category A.
+
+### Gap #4 — `--no-color` invisible in `--help` output (Category B1)
+
+**Symptom.** Tester ran `ccaudit --help`, `ccaudit ghost --help`, `ccaudit mcp --help` (all 5 commands). `--no-color` does not appear in any help listing. Tester confirmed the flag IS functional — `NO_COLOR=1` env var and piping both strip ANSI correctly — but it is undocumented.
+
+**Diagnosis.** Intentional D-07 design: `apps/ccaudit/src/cli/_shared-args.ts:1-8` comment says *"--no-color is NOT here (per D-07). It is detected at root level by initColor() reading process.argv directly."* `packages/terminal/src/color.ts:19-23` implements `initColor()` reading `process.argv.includes('--no-color')` directly. Gunshi never sees the flag as a declared arg, so it's absent from every `--help` rendering. The in-source test at `_shared-args.ts:64-67` explicitly asserts `outputArgs` does NOT have the key — the design is locked.
+
+**The D-07 optimization ("no per-command duplication") cost DX.** The trade-off needs reversing: declare `no-color` in `outputArgs` so gunshi adds help metadata, while keeping `initColor()` reading `process.argv` as the authoritative source. Both agree because `process.argv` is the same for both code paths.
+
+**Requirements impact.** OUTP-02 (`NO_COLOR` env var and `--no-color` flag — ANSI-free output for piped/CI contexts). The requirement is functionally satisfied (the flag works) but fails the "is available" spirit of the flag declaration.
+
+**Fix owner.** Plan 06-07, Category B1. Two files modified: `_shared-args.ts` (add `no-color` to `outputArgs`, flip the `expect(outputArgs).not.toHaveProperty('no-color')` test). No changes to color.ts or to any command.
+
+### Gap #5 — `ccaudit mcp --csv` and rendered table emit duplicate rows for cross-project MCP servers (Category B2)
+
+**Symptom.** Tester ran `ccaudit mcp --csv` against their live environment. Same server name appears twice in the CSV output:
+```
+supabase,mcp-server,definite-ghost,never,0,archive,none
+supabase,mcp-server,definite-ghost,never,0,archive,none     ← duplicate
+```
+Rendered table shows the same duplication. Duplicates come from `supabase` being defined in multiple project-level `.mcp.json` files.
+
+**Diagnosis.** `packages/internal/src/scanner/scan-mcp.ts:45-109` builds items with per-project dedup via `Set<string>` keyed on `${projectPath}::${serverName}`. This is **correct by design** — Phase 8 `RMED-06` will disable MCP servers via key-rename in `~/.claude.json` (`projects.<path>.mcpServers` is per-project), so the remediation MUST know which project configs to mutate. Scanner must preserve per-project granularity.
+
+`apps/ccaudit/src/cli/commands/mcp.ts:108-111` filters by category and enriches, then all four output branches (JSON `:184-197`, CSV `:204-212`, TSV `:216-225`, rendered table `:235`) iterate the enriched array without aggregating by server name. The presentation layer was never added because Phase 5's MCP view used a test fixture that didn't duplicate servers across projects.
+
+**Fix.** Presentation-layer aggregation in `commands/mcp.ts` — a new `aggregateMcpByName` helper that groups by server name, picks the "least ghost" tier (`used` > `likely-ghost` > `definite-ghost`), takes the max `lastUsed` across instances, sums `invocationCount`, keeps token estimate (identical per-server), and exposes a `projectPaths: string[]` field in JSON output for traceability. Scanner is untouched.
+
+**Requirements impact.** OUTP-07 (`--csv` export on all read commands). The CSV schema is correct; the row set has duplicate data. New integration test extends the dry-run test pattern: fixture with two `.mcp.json` files defining the same server, assert no duplicate rows.
+
+**Fix owner.** Plan 06-07, Category B2. Files modified: `apps/ccaudit/src/cli/commands/mcp.ts` (inline helper + invocation + JSON field addition + in-source tests). New E2E integration test in `apps/ccaudit/src/__tests__/`.
+
+### Gap #6 — `pnpm -r build` fails with ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT from subpackage directories (Category B3)
+
+**Symptom.** Tester ran `pnpm -r build` and got:
+```
+ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT  None of the selected packages has a "build" script
+```
+Workaround: `pnpm -F ccaudit build` succeeds. `pnpm -r typecheck` succeeds.
+
+**Diagnosis.** Root `package.json:11` defines `"build": "pnpm -r build"`. CI `.github/workflows/ci.yaml:61` runs the same command. `packages/internal/package.json:9-12` and `packages/terminal/package.json:9-12` only define `test` and `typecheck` scripts — no `build`. Only `apps/ccaudit` has a build script. Per pnpm 10.x: `pnpm -r <script>` errors when NO package has the script, but silently skips packages without it when at least one does. From the workspace root, `apps/ccaudit` provides the script so `pnpm -r build` succeeds (CI is green). From a subpackage directory, `pnpm -r`'s implicit scope excludes `apps/ccaudit` and the error surfaces. Fragile.
+
+**Fix.** Add `"build": "tsc"` stubs to `packages/internal/package.json` and `packages/terminal/package.json`, matching their existing `typecheck` script invocations. Aligns with TypeScript composite project conventions, idempotent (tsconfig decides emission), symmetric with `pnpm -r typecheck`, requires no CI changes.
+
+**Requirements impact.** Not a Phase 6 OUTP requirement — this is Phase 1 scaffold hygiene that escaped to Phase 6 verification. Riding along in Plan 06-07 because the fix is tiny (2 lines across 2 files) and it's part of the same manual-test escape class.
+
+**Fix owner.** Plan 06-07, Category B3.
+
+### Gap closure routing
+
+Plan 06-07 (next available number in `.planning/phases/06-output-control-polish/`) will address all 4 escaped gaps in a single gap-closure plan with `gap_closure: true` frontmatter. Source plan document: `/Users/helldrik/.claude/plans/stateless-watching-koala.md` (approved by user 2026-04-05). Execution via `/gsd:execute-phase 6 --gaps-only`. Re-verification will re-run the 14 existing behavioral spot-checks plus new ones covering:
+
+- `--no-color` appears in `--help` output for root and all 4 subcommands (B1)
+- `mcp --csv` produces no duplicate rows after cross-project aggregation (B2)
+- `pnpm -r build` succeeds from both workspace root and subpackage directories (B3)
+- `docs/JSON-SCHEMA.md` exists, README links to it, per-command `--json` help text references it (A)
+- All 357+ existing tests still pass
+- Coverage thresholds (80/70/80/80) still met
+
+On success, this VERIFICATION.md flips back to `status: passed` with a new `re_verification` entry documenting the Gap #3–#6 closure.
