@@ -63,15 +63,172 @@ const FLAT_KV = /^([A-Za-z0-9_.-]+)\s*:\s*(.*)$/;
 // -- Public API ---------------------------------------------------
 
 /**
- * Stub implementation -- see GREEN commit for the real patcher. Every caller
- * currently receives a sentinel skipped result so the in-source test block
- * exercises its assertion paths (all will fail, which is the RED state).
+ * Patch a memory file's frontmatter to flag it as stale (D-07, D-08).
+ *
+ * Case handling:
+ *   1. No frontmatter                   -> prepend a fresh `---\n ... \n---\n\n`
+ *                                           block followed by the original body
+ *                                           (`{status:'patched', hadFrontmatter:false}`)
+ *   2. Flat key:value frontmatter       -> inject missing ccaudit keys before
+ *                                           the closing fence; unrelated keys
+ *                                           are preserved
+ *                                           (`{status:'patched', hadFrontmatter:true}`)
+ *   3. Already has `ccaudit-stale:true` -> D-07 idempotent refresh: update the
+ *                                           `ccaudit-flagged` timestamp only and
+ *                                           leave the stale key alone
+ *                                           (`{status:'refreshed', previousFlaggedAt}`)
+ *   4. Exotic / malformed frontmatter   -> return `{status:'skipped', reason:'exotic-yaml'}`
+ *                                           and leave the file untouched. This
+ *                                           covers folded scalars (`>` / `|`),
+ *                                           nested keys, arrays, and
+ *                                           unterminated blocks.
+ *
+ * Line endings are detected from the input (LF vs CRLF) and preserved on write.
+ * A leading UTF-8 BOM is transparently stripped on read.
+ *
+ * Read failures (missing file, permission denied, non-UTF-8 bytes) return
+ * `{status:'skipped', reason:'read-error'}`. Write failures after a successful
+ * read return `{status:'skipped', reason:'write-error'}`.
  */
 export async function patchFrontmatter(
-  _filePath: string,
-  _nowIso: string,
+  filePath: string,
+  nowIso: string,
 ): Promise<FrontmatterPatchResult> {
-  return { status: 'skipped', reason: 'read-error' };
+  let raw: string;
+  try {
+    raw = await readFile(filePath, 'utf8');
+  } catch {
+    return { status: 'skipped', reason: 'read-error' };
+  }
+
+  // Detect line ending style; preserved on every writeback below.
+  const crlf = /\r\n/.test(raw);
+  const eol = crlf ? '\r\n' : '\n';
+  const lines = raw.split(/\r?\n/);
+
+  // Strip a leading BOM if present -- some markdown editors emit one and it
+  // would prevent the literal `---` match on line 0.
+  if (lines[0]?.charCodeAt(0) === 0xfeff) {
+    lines[0] = lines[0]!.slice(1);
+  }
+
+  // CASE 1: No frontmatter. The empty-file edge case is also handled here --
+  //         lines is `['']`, the `---` test fails, and we prepend a fresh block.
+  const hasFrontmatter = lines[0] === '---';
+  if (!hasFrontmatter) {
+    const block = [
+      '---',
+      'ccaudit-stale: true',
+      `ccaudit-flagged: ${nowIso}`,
+      '---',
+      '',
+    ].join(eol);
+    // Re-join the original lines with the detected eol so we do not flip
+    // line endings while appending the prepended block.
+    const body = lines.join(eol);
+    const out = body === '' ? block + eol : block + eol + body;
+    try {
+      await writeFile(filePath, out, 'utf8');
+    } catch {
+      return { status: 'skipped', reason: 'write-error' };
+    }
+    return {
+      status: 'patched',
+      hadFrontmatter: false,
+      hadCcauditStale: false,
+      previousFlaggedAt: null,
+    };
+  }
+
+  // Frontmatter block detected on line 0. Find the closing fence.
+  let closingIdx = -1;
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i] === '---') {
+      closingIdx = i;
+      break;
+    }
+  }
+  if (closingIdx === -1) {
+    // Unterminated frontmatter block -- refuse to touch.
+    return { status: 'skipped', reason: 'exotic-yaml' };
+  }
+
+  // Walk the frontmatter body (lines 1 .. closingIdx-1) and validate that
+  // every non-blank non-comment line is a simple flat key:value. Any exotic
+  // construct triggers a skip with reason 'exotic-yaml'.
+  const bodyLines = lines.slice(1, closingIdx);
+  let ccauditStaleIdx = -1; // index RELATIVE to bodyLines
+  let ccauditFlaggedIdx = -1; // index RELATIVE to bodyLines
+  let previousFlaggedAt: string | null = null;
+
+  for (let i = 0; i < bodyLines.length; i++) {
+    const line = bodyLines[i]!;
+    if (line.trim() === '' || line.trim().startsWith('#')) continue;
+
+    // Detect exotic constructs before attempting to parse as flat key:value.
+    // Order matters: folded-scalar check runs before the indent check because
+    // a `description: >` line itself is NOT indented, but its continuation
+    // lines are. EXOTIC_INDENT catches the continuation lines that appear
+    // after it.
+    if (
+      EXOTIC_INDENT.test(line)
+      || EXOTIC_FOLDED_SCALAR.test(line)
+      || EXOTIC_ARRAY_ITEM.test(line)
+    ) {
+      return { status: 'skipped', reason: 'exotic-yaml' };
+    }
+
+    const m = FLAT_KV.exec(line);
+    if (!m) {
+      return { status: 'skipped', reason: 'exotic-yaml' };
+    }
+
+    if (m[1] === 'ccaudit-stale') ccauditStaleIdx = i;
+    if (m[1] === 'ccaudit-flagged') {
+      ccauditFlaggedIdx = i;
+      // Strip surrounding quotes (single or double) and whitespace so the
+      // previous value round-trips through the manifest unchanged.
+      previousFlaggedAt = (m[2] ?? '').replace(/^["']|["']$/g, '').trim();
+    }
+  }
+
+  // D-07 idempotent refresh: both ccaudit keys already present -> replace the
+  // ccaudit-flagged value in place; leave ccaudit-stale and everything else
+  // alone.
+  if (ccauditStaleIdx >= 0 && ccauditFlaggedIdx >= 0) {
+    const newLines = [...lines];
+    // bodyLines index -> lines index: add 1 to skip the opening `---` fence.
+    newLines[ccauditFlaggedIdx + 1] = `ccaudit-flagged: ${nowIso}`;
+    try {
+      await writeFile(filePath, newLines.join(eol), 'utf8');
+    } catch {
+      return { status: 'skipped', reason: 'write-error' };
+    }
+    return {
+      status: 'refreshed',
+      previousFlaggedAt: previousFlaggedAt ?? 'unknown',
+    };
+  }
+
+  // Flat frontmatter with one or both ccaudit keys missing -- inject whichever
+  // keys are absent immediately before the closing `---` fence.
+  const inject: string[] = [];
+  if (ccauditStaleIdx < 0) inject.push('ccaudit-stale: true');
+  if (ccauditFlaggedIdx < 0) inject.push(`ccaudit-flagged: ${nowIso}`);
+
+  const newLines = [...lines];
+  newLines.splice(closingIdx, 0, ...inject);
+  try {
+    await writeFile(filePath, newLines.join(eol), 'utf8');
+  } catch {
+    return { status: 'skipped', reason: 'write-error' };
+  }
+  return {
+    status: 'patched',
+    hadFrontmatter: true,
+    hadCcauditStale: ccauditStaleIdx >= 0,
+    previousFlaggedAt,
+  };
 }
 
 // -- In-source tests ---------------------------------------------
