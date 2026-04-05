@@ -1,17 +1,19 @@
 ---
 phase: 07-dry-run-checkpoint
 verified: 2026-04-04T21:40:00Z
-status: passed
-score: 3/3 must-haves verified
-re_verification: false
+re_verified: 2026-04-05T00:00:00Z
+status: gaps_found
+score: 2/3 must-haves verified (1 regressed after human smoke test)
+re_verification: true
 ---
 
 # Phase 7: Dry-Run & Checkpoint Verification Report
 
 **Phase Goal:** Users can preview exactly what remediation would change without touching the filesystem, and the tool writes a hash-based checkpoint that gates future remediation.
-**Verified:** 2026-04-04T21:40:00Z
-**Status:** PASSED
-**Re-verification:** No — initial verification
+**Verified:** 2026-04-04T21:40:00Z (initial)
+**Re-verified:** 2026-04-05T00:00:00Z (after human smoke test revealed escaped gap)
+**Status:** GAPS_FOUND — automated verification passed, but human verification #2 (live dry-run against a real Claude installation) revealed a crash the synthetic fixture did not catch.
+**Re-verification:** Yes — required after gap closure.
 
 ---
 
@@ -135,11 +137,73 @@ No code-level anti-patterns found. No TODO/FIXME/placeholder comments. No empty 
 
 ### Gaps Summary
 
-No gaps found. All three DRYR requirements are satisfied by substantive, wired implementations with end-to-end integration test coverage.
+**Post-verification escaped gap discovered during human smoke test (2026-04-05):**
 
-Two bugs discovered and fixed during the phase (gunshi toKebab flag name, gunshi banner pollution) are correctly noted as deviations in the SUMMARY files. Both are fixed in the committed code and confirmed by the behavioral spot-checks above. Neither constitutes a remaining gap.
+The first manual execution of `ccaudit --dry-run` against a real `~/.claude/` installation crashed with an unhandled `ENOENT` when the inventory contained a broken symlink skill. The synthetic fixture used by the integration test suite does not cover this case. See the **Escaped Gaps** section below for full details.
 
-The only open item is the REQUIREMENTS.md tracking table showing "Pending" status for DRYR-01/02/03 — this is a documentation maintenance issue, not an implementation gap, and does not block Phase 8.
+Automated verification and the two intra-phase bugs (gunshi `toKebab`, banner pollution) are not affected by this discovery. The escaped gap is scoped to file-disappearance handling in `scanSkills`, `scanAgents`, and `computeGhostHash`.
+
+---
+
+### Escaped Gaps (post-verification, discovered 2026-04-05)
+
+#### Gap #1 — `ccaudit --dry-run` crashes on broken-symlink skills (affects DRYR-02, DRYR-03)
+
+**Severity:** BLOCKER — command is unusable for any user whose `~/.claude/skills/` contains a broken symlink (common with dotfiles-managed skill sets).
+
+**How it escaped:**
+- Human verification item #2 ("Live Dry-Run Against a Real Claude Installation") was listed as required in the initial VERIFICATION but was not executed before marking the phase passed.
+- The subprocess integration test fixture in `apps/ccaudit/src/__tests__/dry-run-command.test.ts` (lines 62-124, `buildFixture`) creates real agent files via `writeFile` + `utimes` and **never creates skill directories or broken symlinks**. No test case exercises "inventory references a path that cannot be stat'd."
+- The regressed human verification item therefore passed through the gate undetected.
+
+**Error signature (from user terminal, 2026-04-05):**
+```
+Error: ENOENT: no such file or directory, stat '/Users/helldrik/.claude/skills/full-output-enforcement'
+    at async stat (node:internal/fs/promises:1039:18)
+    at async Promise.all (index 164)
+    at async computeGhostHash (.../packages/internal/src/remediation/checkpoint.ts:137)
+    at async run (.../apps/ccaudit/src/cli/commands/ghost.ts:138)
+```
+
+**Root cause (two layers):**
+
+1. **Scanners skip `mtimeMs` for agents and skills.** `scanMemoryFiles` populates `mtimeMs` on every item via a try/catch-wrapped `stat` (`scan-memory.ts:22, 45, 67, 90`). `scanSkills` (`scan-skills.ts:51-58, 75-82`) and `scanAgents` (`scan-agents.ts:29-35, 52-58`) do NOT — items are pushed with `mtimeMs` undefined.
+2. **`computeGhostHash` has an unprotected `stat()` fallback.** At `packages/internal/src/remediation/checkpoint.ts:137`:
+   ```typescript
+   const mtimeMs = r.item.mtimeMs ?? (await statFn(r.item.path)).mtimeMs;
+   ```
+   When layer 1 leaves `mtimeMs` undefined, the nullish-coalesce falls through to `statFn` with no try/catch. Any `ENOENT` (or `ELOOP`, `EACCES`, `ENOTDIR`) crashes the entire `Promise.all` and bubbles up to the CLI.
+
+**Requirements impacted:**
+
+| Req | Impact |
+|-----|--------|
+| DRYR-01 | **Partial regression** — the command crashes before rendering the change plan on real-world inventories with broken symlinks. Synthetic-fixture test cases still pass, so the automated verification row is unchanged, but the real-world path is broken. |
+| DRYR-02 | **Failed** — no checkpoint is written because the crash happens before `writeCheckpoint` is called. |
+| DRYR-03 | **Failed** — hash-based invalidation cannot be tested because the hash function itself throws. |
+
+**D-17 contract check:** The frozen hash contract in `07-01-SUMMARY.md` is silent on missing-file handling. Excluding an un-stat-able item from the hash is consistent with the contract's "Changes when items enter/leave eligible set" clause. No contract break.
+
+**Fix scope (to be executed via gap-closure plan 07-04):**
+
+| File | Lines | Change |
+|------|-----:|--------|
+| `packages/internal/src/scanner/scan-skills.ts` | 1, 50-58, 72-83 | Import `stat`, wrap item creation in try/catch-stat (copy `scan-memory.ts:44-56` pattern), populate `mtimeMs` |
+| `packages/internal/src/scanner/scan-agents.ts` | 1, 28-36, 51-59 | Same pattern — import `stat`, wrap, populate `mtimeMs` |
+| `packages/internal/src/remediation/checkpoint.ts` | 117-148 (the `eligible.map` body), line 137 | Defensive safety net — return `HashRecord \| null` from the async mapper, wrap `statFn` call in try/catch, filter nulls before serializing |
+
+**Tests required (to close the gap and prevent recurrence):**
+
+1. `scan-skills.ts` in-source test — broken symlink excluded; existing symlink test updated to assert `mtimeMs` populated
+2. `scan-agents.ts` in-source test — missing-file race
+3. `checkpoint.ts` in-source test — `computeGhostHash` survives missing path, hash matches "item absent" control
+4. `dry-run-command.test.ts` — extend `buildFixture` with `brokenSymlinkSkills` option; add regression test case that, had it existed, would have caught this bug in CI instead of the user's terminal
+
+**Planning reference:** Full plan captured at `~/.claude/plans/stateless-watching-koala.md` — approved by user 2026-04-05. The gap-closure plan (07-04-PLAN.md) should distill that plan into GSD task format.
+
+---
+
+**Pre-existing open item (not a new gap):** The REQUIREMENTS.md tracking table showing "Pending" status for DRYR-01/02/03 is a project-wide documentation maintenance pattern affecting all completed phases (01-06 show the same), not a Phase 7 regression.
 
 ---
 
