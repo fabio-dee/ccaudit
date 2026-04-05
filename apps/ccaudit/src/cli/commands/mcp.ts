@@ -25,6 +25,84 @@ import {
 import { outputArgs } from '../_shared-args.ts';
 import { resolveOutputMode, buildJsonEnvelope } from '../_output-mode.ts';
 
+/**
+ * Aggregate enriched MCP results by server name for presentation output.
+ *
+ * Rationale (Gap #5 fix): scan-mcp.ts dedups per (projectPath::serverName) for Phase 8
+ * RMED-06 traceability, producing 1 row per (server, project) pair. For the user-facing
+ * mcp view, the same server in 2 .mcp.json files is 1 logical server with 2 source
+ * configs — collapse by name here so CSV/table/JSON/TSV output shows one row per server.
+ *
+ * Merge semantics:
+ *   tier            — least ghost wins: used > likely-ghost > definite-ghost
+ *   lastUsed        — max (most recent) across the group
+ *   invocationCount — sum across the group
+ *   tokenEstimate   — identical per server name, take any representative
+ *   projectPath     — null (aggregated view)
+ *   projectPaths    — array of source projectPath values, for JSON traceability
+ *   other item fields — any representative
+ *
+ * Scanner stays untouched — Phase 8 RMED-06 still knows which config key(s) to rewrite.
+ */
+export function aggregateMcpByName(enriched: TokenCostResult[]): TokenCostResult[] {
+  const tierRank = { 'used': 0, 'likely-ghost': 1, 'definite-ghost': 2 } as const;
+  const groups = new Map<string, TokenCostResult[]>();
+  for (const r of enriched) {
+    const key = r.item.name;
+    const bucket = groups.get(key);
+    if (bucket) {
+      bucket.push(r);
+    } else {
+      groups.set(key, [r]);
+    }
+  }
+
+  const aggregated: TokenCostResult[] = [];
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      // Single-instance server: pass through, but attach projectPaths for JSON traceability.
+      const only = group[0]!;
+      const projectPaths = only.item.projectPath ? [only.item.projectPath] : [];
+      aggregated.push({
+        ...only,
+        item: { ...only.item, projectPaths } as typeof only.item & { projectPaths: string[] },
+      });
+      continue;
+    }
+
+    // Multi-instance: merge.
+    let bestTier = group[0]!.tier;
+    for (const r of group) {
+      if (tierRank[r.tier] < tierRank[bestTier]) bestTier = r.tier;
+    }
+
+    let maxLastUsed: Date | null = null;
+    for (const r of group) {
+      if (r.lastUsed && (!maxLastUsed || r.lastUsed > maxLastUsed)) {
+        maxLastUsed = r.lastUsed;
+      }
+    }
+
+    const totalInvocations = group.reduce((sum, r) => sum + r.invocationCount, 0);
+    const representative = group[0]!;
+    const projectPaths = group.map(r => r.item.projectPath).filter((p): p is string => p !== null);
+
+    aggregated.push({
+      item: {
+        ...representative.item,
+        projectPath: null,
+        projectPaths,
+      } as typeof representative.item & { projectPaths: string[] },
+      tier: bestTier,
+      lastUsed: maxLastUsed,
+      invocationCount: totalInvocations,
+      tokenEstimate: representative.tokenEstimate,
+    });
+  }
+
+  return aggregated;
+}
+
 export const mcpCommand = define({
   name: 'mcp',
   description: 'Show MCP server token costs (use --live for exact counts)',
@@ -160,6 +238,11 @@ export const mcpCommand = define({
       );
     }
 
+    // Gap #5 fix: aggregate per server name for presentation — scanner keeps per-project
+    // dedup for Phase 8 RMED-06; this is the user-facing collapse so CSV/table/JSON/TSV
+    // show one row per server, not one per (server, project) pair.
+    enriched = aggregateMcpByName(enriched);
+
     // Determine exit code: 1 if ghosts found (per D-01)
     const hasGhosts = enriched.some(r => r.tier !== 'used');
     const exitCode = hasGhosts ? 1 : 0;
@@ -181,20 +264,24 @@ export const mcpCommand = define({
           ghostPenalty: healthScore.ghostPenalty,
           tokenPenalty: healthScore.tokenPenalty,
         },
-        items: enriched.map(r => ({
-          name: r.item.name,
-          scope: r.item.scope,
-          tier: r.tier,
-          invocations: r.invocationCount,
-          lastUsed: r.lastUsed?.toISOString() ?? null,
-          projectPath: r.item.projectPath,
-          tokenEstimate: r.tokenEstimate ? {
-            tokens: r.tokenEstimate.tokens,
-            confidence: r.tokenEstimate.confidence,
-            source: r.tokenEstimate.source,
-          } : null,
-          recommendation: classifyRecommendation(r.tier),
-        })),
+        items: enriched.map(r => {
+          const itemWithPaths = r.item as typeof r.item & { projectPaths?: string[] };
+          return {
+            name: r.item.name,
+            scope: r.item.scope,
+            tier: r.tier,
+            invocations: r.invocationCount,
+            lastUsed: r.lastUsed?.toISOString() ?? null,
+            projectPath: r.item.projectPath,
+            projectPaths: itemWithPaths.projectPaths ?? (r.item.projectPath ? [r.item.projectPath] : []),
+            tokenEstimate: r.tokenEstimate ? {
+              tokens: r.tokenEstimate.tokens,
+              confidence: r.tokenEstimate.confidence,
+              source: r.tokenEstimate.source,
+            } : null,
+            recommendation: classifyRecommendation(r.tier),
+          };
+        }),
       });
       const indent = mode.quiet ? 0 : 2;
       console.log(JSON.stringify(envelope, null, indent));
@@ -277,6 +364,68 @@ if (import.meta.vitest) {
       expect(argKeys).toContain('quiet');
       expect(argKeys).toContain('csv');
       expect(argKeys).toContain('ci');
+    });
+  });
+
+  describe('aggregateMcpByName', () => {
+    const makeResult = (
+      name: string,
+      projectPath: string | null,
+      tier: 'used' | 'likely-ghost' | 'definite-ghost',
+      invocationCount: number,
+      lastUsed: Date | null,
+    ): TokenCostResult => ({
+      item: {
+        name,
+        path: '/fake/.mcp.json',
+        scope: projectPath ? 'project' : 'global',
+        category: 'mcp-server',
+        projectPath,
+      },
+      tier,
+      lastUsed,
+      invocationCount,
+      tokenEstimate: { tokens: 1000, confidence: 'estimated', source: 'bundled' },
+    });
+
+    it('merges duplicate server names, keeping max lastUsed and least-ghost tier', () => {
+      const older = new Date('2026-01-01T00:00:00Z');
+      const newer = new Date('2026-03-15T00:00:00Z');
+      const input: TokenCostResult[] = [
+        makeResult('context7', '/proj/a', 'definite-ghost', 0, null),
+        makeResult('context7', '/proj/b', 'used', 5, newer),
+        makeResult('context7', '/proj/c', 'likely-ghost', 1, older),
+      ];
+
+      const result = aggregateMcpByName(input);
+
+      expect(result).toHaveLength(1);
+      const row = result[0]!;
+      expect(row.item.name).toBe('context7');
+      expect(row.tier).toBe('used');
+      expect(row.lastUsed).toEqual(newer);
+      expect(row.invocationCount).toBe(6);
+      expect(row.item.projectPath).toBeNull();
+      const projectPaths = (row.item as typeof row.item & { projectPaths: string[] }).projectPaths;
+      expect(projectPaths).toEqual(['/proj/a', '/proj/b', '/proj/c']);
+    });
+
+    it('passes through single-instance servers unchanged with projectPaths populated', () => {
+      const when = new Date('2026-02-01T00:00:00Z');
+      const input: TokenCostResult[] = [
+        makeResult('playwright', '/proj/only', 'likely-ghost', 2, when),
+      ];
+
+      const result = aggregateMcpByName(input);
+
+      expect(result).toHaveLength(1);
+      const row = result[0]!;
+      expect(row.item.name).toBe('playwright');
+      expect(row.tier).toBe('likely-ghost');
+      expect(row.lastUsed).toEqual(when);
+      expect(row.invocationCount).toBe(2);
+      const projectPaths = (row.item as typeof row.item & { projectPaths: string[] }).projectPaths;
+      expect(projectPaths).toEqual(['/proj/only']);
     });
   });
 }
