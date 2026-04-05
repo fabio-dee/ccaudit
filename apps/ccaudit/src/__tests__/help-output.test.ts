@@ -10,8 +10,9 @@
  * plus every subcommand for the 'no-color' substring. Serves as permanent regression
  * guard: if any subcommand loses the outputArgs spread, this test fails.
  */
-import { describe, it, expect, beforeAll } from 'vitest';
-import { execSync, spawnSync } from 'node:child_process';
+import { describe, it, expect } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -21,6 +22,13 @@ import { fileURLToPath } from 'node:url';
 // pattern: __tests__ lives at apps/ccaudit/src/__tests__ → dist is ../../dist.
 const here = path.dirname(fileURLToPath(import.meta.url));
 const BINARY = path.resolve(here, '..', '..', 'dist', 'index.js');
+
+// NOTE: This test REQUIRES `apps/ccaudit/dist/index.js` to exist before vitest runs.
+// We do NOT rebuild inside beforeAll because tsdown cleans dist/ before writing,
+// which races with parallel tests (dry-run-command.test.ts) that spawn the same
+// binary — producing transient ENOENT failures. Run `pnpm -F ccaudit build` before
+// `pnpm test` as a prerequisite. CI covers this via a dedicated build step.
+const binaryExists = existsSync(BINARY);
 
 function runHelp(args: string[]): string {
   const result = spawnSync('node', [BINARY, ...args], {
@@ -32,14 +40,7 @@ function runHelp(args: string[]): string {
   return (result.stdout ?? '') + (result.stderr ?? '');
 }
 
-describe('Gap #4 regression: --no-color visible in --help', () => {
-  beforeAll(() => {
-    // Ensure the binary is built. This is idempotent — tsdown reuses cached output
-    // when sources are unchanged. Other integration tests (dry-run-command.test.ts)
-    // rely on the same invariant.
-    execSync('pnpm -F ccaudit build', { stdio: 'pipe' });
-  });
-
+describe.skipIf(!binaryExists)('Gap #4 regression: --no-color visible in --help', () => {
   it('root ccaudit --help lists no-color', () => {
     const output = runHelp(['--help']);
     expect(output).toContain('no-color');
