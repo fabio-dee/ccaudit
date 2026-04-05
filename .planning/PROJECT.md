@@ -148,4 +148,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-05 after Phase 7 gap closure (07-04 fix for ENOENT on broken-symlink skills — scanner mtimeMs gap + `computeGhostHash` defensive safety net; first real-world smoke test against live `~/.claude/` now succeeds with stable hash across runs; 357/357 tests, coverage 93.61% stmt / 84.71% br / 96% fn / 94.4% lines; Phase 7 v1.1 milestone sealed)*
+*Last updated: 2026-04-05 after Phase 6 gap closure round 3 (06-07 closed 4 escaped gaps from the first end-to-end manual test of the v1.0 candidate: JSON schema discoverability via docs/JSON-SCHEMA.md + README + per-command --json help, --no-color visibility in --help via outputArgs gunshi declaration, mcp --csv cross-project aggregation via aggregateMcpByName helper, pnpm -r build subpackage stubs; all three D-16/D-07/RMED-06 invariants preserved with 0-line git diffs; 368/368 tests, coverage 93.61% stmt / 84.71% br / 96% fn / 94.4% lines; Phase 6 v1.0 milestone re-sealed)*
