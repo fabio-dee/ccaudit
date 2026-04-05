@@ -147,7 +147,7 @@ Plans:
 - [x] 07-04-PLAN.md — Gap closure: fix scanner mtimeMs + computeGhostHash safety net for un-stat-able paths (broken-symlink skills)
 
 ### Phase 8: Remediation Core
-**Goal**: `ccaudit --dangerously-bust-ghosts` safely remediates all ghost items -- archiving agents/skills, disabling MCP servers via key-rename, flagging stale memory -- with running-process detection, atomic writes, and triple confirmation
+**Goal**: `ccaudit --dangerously-bust-ghosts` safely remediates all ghost items -- archiving agents/skills, disabling MCP servers via key-rename, flagging stale memory -- with running-process detection, atomic writes, and two-prompt "proceed busting" confirmation ceremony
 **Depends on**: Phase 7
 **Requirements**: RMED-01, RMED-02, RMED-03, RMED-04, RMED-05, RMED-06, RMED-07, RMED-08, RMED-09, RMED-10
 **Success Criteria** (what must be TRUE):

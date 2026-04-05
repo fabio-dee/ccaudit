@@ -78,7 +78,7 @@
 - [ ] **RMED-07**: Stale memory files flagged with `ccaudit-stale: true` frontmatter (not moved, not deleted; still load normally -- flag is for human review)
 - [ ] **RMED-08**: Incremental restore manifest written: each remediation operation appended as it completes; crash mid-operation still allows partial restore
 - [ ] **RMED-09**: Atomic write pattern for all `~/.claude.json` mutations (write to temp, then `rename`)
-- [ ] **RMED-10**: Triple confirmation UX: [1/3] proceed? -> [2/3] are you sure? -> [3/3] type "I accept full responsibility"
+- [ ] **RMED-10**: Two-prompt confirmation UX: [1/2] `Proceed busting? [y/N]` -> [2/2] type exactly `proceed busting`. The original three-prompt "I accept full responsibility" design was superseded by Phase 8 D-15/D-16 in favor of a lighter ceremony with the typed-phrase `--yes-proceed-busting` non-TTY bypass flag.
 - [ ] **RMED-11**: `ccaudit restore`: full rollback from last bust
 - [ ] **RMED-12**: `ccaudit restore <name>`: restore single archived item
 - [ ] **RMED-13**: `ccaudit restore --list`: show all archived items with dates
