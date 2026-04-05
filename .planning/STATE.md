@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: "Completed 07-04-PLAN.md (gap closure: ENOENT fix for broken-symlink skills — real-world smoke test passes)"
-last_updated: "2026-04-05T05:11:54.494Z"
-last_activity: 2026-04-04
+status: executing
+stopped_at: "Completed 06-07-PLAN.md (gap closure: all 4 escaped gaps from Phase 6 VERIFICATION.md closed — JSON schema docs, --no-color help visibility, mcp cross-project dedup, pnpm -r build subpackage stubs)"
+last_updated: "2026-04-05T06:40:46.569Z"
+last_activity: 2026-04-05
 progress:
   total_phases: 10
   completed_phases: 7
-  total_plans: 24
-  completed_plans: 24
+  total_plans: 25
+  completed_plans: 25
   percent: 100
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-04)
 
 **Core value:** Show users exactly how many tokens their ghost inventory wastes -- and give them one safe, reversible command to reclaim them.
-**Current focus:** Phase 07 — dry-run-checkpoint
+**Current focus:** Phase 06 — output-control-polish
 
 ## Current Position
 
-Phase: 8
-Plan: Not started
-Status: Phase complete — ready for verification
-Last activity: 2026-04-04
+Phase: 06 (output-control-polish) — EXECUTING
+Plan: 2 of 7
+Status: Ready to execute
+Last activity: 2026-04-05
 
 Progress: [████████████████████] 14/14 plans (100%)
 
@@ -75,6 +75,7 @@ Progress: [████████████████████] 14/14 p
 | Phase 07-dry-run-checkpoint P02 | 5min | 3 tasks | 9 files |
 | Phase 07-dry-run-checkpoint P03 | 6min | 2 tasks | 3 files |
 | Phase 07-dry-run-checkpoint P04 | 7min | 3 tasks | 4 files |
+| Phase 06-output-control-polish P07 | 11min | 8 tasks | 14 files |
 
 ## Accumulated Context
 
@@ -154,6 +155,12 @@ Recent decisions affecting current work:
 - [Phase 07-dry-run-checkpoint]: stat() not lstat() in scanners — follows symlinks so valid linked skills resolve through to target mtime; only broken links throw and get skipped
 - [Phase 07-dry-run-checkpoint]: computeGhostHash null-sentinel safety net (HashRecord | null + type-predicate filter) preserves Promise.all parallelism and D-17 'items enter/leave eligible set' contract — un-stat-able items effectively leave the set
 - [Phase 07-dry-run-checkpoint]: Two-layer fix for file-disappearance: scanner fix is primary root cause (populates mtimeMs at discovery), hash safety net is belt-and-suspenders against future scanner regressions
+- [Phase 06-output-control-polish]: Gap #3 fix is documentation-only — D-16 JSON envelope is frozen; docs/JSON-SCHEMA.md exposes the canonical camelCase contract + README link + per-command --json help text extension
+- [Phase 06-output-control-polish]: Gap #4 two-source flag declaration: outputArgs.no-color for gunshi help metadata + initColor() reading process.argv directly as authoritative runtime source (both agree because gunshi does not mutate process.argv)
+- [Phase 06-output-control-polish]: Gap #5 presentation-layer aggregation: aggregateMcpByName helper in commands/mcp.ts collapses cross-project duplicates; scanner per-project dedup preserved for Phase 8 RMED-06 config-key traceability
+- [Phase 06-output-control-polish]: Gap #5 exposes new projectPaths: string[] field in mcp --json items for automation traceability after presentation-layer aggregation
+- [Phase 06-output-control-polish]: Gap #6 symmetric composite-project build stubs: packages/internal and packages/terminal both get build: tsc (idempotent via emitDeclarationOnly); root pnpm -r build fans out cleanly from any workspace directory
+- [Phase 06-output-control-polish]: E2E test BINARY path must use fileURLToPath(import.meta.url) — pnpm -F ccaudit scopes cwd to apps/ccaudit so cwd-relative paths double-nest; matches dry-run-command.test.ts precedent
 
 ### Pending Todos
 
@@ -168,6 +175,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-05T05:11:54.492Z
-Stopped at: Completed 07-04-PLAN.md (gap closure: ENOENT fix for broken-symlink skills — real-world smoke test passes)
+Last session: 2026-04-05T06:40:32.101Z
+Stopped at: Completed 06-07-PLAN.md (gap closure: all 4 escaped gaps from Phase 6 VERIFICATION.md closed — JSON schema docs, --no-color help visibility, mcp cross-project dedup, pnpm -r build subpackage stubs)
 Resume file: None
