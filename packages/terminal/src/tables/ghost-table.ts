@@ -95,21 +95,18 @@ export function renderTopGhosts(ghosts: TokenCostResult[], maxItems: number = 5)
 /**
  * Render the ghost command footer with two hint lines (dim per UI-SPEC).
  *
- * When `options.dryRunActive` is true (Phase 7, D-05), the "Dry-run coming in v1.1"
- * hint is suppressed because the dry-run caller emits its own
- * checkpoint-confirmation footer.
+ * When `options.dryRunActive` is true (Phase 7, D-05), the bust hint is
+ * suppressed because the dry-run caller emits its own checkpoint-confirmation footer.
  */
 export function renderGhostFooter(
   _sinceWindow: string,
   options?: { dryRunActive?: boolean },
 ): string {
   const hint1 = colorize.dim('See per-item details: ccaudit inventory');
-  // Suppress the "Dry-run coming in v1.1" hint when dry-run is already active
-  // (the dry-run caller emits its own checkpoint-confirmation footer per D-05).
   if (options?.dryRunActive) {
     return hint1;
   }
-  const hint2 = colorize.dim('Dry-run coming in v1.1: npx ccaudit@latest --dry-run');
+  const hint2 = colorize.dim('Ready to clean up? ccaudit ghost --dry-run');
   return `${hint1}\n${hint2}`;
 }
 
@@ -584,7 +581,7 @@ if (import.meta.vitest) {
 
     it('contains dry-run hint', () => {
       const result = renderGhostFooter('7 days');
-      expect(result).toContain('Dry-run coming in v1.1');
+      expect(result).toContain('ccaudit ghost --dry-run');
     });
   });
 

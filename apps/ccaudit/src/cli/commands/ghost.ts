@@ -265,7 +265,6 @@ export const ghostCommand = define({
           console.log(renderChangePlanVerbose(plan));
           console.log('');
         }
-        // Footer (D-05): replaces the Phase 5 "Dry-run coming in v1.1" line
         console.log(`Checkpoint: ${resolveCheckpointPath()}`);
         console.log(`Next: ccaudit --dangerously-bust-ghosts`);
       }
