@@ -502,7 +502,7 @@ if (import.meta.vitest) {
         category: 'agent',
         scope: 'global',
         source_path: '/a/foo.md',
-        archive_path: '/a/_archived/foo.md',
+        archive_path: '/a/ccaudit/archived/agents/foo.md',
         content: 'hello',
       });
       expect(op.op_type).toBe('archive');
@@ -510,7 +510,7 @@ if (import.meta.vitest) {
       expect(op.category).toBe('agent');
       expect(op.scope).toBe('global');
       expect(op.source_path).toBe('/a/foo.md');
-      expect(op.archive_path).toBe('/a/_archived/foo.md');
+      expect(op.archive_path).toBe('/a/ccaudit/archived/agents/foo.md');
       expect(op.op_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
       expect(op.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
       // sha256('hello') = 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
@@ -522,7 +522,7 @@ if (import.meta.vitest) {
         category: 'skill',
         scope: 'project',
         source_path: '/s/foo.md',
-        archive_path: '/s/_archived/foo.md',
+        archive_path: '/s/ccaudit/archived/skills/foo.md',
         content: Buffer.from('hello', 'utf8'),
       });
       expect(op.content_sha256).toBe('2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824');
@@ -533,7 +533,7 @@ if (import.meta.vitest) {
         category: 'agent',
         scope: 'global',
         source_path: '/a/foo.md',
-        archive_path: '/a/_archived/foo.md',
+        archive_path: '/a/ccaudit/archived/agents/foo.md',
         content: '',
         status: 'failed',
         error: 'EPERM',
@@ -643,12 +643,12 @@ if (import.meta.vitest) {
       await w.open(sampleHeader());
       await w.writeOp(buildArchiveOp({
         category: 'agent', scope: 'global',
-        source_path: '/a/foo.md', archive_path: '/a/_archived/foo.md',
+        source_path: '/a/foo.md', archive_path: '/a/ccaudit/archived/agents/foo.md',
         content: 'x',
       }));
       await w.writeOp(buildArchiveOp({
         category: 'skill', scope: 'project',
-        source_path: '/s/bar.md', archive_path: '/s/_archived/bar.md',
+        source_path: '/s/bar.md', archive_path: '/s/ccaudit/archived/skills/bar.md',
         content: 'y',
       }));
       await w.close(sampleFooter());
@@ -663,7 +663,7 @@ if (import.meta.vitest) {
       await w.open(sampleHeader());
       await w.writeOp(buildArchiveOp({
         category: 'agent', scope: 'global',
-        source_path: '/a/foo.md', archive_path: '/a/_archived/foo.md',
+        source_path: '/a/foo.md', archive_path: '/a/ccaudit/archived/agents/foo.md',
         content: 'x',
       }));
       await w.close(null);
@@ -704,7 +704,7 @@ if (import.meta.vitest) {
       }));
       await w.writeOp(buildArchiveOp({
         category: 'agent', scope: 'global',
-        source_path: '/a/foo.md', archive_path: '/a/_archived/foo.md',
+        source_path: '/a/foo.md', archive_path: '/a/ccaudit/archived/agents/foo.md',
         content: 'hello',
       }));
       await w.writeOp(buildDisableOp({

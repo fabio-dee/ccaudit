@@ -3,8 +3,8 @@ import path from 'node:path';
 /**
  * ISO-timestamp suffix helpers for archive filename + JSON key collision handling.
  *
- * D-05 (archive filename collisions): ~/.claude/agents/_archived/code-reviewer.md
- *   collides -> ~/.claude/agents/_archived/code-reviewer.2026-04-05T18-30-00Z.md
+ * D-05 (archive filename collisions): ~/.claude/ccaudit/archived/agents/code-reviewer.md
+ *   collides -> ~/.claude/ccaudit/archived/agents/code-reviewer.2026-04-05T18-30-00Z.md
  *   (colons replaced with dashes for cross-filesystem safety -- NTFS forbids colons)
  *
  * D-06 (MCP disabled key collisions): ccaudit-disabled:playwright collides ->
@@ -14,8 +14,8 @@ import path from 'node:path';
  * D-10 (manifest filename): same as D-05 -- bust-2026-04-05T18-30-00Z.jsonl
  *
  * RESEARCH Open Question 1: archive paths preserve nested subdirectory structure
- * via path.relative so `agents/design/foo.md` archives to `_archived/design/foo.md`,
- * never flattened to `_archived/foo.md`.
+ * via path.relative so `agents/design/foo.md` archives to
+ * `ccaudit/archived/agents/design/foo.md`, never flattened.
  */
 
 /**
@@ -41,17 +41,18 @@ export function timestampSuffixForJsonKey(date: Date = new Date()): string {
  * Per RESEARCH Open Question 1 recommendation:
  *   sourcePath  = /home/user/.claude/agents/design/foo.md
  *   categoryRoot = /home/user/.claude/agents
- *   result      = /home/user/.claude/agents/_archived/design/foo.md
+ *   archivedDir  = /home/user/.claude/ccaudit/archived/agents
+ *   result      = /home/user/.claude/ccaudit/archived/agents/design/foo.md
  *
  * On collision (collisionExists returns true for the computed path):
- *   result = /home/user/.claude/agents/_archived/design/foo.<iso-suffix>.md
+ *   result = /home/user/.claude/ccaudit/archived/agents/design/foo.<iso-suffix>.md
  *
  * Throws if sourcePath is outside categoryRoot (guards against `..` escape).
  */
 export function buildArchivePath(opts: {
   sourcePath: string;
   categoryRoot: string;
-  archivedDir: string; // usually `${categoryRoot}/_archived`
+  archivedDir: string; // e.g. `${claudeRoot}/ccaudit/archived/agents`
   collisionExists: (p: string) => boolean;
   now?: Date;
 }): string {
@@ -126,7 +127,7 @@ if (import.meta.vitest) {
 
   describe('buildArchivePath', () => {
     const categoryRoot = '/home/u/.claude/agents';
-    const archivedDir = '/home/u/.claude/agents/_archived';
+    const archivedDir = '/home/u/.claude/ccaudit/archived/agents';
 
     it('flat file: no collision returns plain archive path', () => {
       const p = buildArchivePath({
@@ -135,7 +136,7 @@ if (import.meta.vitest) {
         archivedDir,
         collisionExists: () => false,
       });
-      expect(p).toBe('/home/u/.claude/agents/_archived/foo.md');
+      expect(p).toBe('/home/u/.claude/ccaudit/archived/agents/foo.md');
     });
 
     it('nested file: preserves subdirectory structure', () => {
@@ -145,7 +146,7 @@ if (import.meta.vitest) {
         archivedDir,
         collisionExists: () => false,
       });
-      expect(p).toBe('/home/u/.claude/agents/_archived/design/foo.md');
+      expect(p).toBe('/home/u/.claude/ccaudit/archived/agents/design/foo.md');
     });
 
     it('deeply nested: preserves full relative structure', () => {
@@ -155,7 +156,7 @@ if (import.meta.vitest) {
         archivedDir,
         collisionExists: () => false,
       });
-      expect(p).toBe('/home/u/.claude/agents/_archived/design/ux/foo.md');
+      expect(p).toBe('/home/u/.claude/ccaudit/archived/agents/design/ux/foo.md');
     });
 
     it('collision: inserts timestamp suffix before extension', () => {
@@ -163,10 +164,10 @@ if (import.meta.vitest) {
         sourcePath: '/home/u/.claude/agents/foo.md',
         categoryRoot,
         archivedDir,
-        collisionExists: (c) => c === '/home/u/.claude/agents/_archived/foo.md',
+        collisionExists: (c) => c === '/home/u/.claude/ccaudit/archived/agents/foo.md',
         now: new Date('2026-04-05T18:30:00.000Z'),
       });
-      expect(p).toBe('/home/u/.claude/agents/_archived/foo.2026-04-05T18-30-00Z.md');
+      expect(p).toBe('/home/u/.claude/ccaudit/archived/agents/foo.2026-04-05T18-30-00Z.md');
     });
 
     it('nested collision: preserves dir + inserts suffix', () => {
@@ -174,10 +175,10 @@ if (import.meta.vitest) {
         sourcePath: '/home/u/.claude/agents/design/foo.md',
         categoryRoot,
         archivedDir,
-        collisionExists: (c) => c === '/home/u/.claude/agents/_archived/design/foo.md',
+        collisionExists: (c) => c === '/home/u/.claude/ccaudit/archived/agents/design/foo.md',
         now: new Date('2026-04-05T18:30:00.000Z'),
       });
-      expect(p).toBe('/home/u/.claude/agents/_archived/design/foo.2026-04-05T18-30-00Z.md');
+      expect(p).toBe('/home/u/.claude/ccaudit/archived/agents/design/foo.2026-04-05T18-30-00Z.md');
     });
 
     it('throws when sourcePath escapes categoryRoot via ..', () => {

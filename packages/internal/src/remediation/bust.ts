@@ -406,8 +406,9 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
 /**
  * Archive a single agent or skill file via the Plan 02 buildArchivePath
  * collision-resistant path builder. Preserves nested subdirectory structure
- * (e.g. agents/design/foo.md -> agents/_archived/design/foo.md) per RESEARCH
- * Open Question 1.
+ * (e.g. agents/design/foo.md -> ccaudit/archived/agents/design/foo.md).
+ * Archives land under the .claude/ccaudit/ namespace (outside Claude Code's
+ * scanning paths) so archived items are truly invisible to Claude Code.
  *
  * Failure mode: any error (file read, mkdir, rename) returns a `failed`
  * manifest op and increments counts.archive.failed WITHOUT throwing, so the
@@ -421,10 +422,13 @@ async function archiveOne(
 ): Promise<ManifestOp> {
   try {
     // Locate the category root by walking UP from the source path past the
-    // `agents` or `skills` segment. Example:
+    // `agents` or `skills` segment, then derive the centralized archive dir
+    // under the .claude/ccaudit/ namespace (outside Claude Code's scanning).
+    // Example:
     //   sourcePath  = /home/u/.claude/agents/design/foo.md
     //   categoryRoot = /home/u/.claude/agents
-    //   archivedDir  = /home/u/.claude/agents/_archived
+    //   claudeRoot   = /home/u/.claude
+    //   archivedDir  = /home/u/.claude/ccaudit/archived/agents
     const categoryRoot = findCategoryRoot(item.path, category);
     if (!categoryRoot) {
       counts.archive.failed += 1;
@@ -438,7 +442,9 @@ async function archiveOne(
         error: `could not resolve ${category} root for ${item.path}`,
       });
     }
-    const archivedDir = path.join(categoryRoot, '_archived');
+    const claudeRoot = path.dirname(categoryRoot);
+    const categorySegment = category === 'agent' ? 'agents' : 'skills';
+    const archivedDir = path.join(claudeRoot, 'ccaudit', 'archived', categorySegment);
 
     // Read the original bytes BEFORE the rename so the manifest's content
     // sha256 reflects the pre-archive content (Phase 9 tamper detection).
@@ -1145,10 +1151,10 @@ if (import.meta.vitest) {
       const memoryContent = await rf(path.join(claudeRoot, 'CLAUDE.md'), 'utf8');
       expect(memoryContent).toContain('ccaudit-stale: true');
 
-      // Footer present; archive agent path records _archived
+      // Footer present; archive agent path is under ccaudit/archived/
       expect(manifest.footer).toBeTruthy();
       const archiveAgentOp = manifest.ops[0] as ArchiveOp;
-      expect(archiveAgentOp.archive_path).toContain('_archived');
+      expect(archiveAgentOp.archive_path).toContain(path.join('ccaudit', 'archived', 'agents'));
       expect(archiveAgentOp.archive_path).toMatch(/foo\.md$/);
     });
 
@@ -1264,7 +1270,7 @@ if (import.meta.vitest) {
       const archiveOp = manifest.ops[0] as ArchiveOp;
       expect(archiveOp.status).toBe('completed');
       expect(archiveOp.category).toBe('skill');
-      expect(archiveOp.archive_path).toContain('_archived');
+      expect(archiveOp.archive_path).toContain(path.join('ccaudit', 'archived', 'skills'));
       // content_sha256 should be non-empty (hashed from SKILL.md)
       expect(archiveOp.content_sha256).toBeTruthy();
       expect(archiveOp.content_sha256).not.toBe(

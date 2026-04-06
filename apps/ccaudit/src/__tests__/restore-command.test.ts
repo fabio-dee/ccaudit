@@ -229,7 +229,7 @@ interface BuildFixtureOptions {
  *   - one archive op for 'code-reviewer.md'
  *   - footer record (unless includeFooter: false)
  *
- * The archived file is placed at `.claude/agents/_archived/code-reviewer.md`
+ * The archived file is placed at `.claude/ccaudit/archived/agents/code-reviewer.md`
  * (unless includeArchive: false). The source path where it should be restored
  * is `.claude/agents/code-reviewer.md`.
  */
@@ -244,7 +244,7 @@ async function buildBasicFixture(
   } = options;
 
   const tmpHome = await setupEmptyHome();
-  const archivedDir = path.join(tmpHome, '.claude', 'agents', '_archived');
+  const archivedDir = path.join(tmpHome, '.claude', 'ccaudit', 'archived', 'agents');
   await mkdir(archivedDir, { recursive: true });
 
   const archivedAgentPath = path.join(archivedDir, 'code-reviewer.md');

@@ -47,6 +47,7 @@ export async function scanSkills(
 
     for (const entry of entries) {
       if (entry.name.startsWith('.')) continue; // Skip dotfiles
+      if (entry.name === '_archived') continue; // Skip legacy ccaudit archives
       if (entry.isDirectory() || entry.isSymbolicLink()) {
         const skillPath = path.join(skillsDir, entry.name);
         try {
@@ -78,6 +79,7 @@ export async function scanSkills(
 
     for (const entry of entries) {
       if (entry.name.startsWith('.')) continue; // Skip dotfiles
+      if (entry.name === '_archived') continue; // Skip legacy ccaudit archives
       if (entry.isDirectory() || entry.isSymbolicLink()) {
         const skillPath = path.join(skillsDir, entry.name);
         try {
@@ -203,6 +205,19 @@ if (import.meta.vitest) {
       );
       expect(result).toHaveLength(1);
       expect(result[0].name).toBe('visible-skill');
+    });
+
+    it('should skip _archived directory (legacy ccaudit archives)', async () => {
+      const skillsDir = path.join(tmpDir, 'legacy', 'skills');
+      await mkdir(path.join(skillsDir, 'active-skill'), { recursive: true });
+      await mkdir(path.join(skillsDir, '_archived'), { recursive: true });
+
+      const result = await scanSkills(
+        { legacy: path.join(tmpDir, 'legacy'), xdg: path.join(tmpDir, 'xdg') },
+        [],
+      );
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('active-skill');
     });
 
     it('should skip regular files (not directories or symlinks)', async () => {

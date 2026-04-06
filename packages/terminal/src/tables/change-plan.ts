@@ -18,10 +18,10 @@ export function renderChangePlan(plan: ChangePlan): string {
   if (plan.counts.agents > 0 || plan.counts.skills > 0) {
     lines.push(colorize.bold('Will ARCHIVE (reversible via `ccaudit restore <name>`):'));
     if (plan.counts.agents > 0) {
-      lines.push(`  ${String(plan.counts.agents).padStart(3)} agents  → ~/.claude/agents/_archived/`);
+      lines.push(`  ${String(plan.counts.agents).padStart(3)} agents  → ~/.claude/ccaudit/archived/agents/`);
     }
     if (plan.counts.skills > 0) {
-      lines.push(`  ${String(plan.counts.skills).padStart(3)} skills  → ~/.claude/skills/_archived/`);
+      lines.push(`  ${String(plan.counts.skills).padStart(3)} skills  → ~/.claude/ccaudit/archived/skills/`);
     }
     lines.push('');
   }

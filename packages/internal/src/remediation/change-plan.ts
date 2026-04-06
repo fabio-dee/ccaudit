@@ -4,7 +4,7 @@ import { calculateDryRunSavings } from './savings.ts';
 
 /**
  * Action verbs grouping items in the change plan.
- * - archive: agents + skills (definite-ghost) -> moved to _archived/ in Phase 8
+ * - archive: agents + skills (definite-ghost) -> moved to ccaudit/archived/ in Phase 8
  * - disable: MCP servers (definite-ghost OR likely-ghost per D-11a) -> key-renamed in Phase 8
  * - flag:    memory files (any stale tier) -> frontmatter added in Phase 8
  */

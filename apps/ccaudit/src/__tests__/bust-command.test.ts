@@ -422,8 +422,8 @@ describe('ccaudit --dangerously-bust-ghosts (integration)', () => {
 
       // ── Disk side effects ────────────────────────────────
 
-      // Ghost agent moved to _archived/.
-      const archivedPath = path.join(tmpHome, '.claude', 'agents', '_archived', 'ghost-agent.md');
+      // Ghost agent moved to ccaudit/archived/agents/.
+      const archivedPath = path.join(tmpHome, '.claude', 'ccaudit', 'archived', 'agents', 'ghost-agent.md');
       expect(existsSync(archivedPath)).toBe(true);
       expect(existsSync(path.join(tmpHome, '.claude', 'agents', 'ghost-agent.md'))).toBe(false);
 

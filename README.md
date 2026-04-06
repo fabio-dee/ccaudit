@@ -172,11 +172,11 @@ payload keys, and jq recipes.
 
 All operations are reversible. Nothing is deleted.
 
-**Agents & Skills** — moved to `_archived/`, not deleted:
+**Agents & Skills** — moved to `~/.claude/ccaudit/archived/`, not deleted:
 
 ```
 ~/.claude/agents/code-reviewer.md
-→ ~/.claude/agents/_archived/code-reviewer.md
+→ ~/.claude/ccaudit/archived/agents/code-reviewer.md
 ```
 
 **MCP Servers** — commented out in `settings.json`, not removed:

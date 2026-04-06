@@ -25,6 +25,7 @@ export async function scanAgents(
       const files = await glob([`${posixBase}/agents/**/*.md`], {
         absolute: true,
         dot: false,
+        ignore: [`${posixBase}/agents/_archived/**`],
       });
       for (const filePath of files) {
         try {
@@ -54,6 +55,7 @@ export async function scanAgents(
       const files = await glob([`${posixDir}/**/*.md`], {
         absolute: true,
         dot: false,
+        ignore: [`${posixDir}/_archived/**`],
       });
       for (const filePath of files) {
         try {
@@ -147,6 +149,22 @@ if (import.meta.vitest) {
       );
       expect(result).toHaveLength(1);
       expect(result[0].name).toBe('deep-agent');
+    });
+
+    it('should exclude _archived subdirectory (legacy ccaudit archives)', async () => {
+      const agentsDir = path.join(tmpDir, 'legacy', 'agents');
+      await mkdir(agentsDir, { recursive: true });
+      await writeFile(path.join(agentsDir, 'active-agent.md'), '# Agent');
+      const archivedDir = path.join(agentsDir, '_archived');
+      await mkdir(archivedDir, { recursive: true });
+      await writeFile(path.join(archivedDir, 'old-agent.md'), '# Archived');
+
+      const result = await scanAgents(
+        { legacy: path.join(tmpDir, 'legacy'), xdg: path.join(tmpDir, 'xdg') },
+        [],
+      );
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('active-agent');
     });
 
     it('should ignore non-.md files', async () => {
