@@ -442,7 +442,18 @@ async function archiveOne(
 
     // Read the original bytes BEFORE the rename so the manifest's content
     // sha256 reflects the pre-archive content (Phase 9 tamper detection).
-    const content = await deps.readFileUtf8(item.path);
+    // Skills are directories (not files), so readFileUtf8 would throw EISDIR.
+    // For directories, hash the primary SKILL.md entry file if it exists.
+    let content: string;
+    try {
+      content = await deps.readFileUtf8(item.path);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EISDIR') {
+        content = await deps.readFileUtf8(path.join(item.path, 'SKILL.md')).catch(() => '');
+      } else {
+        throw err;
+      }
+    }
 
     // Build a collision-resistant, nested-structure-preserving archive path.
     const archivePath = buildArchivePath({
@@ -747,12 +758,18 @@ function defaultCeremonyIo(): CeremonyIO {
     readLine: (prompt) =>
       new Promise<string>((resolve) => {
         const rl = createInterface({ input: process.stdin, output: process.stdout });
+        let answered = false;
         rl.question(prompt, (answer) => {
+          answered = true;
           rl.close();
           resolve(answer);
         });
         // Pitfall 4 safety net: on EOF (piped stdin), resolve with sentinel.
-        rl.on('close', () => resolve('__eof__'));
+        // Guard with `answered` because rl.close() emits 'close' synchronously,
+        // so the close handler fires before resolve(answer) if we don't gate it.
+        rl.on('close', () => {
+          if (!answered) resolve('__eof__');
+        });
       }),
     print: (s) => {
       // eslint-disable-next-line no-console
@@ -1212,6 +1229,47 @@ if (import.meta.vitest) {
       expect(manifest.ops).toHaveLength(2);
       expect((manifest.ops[0] as ArchiveOp).status).toBe('failed');
       expect((manifest.ops[1] as ArchiveOp).status).toBe('completed');
+    });
+
+    it('skill directories are archived correctly (not just files)', async () => {
+      const claudeRoot = path.join(tmp, '.claude');
+      const skillDir = path.join(claudeRoot, 'skills', 'my-skill');
+      await mk(skillDir, { recursive: true });
+      await wf(path.join(skillDir, 'SKILL.md'), '---\nname: my-skill\n---\n# Skill body', 'utf8');
+      await mk(path.join(skillDir, 'references'), { recursive: true });
+      await wf(path.join(skillDir, 'references', 'ref.md'), 'ref content', 'utf8');
+
+      const enriched: TokenCostResult[] = [
+        {
+          item: {
+            name: 'my-skill',
+            path: skillDir,
+            scope: 'global',
+            category: 'skill',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 50, confidence: 'estimated', source: 'test' },
+        },
+      ];
+
+      const deps = makeDeps(tmp, { scanAndEnrich: async () => enriched });
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('success');
+
+      const manifest = await readManifest(deps.manifestPath());
+      expect(manifest.ops).toHaveLength(1);
+      const archiveOp = manifest.ops[0] as ArchiveOp;
+      expect(archiveOp.status).toBe('completed');
+      expect(archiveOp.category).toBe('skill');
+      expect(archiveOp.archive_path).toContain('_archived');
+      // content_sha256 should be non-empty (hashed from SKILL.md)
+      expect(archiveOp.content_sha256).toBeTruthy();
+      expect(archiveOp.content_sha256).not.toBe(
+        'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', // sha256('')
+      );
     });
   });
 
