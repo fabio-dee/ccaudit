@@ -43,6 +43,10 @@ export { defaultDeps as defaultProcessDeps } from './processes.ts';
 export { patchFrontmatter } from './frontmatter.ts';
 export type { FrontmatterPatchResult } from './frontmatter.ts';
 
+// Phase 9 Plan 02: restore helpers for stripping/updating ccaudit frontmatter keys
+export { removeFrontmatterKeys, setFrontmatterValue } from './frontmatter.ts';
+export type { FrontmatterRemoveResult } from './frontmatter.ts';
+
 // Phase 8: JSONL restore manifest writer + reader (D-09 / D-10 / D-11 / D-12)
 // Append-only, fsync-per-op, header+footer bracket, crash-tolerant reader.
 export {
