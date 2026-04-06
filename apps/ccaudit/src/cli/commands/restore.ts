@@ -103,6 +103,18 @@ export const restoreCommand = define({
   renderHeader: null,
   args: {
     ...outputArgs,
+    json: {
+      type: 'boolean' as const,
+      short: 'j',
+      description: 'Output as JSON (see docs/JSON-SCHEMA.md for schema)',
+      default: false,
+    },
+    verbose: {
+      type: 'boolean' as const,
+      short: 'v',
+      description: 'Show detailed output including warnings',
+      default: false,
+    },
     list: {
       type: 'boolean' as const,
       description: 'List all archived items across all busts (read-only)',
@@ -118,8 +130,12 @@ export const restoreCommand = define({
     //   --list flag    → listing mode
     //   (default)      → full restore
     //
-    // ctx._ is the positional args array (gunshi 0.29.3 typed interface).
-    const positionalName = (ctx._ ?? [])[0] ?? null;
+    // ctx.positionals includes ALL positionals from the full argv, meaning
+    // ctx.positionals[0] = 'restore' (the subcommand name). The user-supplied
+    // name (e.g., `ccaudit restore code-reviewer`) is at index [commandPath.length].
+    // ctx.commandPath = ['restore'] when called as a subcommand, so depth = 1.
+    // ctx._ is the FULL argv — same indexing issue, do NOT use ctx._[0] either.
+    const positionalName = ctx.positionals[ctx.commandPath.length] ?? null;
     const listFlag = ctx.values.list === true;
 
     const mode: RestoreMode = listFlag
