@@ -1,7 +1,8 @@
 import { cli } from 'gunshi';
 import { ghostCommand } from './commands/ghost.ts';
-import { mcpCommand } from './commands/mcp.ts';
 import { inventoryCommand } from './commands/inventory.ts';
+import { mcpCommand } from './commands/mcp.ts';
+import { restoreCommand } from './commands/restore.ts';
 import { trendCommand } from './commands/trend.ts';
 
 export async function run(): Promise<void> {
@@ -22,8 +23,9 @@ export async function run(): Promise<void> {
     renderHeader: null,
     subCommands: {
       ghost: ghostCommand,
-      mcp: mcpCommand,
       inventory: inventoryCommand,
+      mcp: mcpCommand,
+      restore: restoreCommand,   // Phase 9
       trend: trendCommand,
     },
   });
