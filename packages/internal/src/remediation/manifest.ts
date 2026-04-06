@@ -152,6 +152,70 @@ export function resolveManifestPath(now: Date = new Date()): string {
   return path.join(homedir(), '.claude', 'ccaudit', 'manifests', `bust-${stamp}.jsonl`);
 }
 
+// -- Manifest discovery (Phase 9) --------------------------------
+
+/**
+ * Resolve the canonical manifests directory path.
+ *
+ * @returns ~/.claude/ccaudit/manifests
+ */
+export function resolveManifestDir(): string {
+  return path.join(homedir(), '.claude', 'ccaudit', 'manifests');
+}
+
+/**
+ * A discovered manifest entry with its filesystem metadata.
+ */
+export interface ManifestEntry {
+  path: string;
+  mtime: Date;
+}
+
+/**
+ * Injectable deps for discoverManifests() -- Phase 7 D-17 StatFn precedent.
+ * Using injected readdir + stat instead of direct node:fs/promises imports
+ * enables unit tests without vi.mock (ESM module namespace non-configurable).
+ */
+export interface DiscoverManifestsDeps {
+  readdir: (dir: string) => Promise<string[]>;
+  stat: (p: string) => Promise<{ mtime: Date }>;
+  /** Override for tests -- defaults to resolveManifestDir() */
+  manifestsDir?: string;
+}
+
+/**
+ * Discover all bust-*.jsonl manifest files in the manifests directory,
+ * sorted newest-first by mtime.
+ *
+ * Returns [] when the directory doesn't exist (no bust history).
+ * Filters to only files matching the `bust-*.jsonl` pattern (T-09-01).
+ *
+ * @param deps Injectable readdir + stat (inject fakes in tests; production
+ *             passes `readdir: (d) => fs.readdir(d), stat: (p) => fs.stat(p)`).
+ */
+export async function discoverManifests(
+  deps: DiscoverManifestsDeps,
+): Promise<ManifestEntry[]> {
+  const dir = deps.manifestsDir ?? resolveManifestDir();
+  let entries: string[];
+  try {
+    entries = await deps.readdir(dir);
+  } catch {
+    return []; // ENOENT = no bust history
+  }
+  const jsonlFiles = entries.filter(
+    (e) => e.startsWith('bust-') && e.endsWith('.jsonl'),
+  );
+  const statted = await Promise.all(
+    jsonlFiles.map(async (name) => {
+      const p = path.join(dir, name);
+      const s = await deps.stat(p);
+      return { path: p, mtime: s.mtime };
+    }),
+  );
+  return statted.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+}
+
 // -- Header / Footer builders (D-12) ------------------------------
 
 export function buildHeader(
@@ -718,6 +782,95 @@ if (import.meta.vitest) {
       }));
       await wf(p, header + '\n{not json}\n{"op_type":"archive","op_id":"x"}\n', 'utf8');
       await expect(readManifest(p)).rejects.toThrow(/parse error/);
+    });
+  });
+
+  describe('resolveManifestDir', () => {
+    it('Test 5: returns path.join(homedir(), .claude, ccaudit, manifests)', () => {
+      const dir = resolveManifestDir();
+      expect(dir).toMatch(/[/\\]\.claude[/\\]ccaudit[/\\]manifests$/);
+    });
+  });
+
+  describe('discoverManifests', () => {
+    it('Test 1: returns only bust-*.jsonl entries, filters non-matching files', async () => {
+      const fakeMtime = new Date('2026-04-05T18:30:00Z');
+      const deps: DiscoverManifestsDeps = {
+        manifestsDir: '/fake/manifests',
+        readdir: async () => [
+          'bust-2026-04-01T10-00-00Z.jsonl',
+          'bust-2026-04-05T18-30-00Z.jsonl',
+          'other.txt',
+        ],
+        stat: async () => ({ mtime: fakeMtime }),
+      };
+      const result = await discoverManifests(deps);
+      expect(result).toHaveLength(2);
+      expect(result.every((e) => e.path.includes('bust-'))).toBe(true);
+      expect(result.every((e) => e.path.endsWith('.jsonl'))).toBe(true);
+    });
+
+    it('Test 2: returns [] when readdir throws ENOENT', async () => {
+      const deps: DiscoverManifestsDeps = {
+        manifestsDir: '/nonexistent/manifests',
+        readdir: async () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); },
+        stat: async () => ({ mtime: new Date() }),
+      };
+      const result = await discoverManifests(deps);
+      expect(result).toEqual([]);
+    });
+
+    it('Test 3: sorts newest-first by mtime', async () => {
+      const older = new Date('2026-04-01T00:00:00Z');
+      const newer = new Date('2026-04-05T18:30:00Z');
+      const mtimes: Record<string, Date> = {
+        'bust-2026-04-01T10-00-00Z.jsonl': older,
+        'bust-2026-04-05T18-30-00Z.jsonl': newer,
+      };
+      const deps: DiscoverManifestsDeps = {
+        manifestsDir: '/fake/manifests',
+        readdir: async () => [
+          'bust-2026-04-01T10-00-00Z.jsonl',
+          'bust-2026-04-05T18-30-00Z.jsonl',
+        ],
+        stat: async (p) => ({ mtime: mtimes[path.basename(p)]! }),
+      };
+      const result = await discoverManifests(deps);
+      expect(result[0]!.path).toContain('2026-04-05');
+      expect(result[0]!.mtime.getTime()).toBeGreaterThan(result[1]!.mtime.getTime());
+    });
+
+    it('Test 4: filters entries not matching bust-*.jsonl pattern', async () => {
+      const fakeMtime = new Date('2026-04-05T18:30:00Z');
+      const deps: DiscoverManifestsDeps = {
+        manifestsDir: '/fake/manifests',
+        readdir: async () => [
+          'README.md',
+          '.DS_Store',
+          'bust-broken.txt',
+          'nonbust.jsonl',
+          'bust-2026-04-05T18-30-00Z.jsonl',
+        ],
+        stat: async () => ({ mtime: fakeMtime }),
+      };
+      const result = await discoverManifests(deps);
+      expect(result).toHaveLength(1);
+      expect(result[0]!.path).toContain('bust-2026-04-05T18-30-00Z.jsonl');
+    });
+
+    it('Test 6: ManifestEntry shape has path: string and mtime: Date', async () => {
+      const fakeMtime = new Date('2026-04-05T18:30:00Z');
+      const deps: DiscoverManifestsDeps = {
+        manifestsDir: '/fake/manifests',
+        readdir: async () => ['bust-2026-04-05T18-30-00Z.jsonl'],
+        stat: async () => ({ mtime: fakeMtime }),
+      };
+      const result = await discoverManifests(deps);
+      expect(result).toHaveLength(1);
+      const entry = result[0]!;
+      expect(typeof entry.path).toBe('string');
+      expect(entry.mtime).toBeInstanceOf(Date);
+      expect(entry.mtime.getTime()).toBe(fakeMtime.getTime());
     });
   });
 }
