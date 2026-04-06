@@ -65,6 +65,7 @@ export type { ClaudeConfig } from './scanner/index.ts';
 export {
   enrichScanResults,
   calculateTotalOverhead,
+  calculateWorstCaseOverhead,
   lookupMcpEstimate,
   getMcpEstimatesMap,
   estimateFromFileSize,
@@ -88,11 +89,13 @@ export {
   calculateHealthScore,
   classifyRecommendation,
   buildTrendData,
+  groupGhostsByProject,
 } from './report/index.ts';
 export type {
   HealthScore,
   HealthGrade,
   CategorySummary,
+  ProjectGhostSummary,
   TrendBucket,
 } from './report/index.ts';
 

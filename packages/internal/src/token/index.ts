@@ -11,7 +11,7 @@ export { estimateFromFileSize, BYTES_PER_TOKEN } from './file-size-estimator.ts'
 export { formatTokenEstimate, formatTotalOverhead } from './format.ts';
 
 // Enrichment pipeline
-export { enrichScanResults, calculateTotalOverhead } from './estimate.ts';
+export { enrichScanResults, calculateTotalOverhead, calculateWorstCaseOverhead } from './estimate.ts';
 
 // MCP live client
 export { listMcpTools, measureMcpTokens } from './mcp-live-client.ts';

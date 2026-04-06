@@ -1,5 +1,6 @@
+import { homedir } from 'node:os';
 import { colorize } from '../color.ts';
-import type { CategorySummary, TokenCostResult } from '@ccaudit/internal';
+import type { CategorySummary, ProjectGhostSummary, TokenCostResult } from '@ccaudit/internal';
 import { formatTokenEstimate } from '@ccaudit/internal';
 
 /**
@@ -61,6 +62,17 @@ export function renderGhostSummary(summaries: CategorySummary[]): string {
 export function renderTopGhosts(ghosts: TokenCostResult[], maxItems: number = 5): string {
   if (ghosts.length === 0) return '';
 
+  // Build cross-scope name set: names appearing in BOTH global AND project scope
+  const globalNames = new Set(
+    ghosts.filter((g) => g.item.scope === 'global').map((g) => g.item.name),
+  );
+  const projectNames = new Set(
+    ghosts.filter((g) => g.item.scope !== 'global').map((g) => g.item.name),
+  );
+  const crossScopeNames = new Set([...globalNames].filter((n) => projectNames.has(n)));
+
+  const home = homedir();
+
   // Sort by token cost descending (nulls last)
   const sorted = [...ghosts].sort((a, b) => {
     const aTokens = a.tokenEstimate?.tokens ?? 0;
@@ -76,10 +88,21 @@ export function renderTopGhosts(ghosts: TokenCostResult[], maxItems: number = 5)
   for (let i = 0; i < top.length; i++) {
     const g = top[i]!;
     const num = `${i + 1}.`;
-    const name = g.item.name;
     const tokenDisplay = formatTokenEstimate(g.tokenEstimate);
     const category = g.item.category;
     const lastUsed = formatLastUsed(g.lastUsed);
+
+    // Append scope indicator only when the same name exists in both scopes
+    let name = g.item.name;
+    if (crossScopeNames.has(name)) {
+      if (g.item.scope === 'global') {
+        name = `${name} [global]`;
+      } else {
+        const projPath = g.item.projectPath ?? '';
+        const displayProj = projPath.startsWith(home) ? '~' + projPath.slice(home.length) : projPath;
+        name = `${name} [${displayProj}]`;
+      }
+    }
 
     lines.push(`  ${num} ${name}       ${tokenDisplay}  (${category}, ${lastUsed})`);
   }
@@ -132,6 +155,117 @@ function formatTokenShort(tokens: number): string {
     return `~${(tokens / 1000).toFixed(1)}k tokens/session`;
   }
   return `~${tokens} tokens/session`;
+}
+
+/**
+ * Render a ranked projects table showing ghost overhead by project.
+ * Global is always the first row; top-N projects follow, sorted by token cost.
+ *
+ * Format:
+ *   🏗️  Projects by Ghost Overhead:
+ *
+ *     Scope              Ghosts    Token Cost
+ *     (global)               38    ~45k tokens
+ *     ~/repos/nexus          55    ~48k tokens
+ *     ... and 11 more projects
+ */
+export function renderProjectsTable(
+  global: ProjectGhostSummary,
+  projects: ProjectGhostSummary[],
+  topN: number = 5,
+): string {
+  const lines: string[] = [];
+  lines.push(colorize.bold('\u{1F3D7}\uFE0F  Projects by Ghost Overhead:'));
+  lines.push('');
+
+  const header = '  ' + 'Scope'.padEnd(32) + 'Ghosts'.padStart(7) + '    Token Cost';
+  lines.push(header);
+
+  // Global row (always first)
+  lines.push(formatProjectRow(global));
+
+  // Top-N project rows
+  const shown = projects.slice(0, topN);
+  for (const proj of shown) {
+    lines.push(formatProjectRow(proj));
+  }
+
+  // Overflow line
+  const remaining = projects.length - shown.length;
+  if (remaining > 0) {
+    lines.push(`  ... and ${remaining} more project${remaining === 1 ? '' : 's'}`);
+  }
+
+  return lines.join('\n');
+}
+
+function formatProjectRow(summary: ProjectGhostSummary): string {
+  const scope = summary.displayPath.padEnd(32);
+  const ghosts = String(summary.ghostCount).padStart(7);
+  const cost = formatTokensShortPlain(summary.totalTokens).padStart(14);
+  return `  ${scope}${ghosts}    ${cost}`;
+}
+
+/**
+ * Render full per-project ghost item lists for verbose mode.
+ * Global section first, then projects sorted by total token cost.
+ *
+ * Format:
+ *   📁 (global)  (~45k tokens, 38 ghosts)
+ *      nexus-strategy [global]      ~14k tokens  (never)
+ *      ...
+ *
+ *   📁 ~/repos/nexus  (~48k tokens, 55 ghosts)
+ *      nexus-strategy [project]     ~14k tokens  (never)
+ *      ... 52 more (run ccaudit inventory for full list)
+ */
+export function renderProjectsVerbose(
+  global: ProjectGhostSummary,
+  projects: ProjectGhostSummary[],
+  maxItemsPerProject: number = 10,
+): string {
+  // Build cross-scope name set (names in BOTH global AND any project)
+  const globalNames = new Set(global.items.map((i) => i.item.name));
+  const projectNames = new Set(projects.flatMap((p) => p.items.map((i) => i.item.name)));
+  const crossScopeNames = new Set([...globalNames].filter((n) => projectNames.has(n)));
+
+  const sections: string[] = [];
+
+  const allSections = [global, ...projects];
+  for (const summary of allSections) {
+    const isGlobal = summary.projectPath === null;
+    const tokenStr = formatTokensShortPlain(summary.totalTokens);
+    const header = `\u{1F4C1} ${summary.displayPath}  (~${tokenStr.replace('~', '')}, ${summary.ghostCount} ghost${summary.ghostCount === 1 ? '' : 's'})`;
+    const sectionLines: string[] = [colorize.bold(header)];
+
+    const shown = summary.items.slice(0, maxItemsPerProject);
+    for (const item of shown) {
+      let label = item.item.name;
+      if (crossScopeNames.has(label)) {
+        label = isGlobal ? `${label} [global]` : `${label} [project]`;
+      }
+      const truncated = label.length > 34 ? label.slice(0, 31) + '...' : label;
+      const tokenCol = formatTokenEstimate(item.tokenEstimate).padStart(18);
+      const lastUsed = formatLastUsed(item.lastUsed);
+      sectionLines.push(`   ${truncated.padEnd(34)} ${tokenCol}  (${lastUsed})`);
+    }
+
+    const overflow = summary.items.length - shown.length;
+    if (overflow > 0) {
+      sectionLines.push(`   ... ${overflow} more`);
+    }
+
+    sections.push(sectionLines.join('\n'));
+  }
+
+  return sections.join('\n\n');
+}
+
+/** Format token count as ~Xk or ~X without confidence suffix. */
+function formatTokensShortPlain(tokens: number): string {
+  if (tokens >= 10000) return `~${Math.round(tokens / 1000)}k tokens`;
+  if (tokens >= 1000) return `~${(tokens / 1000).toFixed(1)}k tokens`;
+  return `~${tokens} tokens`;
 }
 
 if (import.meta.vitest) {
@@ -235,6 +369,167 @@ if (import.meta.vitest) {
       const result = renderTopGhosts(ghosts);
       expect(result).toContain('skill');
       expect(result).toContain('never');
+    });
+  });
+
+  describe('renderTopGhosts scope labels', () => {
+    function makeScopedGhost(
+      name: string,
+      tokens: number,
+      scope: 'global' | 'project',
+      projectPath: string | null = null,
+    ): TokenCostResult {
+      return {
+        item: { name, path: `/test/${name}`, scope, category: 'agent', projectPath },
+        tier: 'definite-ghost',
+        lastUsed: null,
+        invocationCount: 0,
+        tokenEstimate: { tokens, confidence: 'estimated', source: 'test' },
+      };
+    }
+
+    it('adds [global] label when same name exists in both scopes', () => {
+      const ghosts = [
+        makeScopedGhost('shared', 5000, 'global'),
+        makeScopedGhost('shared', 4000, 'project', '/repos/a'),
+      ];
+      const result = renderTopGhosts(ghosts);
+      expect(result).toContain('[global]');
+    });
+
+    it('adds project path label when same name exists in both scopes', () => {
+      const ghosts = [
+        makeScopedGhost('shared', 5000, 'global'),
+        makeScopedGhost('shared', 4000, 'project', '/repos/my-project'),
+      ];
+      const result = renderTopGhosts(ghosts);
+      expect(result).toContain('[/repos/my-project]');
+    });
+
+    it('does not add labels when names are unique per scope', () => {
+      const ghosts = [
+        makeScopedGhost('global-only', 5000, 'global'),
+        makeScopedGhost('project-only', 4000, 'project', '/repos/a'),
+      ];
+      const result = renderTopGhosts(ghosts);
+      expect(result).not.toContain('[global]');
+      expect(result).not.toContain('[project]');
+    });
+  });
+
+  describe('renderProjectsTable', () => {
+    function makeSummary(
+      displayPath: string,
+      ghostCount: number,
+      totalTokens: number,
+    ): ProjectGhostSummary {
+      return {
+        projectPath: displayPath === '(global)' ? null : `/home/user/${displayPath}`,
+        displayPath,
+        totalTokens,
+        ghostCount,
+        items: [],
+      };
+    }
+
+    it('contains the header', () => {
+      const global = makeSummary('(global)', 10, 5000);
+      const result = renderProjectsTable(global, []);
+      expect(result).toContain('Projects by Ghost Overhead');
+    });
+
+    it('always shows global row first', () => {
+      const global = makeSummary('(global)', 10, 5000);
+      const projects = [makeSummary('~/repo-a', 5, 2000)];
+      const result = renderProjectsTable(global, projects);
+      const globalIdx = result.indexOf('(global)');
+      const projIdx = result.indexOf('~/repo-a');
+      expect(globalIdx).toBeLessThan(projIdx);
+    });
+
+    it('shows only topN projects', () => {
+      const global = makeSummary('(global)', 0, 0);
+      const projects = Array.from({ length: 8 }, (_, i) =>
+        makeSummary(`~/repo-${i}`, 1, 1000),
+      );
+      const result = renderProjectsTable(global, projects, 3);
+      expect(result).toContain('~/repo-0');
+      expect(result).toContain('~/repo-2');
+      expect(result).not.toContain('~/repo-3');
+      expect(result).toContain('and 5 more projects');
+    });
+
+    it('shows singular "project" when 1 remaining', () => {
+      const global = makeSummary('(global)', 0, 0);
+      const projects = Array.from({ length: 6 }, (_, i) =>
+        makeSummary(`~/repo-${i}`, 1, 1000),
+      );
+      const result = renderProjectsTable(global, projects, 5);
+      expect(result).toContain('and 1 more project');
+      expect(result).not.toContain('and 1 more projects');
+    });
+
+    it('shows no overflow line when all projects fit', () => {
+      const global = makeSummary('(global)', 0, 0);
+      const projects = [makeSummary('~/repo', 5, 2000)];
+      const result = renderProjectsTable(global, projects, 5);
+      expect(result).not.toContain('more project');
+    });
+  });
+
+  describe('renderProjectsVerbose', () => {
+    function makeItem(
+      name: string,
+      tokens: number,
+      scope: 'global' | 'project',
+    ): TokenCostResult {
+      return {
+        item: { name, path: `/test/${name}`, scope, category: 'agent', projectPath: scope === 'project' ? '/repo/a' : null },
+        tier: 'definite-ghost',
+        lastUsed: null,
+        invocationCount: 0,
+        tokenEstimate: { tokens, confidence: 'estimated', source: 'test' },
+      };
+    }
+
+    it('renders global section first', () => {
+      const global: ProjectGhostSummary = {
+        projectPath: null, displayPath: '(global)', totalTokens: 5000, ghostCount: 1,
+        items: [makeItem('g-agent', 5000, 'global')],
+      };
+      const projects: ProjectGhostSummary[] = [{
+        projectPath: '/repo/a', displayPath: '~/repo/a', totalTokens: 3000, ghostCount: 1,
+        items: [makeItem('p-agent', 3000, 'project')],
+      }];
+      const result = renderProjectsVerbose(global, projects);
+      const globalIdx = result.indexOf('(global)');
+      const projIdx = result.indexOf('~/repo/a');
+      expect(globalIdx).toBeLessThan(projIdx);
+    });
+
+    it('adds [global] and [project] labels for cross-scope names', () => {
+      const sharedName = 'shared-agent';
+      const global: ProjectGhostSummary = {
+        projectPath: null, displayPath: '(global)', totalTokens: 5000, ghostCount: 1,
+        items: [makeItem(sharedName, 5000, 'global')],
+      };
+      const projects: ProjectGhostSummary[] = [{
+        projectPath: '/repo/a', displayPath: '~/repo/a', totalTokens: 3000, ghostCount: 1,
+        items: [makeItem(sharedName, 3000, 'project')],
+      }];
+      const result = renderProjectsVerbose(global, projects);
+      expect(result).toContain(`${sharedName} [global]`);
+      expect(result).toContain(`${sharedName} [project]`);
+    });
+
+    it('truncates long item lists with overflow message', () => {
+      const items = Array.from({ length: 15 }, (_, i) => makeItem(`agent-${i}`, 100, 'global'));
+      const global: ProjectGhostSummary = {
+        projectPath: null, displayPath: '(global)', totalTokens: 1500, ghostCount: 15,
+        items,
+      };
+      const result = renderProjectsVerbose(global, [], 5);
+      expect(result).toContain('... 10 more');
     });
   });
 

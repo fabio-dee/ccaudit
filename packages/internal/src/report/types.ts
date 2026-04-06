@@ -1,4 +1,5 @@
 import type { ItemCategory } from '../types.ts';
+import type { TokenCostResult } from '../token/types.ts';
 
 /**
  * Health grade label for the ghost inventory health score.
@@ -19,6 +20,23 @@ export interface HealthScore {
   ghostPenalty: number;
   /** Penalty points from ghost token overhead */
   tokenPenalty: number;
+}
+
+/**
+ * Ghost cost summary for a single project (or global scope).
+ * Used to compute worst-case session overhead and render the projects table.
+ */
+export interface ProjectGhostSummary {
+  /** Full absolute path, or null for global scope */
+  projectPath: string | null;
+  /** Display path: ~-abbreviated or '(global)' */
+  displayPath: string;
+  /** Total estimated tokens for all ghost items in this project */
+  totalTokens: number;
+  /** Number of ghost items in this project */
+  ghostCount: number;
+  /** Ghost items sorted by tokenEstimate.tokens desc */
+  items: TokenCostResult[];
 }
 
 /**

@@ -2,6 +2,7 @@ import { lookupMcpEstimate } from './mcp-estimates-data.ts';
 import { estimateFromFileSize } from './file-size-estimator.ts';
 import type { ScanResult } from '../scanner/types.ts';
 import type { TokenCostResult, TokenEstimate } from './types.ts';
+import type { ProjectGhostSummary } from '../report/types.ts';
 
 /**
  * Enrich scan results with token cost estimates.
@@ -62,6 +63,27 @@ export async function enrichScanResults(results: ScanResult[]): Promise<TokenCos
  */
 export function calculateTotalOverhead(results: TokenCostResult[]): number {
   return results.reduce((sum, r) => sum + (r.tokenEstimate?.tokens ?? 0), 0);
+}
+
+/**
+ * Calculate worst-case session overhead from grouped project summaries.
+ *
+ * A single Claude Code session loads: global inventory + ONE project's inventory.
+ * Worst-case = global cost + the heaviest single project cost.
+ * This corrects the naive sum-all-projects overcounting.
+ */
+export function calculateWorstCaseOverhead(
+  globalSummary: ProjectGhostSummary,
+  projectSummaries: ProjectGhostSummary[],
+): {
+  total: number;
+  globalCost: number;
+  worstProject: ProjectGhostSummary | null;
+} {
+  const globalCost = globalSummary.totalTokens;
+  const worstProject = projectSummaries[0] ?? null;
+  const total = globalCost + (worstProject?.totalTokens ?? 0);
+  return { total, globalCost, worstProject };
 }
 
 if (import.meta.vitest) {
@@ -177,6 +199,44 @@ if (import.meta.vitest) {
       expect(result[0].tokenEstimate!.tokens).toBe(500);
       expect(result[0].tokenEstimate!.source).toContain('capped');
       await rm(dir, { recursive: true, force: true });
+    });
+  });
+
+  describe('calculateWorstCaseOverhead', () => {
+    function makeSummary(
+      totalTokens: number,
+      projectPath: string | null = null,
+    ): ProjectGhostSummary {
+      return {
+        projectPath,
+        displayPath: projectPath ?? '(global)',
+        totalTokens,
+        ghostCount: 0,
+        items: [],
+      };
+    }
+
+    it('returns global + worst project total', () => {
+      const global = makeSummary(45000);
+      const projects = [makeSummary(48000, '/repo/a'), makeSummary(22000, '/repo/b')];
+      const { total, globalCost, worstProject } = calculateWorstCaseOverhead(global, projects);
+      expect(total).toBe(93000);
+      expect(globalCost).toBe(45000);
+      expect(worstProject?.totalTokens).toBe(48000);
+    });
+
+    it('returns only global cost when no projects', () => {
+      const global = makeSummary(45000);
+      const { total, worstProject } = calculateWorstCaseOverhead(global, []);
+      expect(total).toBe(45000);
+      expect(worstProject).toBeNull();
+    });
+
+    it('returns first project as worstProject (already sorted by caller)', () => {
+      const global = makeSummary(0);
+      const projects = [makeSummary(99000, '/big'), makeSummary(1000, '/small')];
+      const { worstProject } = calculateWorstCaseOverhead(global, projects);
+      expect(worstProject?.totalTokens).toBe(99000);
     });
   });
 

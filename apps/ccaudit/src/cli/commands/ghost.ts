@@ -1,6 +1,6 @@
 import { rename, mkdir, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { platform as osPlatform } from 'node:os';
+import { platform as osPlatform, homedir } from 'node:os';
 import { define } from 'gunshi';
 import {
   discoverSessionFiles,
@@ -9,6 +9,8 @@ import {
   scanAll,
   enrichScanResults,
   calculateTotalOverhead,
+  calculateWorstCaseOverhead,
+  groupGhostsByProject,
   formatTotalOverhead,
   calculateHealthScore,
   classifyRecommendation,
@@ -38,6 +40,8 @@ import {
   renderGhostSummary,
   renderTopGhosts,
   renderGhostFooter,
+  renderProjectsTable,
+  renderProjectsVerbose,
   renderHealthScore,
   initColor,
   csvTable,
@@ -456,6 +460,18 @@ export const ghostCommand = define({
     // Step 5: Filter to ghosts only
     const ghosts = enriched.filter((r) => r.tier !== 'used');
 
+    // Step 5.5: Group ghosts by project scope and compute worst-case session overhead.
+    // A session loads global inventory + ONE project — never all projects simultaneously.
+    const { global: globalSummary, projects: projectSummaries } = groupGhostsByProject(
+      ghosts,
+      homedir(),
+    );
+    const {
+      total: worstCaseTotal,
+      globalCost,
+      worstProject,
+    } = calculateWorstCaseOverhead(globalSummary, projectSummaries);
+
     // Step 6: Build category summaries
     const categories = ['agent', 'skill', 'mcp-server', 'memory'] as const;
     const summaries: CategorySummary[] = categories.map((cat) => {
@@ -563,9 +579,10 @@ export const ghostCommand = define({
       console.log(renderGhostSummary(summaries));
       console.log('');
 
-      const totalOverhead = calculateTotalOverhead(ghosts);
-      if (totalOverhead > 0) {
-        console.log(`Total ghost overhead: ${formatTotalOverhead(totalOverhead)}`);
+      if (worstCaseTotal > 0) {
+        console.log(
+          `Total ghost overhead: ${formatTotalOverhead(worstCaseTotal, globalCost, worstProject)}`,
+        );
         console.log('');
       }
 
@@ -575,6 +592,18 @@ export const ghostCommand = define({
         const topGhostsStr = renderTopGhosts(ghosts, 5);
         if (topGhostsStr) {
           console.log(topGhostsStr);
+          console.log('');
+        }
+
+        // Projects table: always shown when project-scoped ghosts exist
+        if (projectSummaries.length > 0) {
+          console.log(renderProjectsTable(globalSummary, projectSummaries));
+          console.log('');
+        }
+
+        // Full per-project breakdown only in verbose mode
+        if (mode.verbose && projectSummaries.length > 0) {
+          console.log(renderProjectsVerbose(globalSummary, projectSummaries));
           console.log('');
         }
       }

@@ -1,4 +1,6 @@
 import type { TokenEstimate } from './types.ts';
+import type { ProjectGhostSummary } from '../report/types.ts';
+import { CONTEXT_WINDOW_SIZE } from './mcp-estimates-data.ts';
 
 /**
  * Format a token estimate for display.
@@ -33,27 +35,50 @@ export function formatTokenEstimate(estimate: TokenEstimate | null): string {
 /**
  * Format total ghost overhead as absolute token count and percentage of context window.
  *
- * Examples:
- * - (30000, 200000)  -> "~30k tokens (~15.0% of 200k context window)"
- * - (0, 200000)      -> "~0 tokens (~0.0% of 200k context window)"
- * - (1500, 200000)   -> "~1.5k tokens (~0.8% of 200k context window)"
+ * When worstProject is provided, appends a breakdown line showing how the total
+ * is split between global and the single heaviest project — correcting the naive
+ * "sum all projects" overcounting (a session loads global + ONE project, not all).
+ *
+ * Examples (no project):
+ * - (30000, 30000, null, 200000) -> "~30k tokens (~15.0% of 200k context window)"
+ *
+ * Examples (with worst project):
+ * - (93000, 45000, { displayPath: '~/nexus', totalTokens: 48000 }, 200000) ->
+ *   "~93k tokens (~46.5% of 200k context window)\n(global: ~45k tokens + worst project ~/nexus: ~48k tokens)"
  */
 export function formatTotalOverhead(
-  totalTokens: number,
-  contextWindowSize: number = 200_000,
+  total: number,
+  globalCost: number,
+  worstProject: ProjectGhostSummary | null,
+  contextWindowSize: number = CONTEXT_WINDOW_SIZE,
 ): string {
-  const percentage = ((totalTokens / contextWindowSize) * 100).toFixed(1);
+  const percentage = ((total / contextWindowSize) * 100).toFixed(1);
 
   let formatted: string;
-  if (totalTokens >= 10000) {
-    formatted = `~${Math.round(totalTokens / 1000)}k`;
-  } else if (totalTokens >= 1000) {
-    formatted = `~${(totalTokens / 1000).toFixed(1)}k`;
+  if (total >= 10000) {
+    formatted = `~${Math.round(total / 1000)}k`;
+  } else if (total >= 1000) {
+    formatted = `~${(total / 1000).toFixed(1)}k`;
   } else {
-    formatted = `~${totalTokens}`;
+    formatted = `~${total}`;
   }
 
-  return `${formatted} tokens (~${percentage}% of ${contextWindowSize / 1000}k context window)`;
+  let result = `${formatted} tokens (~${percentage}% of ${contextWindowSize / 1000}k context window)`;
+
+  if (worstProject !== null) {
+    const globalStr = formatTokensShort(globalCost);
+    const projStr = formatTokensShort(worstProject.totalTokens);
+    result += `\n(global: ${globalStr} + worst project ${worstProject.displayPath}: ${projStr})`;
+  }
+
+  return result;
+}
+
+/** Format a raw token count as ~Xk or ~X (no confidence suffix). */
+function formatTokensShort(tokens: number): string {
+  if (tokens >= 10000) return `~${Math.round(tokens / 1000)}k tokens`;
+  if (tokens >= 1000) return `~${(tokens / 1000).toFixed(1)}k tokens`;
+  return `~${tokens} tokens`;
 }
 
 if (import.meta.vitest) {
@@ -120,29 +145,48 @@ if (import.meta.vitest) {
   });
 
   describe('formatTotalOverhead', () => {
-    it('should format 30000 tokens with percentage', () => {
-      const result = formatTotalOverhead(30000, 200000);
+    it('should format 30000 tokens with percentage (no project)', () => {
+      const result = formatTotalOverhead(30000, 30000, null, 200000);
       expect(result).toBe('~30k tokens (~15.0% of 200k context window)');
     });
 
-    it('should format 0 tokens with 0.0%', () => {
-      const result = formatTotalOverhead(0, 200000);
+    it('should format 0 tokens with 0.0% (no project)', () => {
+      const result = formatTotalOverhead(0, 0, null, 200000);
       expect(result).toBe('~0 tokens (~0.0% of 200k context window)');
     });
 
-    it('should format 1500 tokens with correct percentage', () => {
-      const result = formatTotalOverhead(1500, 200000);
+    it('should format 1500 tokens with correct percentage (no project)', () => {
+      const result = formatTotalOverhead(1500, 1500, null, 200000);
       expect(result).toBe('~1.5k tokens (~0.8% of 200k context window)');
     });
 
     it('should use default context window size of 200000', () => {
-      const result = formatTotalOverhead(100000);
+      const result = formatTotalOverhead(100000, 100000, null);
       expect(result).toBe('~100k tokens (~50.0% of 200k context window)');
     });
 
-    it('should handle small token counts', () => {
-      const result = formatTotalOverhead(500, 200000);
+    it('should handle small token counts (no project)', () => {
+      const result = formatTotalOverhead(500, 500, null, 200000);
       expect(result).toBe('~500 tokens (~0.3% of 200k context window)');
+    });
+
+    it('appends breakdown line when worstProject is provided', () => {
+      const worstProject: ProjectGhostSummary = {
+        projectPath: '/home/user/nexus',
+        displayPath: '~/nexus',
+        totalTokens: 48000,
+        ghostCount: 55,
+        items: [],
+      };
+      const result = formatTotalOverhead(93000, 45000, worstProject, 200000);
+      expect(result).toContain('~93k tokens (~46.5% of 200k context window)');
+      expect(result).toContain('global: ~45k tokens + worst project ~/nexus: ~48k tokens');
+    });
+
+    it('does not append breakdown line when worstProject is null', () => {
+      const result = formatTotalOverhead(45000, 45000, null, 200000);
+      expect(result).not.toContain('global:');
+      expect(result).not.toContain('worst project');
     });
   });
 }

@@ -7,6 +7,8 @@ export {
   renderGhostSummary,
   renderTopGhosts,
   renderGhostFooter,
+  renderProjectsTable,
+  renderProjectsVerbose,
   renderInventoryTable,
   renderMcpTable,
   renderTrendTable,
