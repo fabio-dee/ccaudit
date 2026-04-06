@@ -140,9 +140,14 @@ export async function scanAll(
   };
 
   // Resolve projectPaths from options or extract unique values from invocations
-  const projectPaths: string[] = options?.projectPaths ?? [
+  const rawProjectPaths: string[] = options?.projectPaths ?? [
     ...new Set(invocations.map(inv => inv.projectPath).filter(Boolean)),
   ];
+
+  // Filter out homedir — its .claude/ IS the global scope; scanning it as a
+  // project-local path would duplicate every global agent/skill/memory file.
+  const home = homedir();
+  const projectPaths = rawProjectPaths.filter(p => p !== home);
 
   // Run all four scanners in parallel
   const [agentItems, skillItems, mcpItems, memoryItems] = await Promise.all([
@@ -171,6 +176,8 @@ export async function scanAll(
 
 if (import.meta.vitest) {
   const { describe, it, expect } = import.meta.vitest;
+  const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
+  const { tmpdir, homedir: osHomedir } = await import('node:os');
 
   // Reusable factory for mock InventoryItem
   function makeItem(
@@ -358,6 +365,69 @@ if (import.meta.vitest) {
       expect(grouped.size).toBe(2);
       expect(grouped.has('global')).toBe(true);
       expect(grouped.has('/proj/x')).toBe(true);
+    });
+  });
+
+  describe('scanAll homedir filter', () => {
+    it('does not emit project-scope items for projectPath === homedir()', async () => {
+      const tmpDir = await mkdtemp(path.join(tmpdir(), 'scan-all-home-'));
+      try {
+        // Empty global dirs so the global scan yields nothing
+        const emptyLegacy = path.join(tmpDir, 'legacy');
+        const emptyXdg = path.join(tmpDir, 'xdg');
+        await mkdir(emptyLegacy, { recursive: true });
+        await mkdir(emptyXdg, { recursive: true });
+
+        const claudePaths = { legacy: emptyLegacy, xdg: emptyXdg };
+
+        // Pass homedir() as a project path — without the fix this would scan
+        // ~/.claude/agents/ as project scope and emit duplicates
+        const home = osHomedir();
+        const { results } = await scanAll([], {
+          claudePaths,
+          projectPaths: [home],
+        });
+
+        const homedirItems = results.filter(r => r.item.projectPath === home);
+        expect(homedirItems).toHaveLength(0);
+      } finally {
+        await rm(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it('still scans non-homedir project paths when homedir() is also in the list', async () => {
+      const tmpDir = await mkdtemp(path.join(tmpdir(), 'scan-all-mixed-'));
+      try {
+        const emptyLegacy = path.join(tmpDir, 'legacy');
+        const emptyXdg = path.join(tmpDir, 'xdg');
+        await mkdir(emptyLegacy, { recursive: true });
+        await mkdir(emptyXdg, { recursive: true });
+
+        // A real project with one agent
+        const projPath = path.join(tmpDir, 'my-project');
+        const agentsDir = path.join(projPath, '.claude', 'agents');
+        await mkdir(agentsDir, { recursive: true });
+        await writeFile(path.join(agentsDir, 'proj-agent.md'), '# Agent');
+
+        const claudePaths = { legacy: emptyLegacy, xdg: emptyXdg };
+        const home = osHomedir();
+
+        const { results } = await scanAll([], {
+          claudePaths,
+          projectPaths: [home, projPath],
+        });
+
+        // The real project agent must appear
+        const projItems = results.filter(r => r.item.projectPath === projPath);
+        expect(projItems).toHaveLength(1);
+        expect(projItems[0]!.item.name).toBe('proj-agent');
+
+        // homedir must NOT appear as a project path in any result
+        const homedirItems = results.filter(r => r.item.projectPath === home);
+        expect(homedirItems).toHaveLength(0);
+      } finally {
+        await rm(tmpDir, { recursive: true, force: true });
+      }
     });
   });
 }

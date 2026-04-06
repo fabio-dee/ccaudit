@@ -1,4 +1,3 @@
-import { homedir } from 'node:os';
 import { colorize } from '../color.ts';
 import type { CategorySummary, ProjectGhostSummary, TokenCostResult } from '@ccaudit/internal';
 import { formatTokenEstimate } from '@ccaudit/internal';
@@ -62,19 +61,14 @@ export function renderGhostSummary(summaries: CategorySummary[]): string {
 export function renderTopGhosts(ghosts: TokenCostResult[], maxItems: number = 5): string {
   if (ghosts.length === 0) return '';
 
-  // Build cross-scope name set: names appearing in BOTH global AND project scope
-  const globalNames = new Set(
-    ghosts.filter((g) => g.item.scope === 'global').map((g) => g.item.name),
-  );
-  const projectNames = new Set(
-    ghosts.filter((g) => g.item.scope !== 'global').map((g) => g.item.name),
-  );
-  const crossScopeNames = new Set([...globalNames].filter((n) => projectNames.has(n)));
-
-  const home = homedir();
+  // Filter to global-scope items only. Global ghosts waste tokens in EVERY
+  // session regardless of project; project-specific ghosts are covered by
+  // the per-project breakdown table below.
+  const globalGhosts = ghosts.filter((g) => g.item.scope === 'global');
+  if (globalGhosts.length === 0) return '';
 
   // Sort by token cost descending (nulls last)
-  const sorted = [...ghosts].sort((a, b) => {
+  const sorted = [...globalGhosts].sort((a, b) => {
     const aTokens = a.tokenEstimate?.tokens ?? 0;
     const bTokens = b.tokenEstimate?.tokens ?? 0;
     return bTokens - aTokens;
@@ -83,7 +77,7 @@ export function renderTopGhosts(ghosts: TokenCostResult[], maxItems: number = 5)
   const top = sorted.slice(0, maxItems);
   const lines: string[] = [];
 
-  lines.push(colorize.bold('\u{1F6A8} Top ghosts by token cost:'));
+  lines.push(colorize.bold('\u{1F6A8} Top global ghosts by token cost:'));
 
   for (let i = 0; i < top.length; i++) {
     const g = top[i]!;
@@ -92,19 +86,7 @@ export function renderTopGhosts(ghosts: TokenCostResult[], maxItems: number = 5)
     const category = g.item.category;
     const lastUsed = formatLastUsed(g.lastUsed);
 
-    // Append scope indicator only when the same name exists in both scopes
-    let name = g.item.name;
-    if (crossScopeNames.has(name)) {
-      if (g.item.scope === 'global') {
-        name = `${name} [global]`;
-      } else {
-        const projPath = g.item.projectPath ?? '';
-        const displayProj = projPath.startsWith(home) ? '~' + projPath.slice(home.length) : projPath;
-        name = `${name} [${displayProj}]`;
-      }
-    }
-
-    lines.push(`  ${num} ${name}       ${tokenDisplay}  (${category}, ${lastUsed})`);
+    lines.push(`  ${num} ${g.item.name}       ${tokenDisplay}  (${category}, ${lastUsed})`);
   }
 
   return lines.join('\n');
@@ -178,16 +160,20 @@ export function renderProjectsTable(
   lines.push(colorize.bold('\u{1F3D7}\uFE0F  Projects by Ghost Overhead:'));
   lines.push('');
 
-  const header = '  ' + 'Scope'.padEnd(32) + 'Ghosts'.padStart(7) + '    Token Cost';
+  const header = '  ' + 'Scope'.padEnd(32) + 'Ghosts'.padStart(7) + '    Session Cost';
   lines.push(header);
 
-  // Global row (always first)
+  // Global row (always first) — baseline for sessions not in any project
   lines.push(formatProjectRow(global));
 
-  // Top-N project rows
+  // Top-N project rows — each shows total session cost (global + project)
   const shown = projects.slice(0, topN);
   for (const proj of shown) {
-    lines.push(formatProjectRow(proj));
+    lines.push(formatProjectRow({
+      ...proj,
+      totalTokens: global.totalTokens + proj.totalTokens,
+      ghostCount: global.ghostCount + proj.ghostCount,
+    }));
   }
 
   // Overflow line
@@ -358,10 +344,36 @@ if (import.meta.vitest) {
       expect(lines[2]).toContain('low');
     });
 
-    it('contains the top ghosts section header', () => {
+    it('contains the top global ghosts section header', () => {
       const ghosts = [makeGhost('test', 5000)];
       const result = renderTopGhosts(ghosts);
-      expect(result).toContain('Top ghosts by token cost:');
+      expect(result).toContain('Top global ghosts by token cost:');
+    });
+
+    it('excludes project-scope items from top list', () => {
+      const globalGhost = makeGhost('global-one', 100);
+      const projectGhost: TokenCostResult = {
+        item: { name: 'project-big', path: '/test/project-big', scope: 'project', category: 'agent', projectPath: '/repo/a' },
+        tier: 'definite-ghost',
+        lastUsed: null,
+        invocationCount: 0,
+        tokenEstimate: { tokens: 99999, confidence: 'estimated', source: 'test' },
+      };
+      const result = renderTopGhosts([globalGhost, projectGhost]);
+      expect(result).toContain('global-one');
+      expect(result).not.toContain('project-big');
+    });
+
+    it('returns empty string when all ghosts are project-scope', () => {
+      const projectGhost: TokenCostResult = {
+        item: { name: 'proj-only', path: '/test/proj-only', scope: 'project', category: 'agent', projectPath: '/repo/a' },
+        tier: 'definite-ghost',
+        lastUsed: null,
+        invocationCount: 0,
+        tokenEstimate: { tokens: 5000, confidence: 'estimated', source: 'test' },
+      };
+      const result = renderTopGhosts([projectGhost]);
+      expect(result).toBe('');
     });
 
     it('contains category and last-used info', () => {
@@ -372,7 +384,7 @@ if (import.meta.vitest) {
     });
   });
 
-  describe('renderTopGhosts scope labels', () => {
+  describe('renderTopGhosts scope labels (removed — top-5 is global-only now)', () => {
     function makeScopedGhost(
       name: string,
       tokens: number,
@@ -388,32 +400,16 @@ if (import.meta.vitest) {
       };
     }
 
-    it('adds [global] label when same name exists in both scopes', () => {
+    it('never shows scope labels since only global items are included', () => {
       const ghosts = [
         makeScopedGhost('shared', 5000, 'global'),
         makeScopedGhost('shared', 4000, 'project', '/repos/a'),
       ];
       const result = renderTopGhosts(ghosts);
-      expect(result).toContain('[global]');
-    });
-
-    it('adds project path label when same name exists in both scopes', () => {
-      const ghosts = [
-        makeScopedGhost('shared', 5000, 'global'),
-        makeScopedGhost('shared', 4000, 'project', '/repos/my-project'),
-      ];
-      const result = renderTopGhosts(ghosts);
-      expect(result).toContain('[/repos/my-project]');
-    });
-
-    it('does not add labels when names are unique per scope', () => {
-      const ghosts = [
-        makeScopedGhost('global-only', 5000, 'global'),
-        makeScopedGhost('project-only', 4000, 'project', '/repos/a'),
-      ];
-      const result = renderTopGhosts(ghosts);
+      // Only global item appears, no disambiguation needed
+      expect(result).toContain('shared');
       expect(result).not.toContain('[global]');
-      expect(result).not.toContain('[project]');
+      expect(result).not.toContain('[/repos/a]');
     });
   });
 
@@ -445,6 +441,25 @@ if (import.meta.vitest) {
       const globalIdx = result.indexOf('(global)');
       const projIdx = result.indexOf('~/repo-a');
       expect(globalIdx).toBeLessThan(projIdx);
+    });
+
+    it('project rows show combined session cost (global + project)', () => {
+      const global = makeSummary('(global)', 10, 5000);
+      const projects = [makeSummary('~/repo-a', 3, 2000)];
+      const result = renderProjectsTable(global, projects);
+      // Global row shows its own cost: 5000 tokens
+      expect(result).toContain('~5.0k tokens');
+      // Project row shows combined: 5000 + 2000 = 7000 tokens
+      expect(result).toContain('~7.0k tokens');
+      // Project row shows combined ghost count: 10 + 3 = 13
+      const projLine = result.split('\n').find((l: string) => l.includes('~/repo-a'));
+      expect(projLine).toContain('13');
+    });
+
+    it('uses Session Cost header', () => {
+      const global = makeSummary('(global)', 10, 5000);
+      const result = renderProjectsTable(global, []);
+      expect(result).toContain('Session Cost');
     });
 
     it('shows only topN projects', () => {

@@ -5,10 +5,20 @@ import type { TokenCostResult, TokenEstimate } from './types.ts';
 import type { ProjectGhostSummary } from '../report/types.ts';
 
 /**
+ * Per-session overhead for a single agent registry index entry.
+ * Claude Code uses a lazy-loading BM25 registry: the full .md content is NOT
+ * injected into the parent session context. Only a lightweight index entry
+ * (~20-25 tokens: name + short description) is present per session.
+ * Full content loads only when the agent is actually spawned as a sub-session.
+ * Source: Claude Code agent registry research (~20-25 tokens/agent in index).
+ */
+const AGENT_REGISTRY_ENTRY_TOKENS = 25;
+
+/**
  * Enrich scan results with token cost estimates.
  * Applies per-category estimation strategy:
  * - MCP servers: lookup from bundled mcp-token-estimates.json
- * - Agents: file-size-based estimation (full .md loaded into context)
+ * - Agents: fixed ~25 tokens/agent (lazy-loaded registry index entry cost only)
  * - Memory: file-size-based estimation (full content loaded into context)
  * - Skills: file-size-based estimation, capped at 500 tokens (only SKILL.md description loaded)
  */
@@ -30,7 +40,13 @@ export async function enrichScanResults(results: ScanResult[]): Promise<TokenCos
           break;
         }
         case 'agent': {
-          tokenEstimate = await estimateFromFileSize(result.item.path);
+          // Agents use Claude Code's lazy-loading registry. Per-session overhead is
+          // ~25 tokens per agent (index entry), not the full file size (spawn overhead).
+          tokenEstimate = {
+            tokens: AGENT_REGISTRY_ENTRY_TOKENS,
+            confidence: 'estimated',
+            source: 'agent registry index entry (lazy-loaded, ~25 tokens/agent)',
+          };
           break;
         }
         case 'memory': {
@@ -141,9 +157,10 @@ if (import.meta.vitest) {
       expect(result[0].tokenEstimate).toBeNull();
     });
 
-    it('should get tokenEstimate from file size for agent item (800 bytes -> 200 tokens)', async () => {
+    it('should use fixed registry entry cost for agent item (not file size)', async () => {
       const dir = await mkdtemp(join(tmpdir(), 'ccaudit-enrich-'));
       const filePath = join(dir, 'agent.md');
+      // Large file — must NOT influence estimate; agent overhead is fixed registry cost
       await writeFile(filePath, 'x'.repeat(800));
 
       const input: ScanResult[] = [
@@ -156,8 +173,9 @@ if (import.meta.vitest) {
       ];
       const result = await enrichScanResults(input);
       expect(result[0].tokenEstimate).not.toBeNull();
-      expect(result[0].tokenEstimate!.tokens).toBe(200); // 800 / 4 = 200
+      expect(result[0].tokenEstimate!.tokens).toBe(25); // fixed registry entry overhead
       expect(result[0].tokenEstimate!.confidence).toBe('estimated');
+      expect(result[0].tokenEstimate!.source).toContain('registry');
       await rm(dir, { recursive: true, force: true });
     });
 
