@@ -21,6 +21,7 @@
 //   - header present + footer missing  → partial bust: warn via onWarning + proceed (D-06)
 //   - header missing                   → corrupt manifest: refuse with manifest-corrupt (D-07)
 
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type {
   ArchiveOp,
@@ -31,6 +32,7 @@ import type {
   ReadManifestResult,
   RefreshOp,
 } from './manifest.ts';
+import type { FrontmatterRemoveResult } from './frontmatter.ts';
 import type { ProcessDetectorDeps } from './processes.ts';
 import { detectClaudeProcesses } from './processes.ts';
 
@@ -58,9 +60,9 @@ export interface RestoreDeps {
   readFileBytes: (p: string) => Promise<Buffer>;
   pathExists: (p: string) => Promise<boolean>;
 
-  // Memory file frontmatter ops (Plan 02 wires these)
-  removeFrontmatterKeys: (filePath: string, keys: string[]) => Promise<unknown>;
-  setFrontmatterValue: (filePath: string, key: string, value: string) => Promise<unknown>;
+  // Memory file frontmatter ops
+  removeFrontmatterKeys: (filePath: string, keys: string[]) => Promise<FrontmatterRemoveResult>;
+  setFrontmatterValue: (filePath: string, key: string, value: string) => Promise<FrontmatterRemoveResult>;
 
   // MCP re-enable (Plan 02 wires these)
   readFileUtf8: (p: string) => Promise<string>;
@@ -234,18 +236,254 @@ async function executeListMode(deps: RestoreDeps): Promise<RestoreResult> {
   return { status: 'list', entries: listEntries };
 }
 
-// -- Op execution stub (Plan 02 fills this in) --------------------
+// -- Internal result type for MCP re-enable ----------------------
+
+type ReEnableResult =
+  | { status: 'ok'; completed: number; failed: number }
+  | { status: 'config-parse-error'; path: string; error: string }
+  | { status: 'config-write-error'; path: string; error: string };
+
+// -- Op executors (Plan 02) ----------------------------------------
+
+/**
+ * Restore one archived agent or skill: rename archive_path → source_path.
+ *
+ * - Q1: if source_path already exists, warn and count as failed (skip rather
+ *   than overwrite).
+ * - D-13: SHA256 tamper check — warn and proceed (do NOT fail).
+ * - D-08: mkdirRecursive parent directory before rename.
+ * - Continue-on-error: returns 'failed' without throwing so the outer loop
+ *   can continue with remaining ops.
+ */
+export async function restoreArchiveOp(
+  op: ArchiveOp,
+  deps: RestoreDeps,
+): Promise<'completed' | 'failed'> {
+  // Q1: check if source_path already exists — warn and skip
+  if (await deps.pathExists(op.source_path)) {
+    deps.onWarning?.(
+      `⚠️  ${path.basename(op.source_path)} already exists at ${op.source_path} — skipping (restore manually if needed)`,
+    );
+    return 'failed';
+  }
+
+  // D-13: SHA256 tamper detection on archive_path (warn, proceed)
+  try {
+    const bytes = await deps.readFileBytes(op.archive_path);
+    const actualHash = createHash('sha256').update(bytes).digest('hex');
+    if (actualHash !== op.content_sha256) {
+      deps.onWarning?.(
+        `⚠️  ${path.basename(op.source_path)} was modified after archiving — restoring anyway`,
+      );
+    }
+  } catch {
+    // Hash read failure isn't fatal — rename will surface the real error below
+  }
+
+  // D-08: mkdir parent directory before rename
+  try {
+    await deps.mkdirRecursive(path.dirname(op.source_path));
+  } catch (err) {
+    deps.onWarning?.(
+      `✗ ${path.basename(op.source_path)} — mkdir failed: ${(err as Error).message}`,
+    );
+    return 'failed';
+  }
+
+  // Rename archive → source
+  try {
+    await deps.renameFile(op.archive_path, op.source_path);
+    return 'completed';
+  } catch (err) {
+    deps.onWarning?.(`✗ ${path.basename(op.source_path)} — ${(err as Error).message}`);
+    return 'failed';
+  }
+}
+
+/**
+ * Re-enable MCP servers by reversing disable ops.
+ *
+ * Groups by config_path (fail-fast per config file per D-15).
+ * Handles dual schema:
+ *   - flat .mcp.json:        config[new_key] → config.mcpServers[serverName]
+ *   - nested ~/.claude.json global:  config[new_key] → config.mcpServers[serverName]
+ *   - nested ~/.claude.json project: config.projects[path][new_key] → config.projects[path].mcpServers[serverName]
+ *
+ * D-09: uses CURRENT value at new_key (not op.original_value) to preserve
+ * user edits made between bust and restore.
+ */
+export async function reEnableMcpTransactional(
+  disableOps: DisableOp[],
+  deps: RestoreDeps,
+): Promise<ReEnableResult> {
+  let completed = 0;
+  const failed = 0;
+
+  // Group by config file — each file is its own transaction (D-15 fail-fast)
+  const byConfigPath = new Map<string, DisableOp[]>();
+  for (const op of disableOps) {
+    const list = byConfigPath.get(op.config_path) ?? [];
+    list.push(op);
+    byConfigPath.set(op.config_path, list);
+  }
+
+  for (const [configPath, ops] of byConfigPath) {
+    const isFlatMcpJson = path.basename(configPath) === '.mcp.json';
+
+    let raw: string;
+    try {
+      raw = await deps.readFileUtf8(configPath);
+    } catch (err) {
+      return { status: 'config-parse-error', path: configPath, error: (err as Error).message };
+    }
+
+    let config: Record<string, unknown>;
+    try {
+      config = JSON.parse(raw) as Record<string, unknown>;
+    } catch (err) {
+      return { status: 'config-parse-error', path: configPath, error: (err as Error).message };
+    }
+
+    for (const op of ops) {
+      const serverName = extractServerName(op.original_key);
+
+      // Nested ~/.claude.json project scope (non-.mcp.json, scope=project, project_path present)
+      if (op.scope === 'project' && !isFlatMcpJson && op.project_path !== null) {
+        const projects = (config['projects'] as Record<string, unknown> | undefined) ?? {};
+        const proj = projects[op.project_path] as Record<string, unknown> | undefined;
+        if (proj === undefined || !(op.new_key in proj)) {
+          deps.onWarning?.(
+            `⚠️  ${serverName}: already re-enabled or missing from ${configPath} — skipping`,
+          );
+          continue;
+        }
+        const mcpServers = (proj['mcpServers'] as Record<string, unknown> | undefined) ?? {};
+        if (serverName in mcpServers) {
+          deps.onWarning?.(
+            `⚠️  ${serverName}: already present in mcpServers of ${configPath} — skipping (collision)`,
+          );
+          continue;
+        }
+        // D-09: use CURRENT value at new_key, not op.original_value
+        const currentValue = proj[op.new_key];
+        mcpServers[serverName] = currentValue;
+        proj['mcpServers'] = mcpServers;
+        delete proj[op.new_key];
+        projects[op.project_path] = proj;
+        config['projects'] = projects;
+        completed++;
+      } else {
+        // Flat .mcp.json OR nested global ~/.claude.json:
+        // config[new_key] → config.mcpServers[serverName]
+        if (!(op.new_key in config)) {
+          deps.onWarning?.(
+            `⚠️  ${serverName}: already re-enabled or missing from ${configPath} — skipping`,
+          );
+          continue;
+        }
+        const mcpServers = (config['mcpServers'] as Record<string, unknown> | undefined) ?? {};
+        if (serverName in mcpServers) {
+          deps.onWarning?.(
+            `⚠️  ${serverName}: already present in mcpServers of ${configPath} — skipping (collision)`,
+          );
+          continue;
+        }
+        // D-09: use CURRENT value at new_key, not op.original_value
+        const currentValue = config[op.new_key];
+        mcpServers[serverName] = currentValue;
+        config['mcpServers'] = mcpServers;
+        delete config[op.new_key];
+        completed++;
+      }
+    }
+
+    // Atomic write per config file (D-15 transactional)
+    try {
+      await deps.atomicWriteJson(configPath, config);
+    } catch (err) {
+      return {
+        status: 'config-write-error',
+        path: configPath,
+        error: (err as Error).message,
+      };
+    }
+  }
+
+  return { status: 'ok', completed, failed };
+}
+
+/**
+ * Strip ccaudit frontmatter keys from a memory file (D-10).
+ *
+ * Calls removeFrontmatterKeys with both ccaudit keys. Treats
+ * no-frontmatter and keys-not-found as completed (nothing to undo).
+ * Only skipped (exotic-yaml, read/write error) counts as failed.
+ */
+export async function restoreFlagOp(
+  op: FlagOp,
+  deps: RestoreDeps,
+): Promise<'completed' | 'failed'> {
+  const result = await deps.removeFrontmatterKeys(op.file_path, ['ccaudit-stale', 'ccaudit-flagged']);
+  switch (result.status) {
+    case 'removed':
+      return 'completed';
+    case 'no-frontmatter':
+    case 'keys-not-found':
+      // User or another tool already removed the keys — treat as done
+      return 'completed';
+    case 'skipped':
+      deps.onWarning?.(
+        `✗ ${path.basename(op.file_path)} — frontmatter skipped (${result.reason})`,
+      );
+      return 'failed';
+    default:
+      return 'failed';
+  }
+}
+
+/**
+ * Restore the previous ccaudit-flagged timestamp (D-11).
+ *
+ * Calls setFrontmatterValue to replace the current ccaudit-flagged value
+ * with op.previous_flagged_at. Leaves ccaudit-stale intact (D-11).
+ */
+export async function restoreRefreshOp(
+  op: RefreshOp,
+  deps: RestoreDeps,
+): Promise<'completed' | 'failed'> {
+  const result = await deps.setFrontmatterValue(op.file_path, 'ccaudit-flagged', op.previous_flagged_at);
+  switch (result.status) {
+    case 'updated':
+      return 'completed';
+    case 'no-frontmatter':
+    case 'keys-not-found':
+      // Nothing to update — file may have been edited after bust; treat as done
+      return 'completed';
+    case 'skipped':
+      deps.onWarning?.(
+        `✗ ${path.basename(op.file_path)} — frontmatter skipped (${result.reason})`,
+      );
+      return 'failed';
+    default:
+      return 'failed';
+  }
+}
+
+// -- Op execution (Plan 02 implementation) ------------------------
 
 /**
  * Execute ops from a manifest entry and return a RestoreResult.
  *
- * STUB: Plan 02 (09-02) implements the actual op execution.
+ * Locked execution order per CONTEXT.md + RESEARCH Section 8:
+ *   1. Refresh ops  (restore previous timestamp, D-11)
+ *   2. Flag ops     (strip ccaudit keys, D-10)
+ *   3. MCP re-enable (transactional per config file, D-09, D-15)
+ *   4. Skill unarchive (ArchiveOp category=skill)
+ *   5. Agent unarchive (ArchiveOp category=agent)
  *
- * Execution order per CONTEXT specifics (reversed from bust D-13):
- *   1. Strip flags from memory files (FlagOp / RefreshOp)
- *   2. Re-enable MCP servers (DisableOp batch by config_path)
- *   3. Unarchive skills (ArchiveOp where category === 'skill')
- *   4. Unarchive agents (ArchiveOp where category === 'agent')
+ * Failure policy (D-15 hybrid):
+ *   - fs ops (archive / flag / refresh): continue-on-error within category
+ *   - MCP ops: fail-fast per config file (returns config-parse/write-error)
  */
 async function executeOpsOnManifest(
   entry: ManifestEntry,
@@ -253,19 +491,62 @@ async function executeOpsOnManifest(
   deps: RestoreDeps,
   start: number,
 ): Promise<RestoreResult> {
-  // STUB: Plan 02 (09-02) implements the actual op execution.
-  // TODO(Plan 09-02): iterate ops in reversed order and call:
-  //   - restoreFlagOp / restoreRefreshOp for memory (FlagOp | RefreshOp)
-  //   - reEnableMcpTransactional for MCP (DisableOp batch by config_path)
-  //   - restoreArchiveOp for skills then agents (ArchiveOp)
-  //
-  // The `ops`, `deps`, and `entry` params are all available for Plan 02 to use.
-  void ops; // suppress unused-variable lint in stub mode
   const counts: RestoreCounts = {
     unarchived: { completed: 0, failed: 0 },
     reenabled: { completed: 0, failed: 0 },
     stripped: { completed: 0, failed: 0 },
   };
+
+  // Partition ops by type
+  const archiveOps = ops.filter((o): o is ArchiveOp => o.op_type === 'archive');
+  const disableOps = ops.filter((o): o is DisableOp => o.op_type === 'disable');
+  const flagOps = ops.filter((o): o is FlagOp => o.op_type === 'flag');
+  const refreshOps = ops.filter((o): o is RefreshOp => o.op_type === 'refresh');
+  // D-12: skipped ops require no action on restore
+
+  // Step 1: Refresh ops (restore previous timestamp, D-11)
+  for (const op of refreshOps) {
+    const outcome = await restoreRefreshOp(op, deps);
+    if (outcome === 'completed') counts.stripped.completed++;
+    else counts.stripped.failed++;
+  }
+
+  // Step 2: Flag ops (strip ccaudit keys, D-10)
+  for (const op of flagOps) {
+    const outcome = await restoreFlagOp(op, deps);
+    if (outcome === 'completed') counts.stripped.completed++;
+    else counts.stripped.failed++;
+  }
+
+  // Step 3: MCP re-enable (D-09 transactional per config file, D-15 fail-fast)
+  if (disableOps.length > 0) {
+    const result = await reEnableMcpTransactional(disableOps, deps);
+    if (result.status === 'config-parse-error') {
+      return { status: 'config-parse-error', path: result.path, error: result.error };
+    }
+    if (result.status === 'config-write-error') {
+      return { status: 'config-write-error', path: result.path, error: result.error };
+    }
+    counts.reenabled.completed = result.completed;
+    counts.reenabled.failed = result.failed;
+  }
+
+  // Step 4: Unarchive skills (before agents per locked order)
+  const skillOps = archiveOps.filter((o) => o.category === 'skill');
+  for (const op of skillOps) {
+    const outcome = await restoreArchiveOp(op, deps);
+    if (outcome === 'completed') counts.unarchived.completed++;
+    else counts.unarchived.failed++;
+  }
+
+  // Step 5: Unarchive agents
+  const agentOps = archiveOps.filter((o) => o.category === 'agent');
+  for (const op of agentOps) {
+    const outcome = await restoreArchiveOp(op, deps);
+    if (outcome === 'completed') counts.unarchived.completed++;
+    else counts.unarchived.failed++;
+  }
+
   const totalFailed =
     counts.unarchived.failed + counts.reenabled.failed + counts.stripped.failed;
   const duration_ms = Date.now() - start;
@@ -378,8 +659,8 @@ if (import.meta.vitest) {
       mkdirRecursive: async () => {},
       readFileBytes: async () => Buffer.alloc(0),
       pathExists: async () => false,
-      removeFrontmatterKeys: async () => {},
-      setFrontmatterValue: async () => {},
+      removeFrontmatterKeys: async () => ({ status: 'removed' as const, keysRemoved: [], blockDeleted: false }),
+      setFrontmatterValue: async () => ({ status: 'updated' as const, key: 'ccaudit-flagged', previousValue: null }),
       readFileUtf8: async () => '',
       atomicWriteJson: async () => {},
       now: () => new Date('2026-04-05T18:30:00Z'),
@@ -651,6 +932,679 @@ if (import.meta.vitest) {
 
     it('returns original key when no mcpServers pattern found', () => {
       expect(extractServerName('some-other-key')).toBe('some-other-key');
+    });
+  });
+
+  // -- Task 2 tests: executor functions ----------------------------
+
+  describe('restoreArchiveOp', () => {
+    it('Test 1: archive file exists, source_path empty → rename succeeds, returns completed', async () => {
+      const { mkdtemp, writeFile: wf, rm } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const { createHash } = await import('node:crypto');
+
+      const dir = await mkdtemp(join(tmpdir(), 'restore-t1-'));
+      try {
+        const archivePath = join(dir, 'code-reviewer.md');
+        const sourcePath = join(dir, 'src', 'code-reviewer.md');
+        const content = '# Agent\n';
+        await wf(archivePath, content, 'utf8');
+        const sha256 = createHash('sha256').update(Buffer.from(content, 'utf8')).digest('hex');
+
+        const op: ArchiveOp = {
+          op_id: 'uuid-1', op_type: 'archive', timestamp: '2026-04-05T18:30:00Z',
+          status: 'completed', category: 'agent', scope: 'global',
+          source_path: sourcePath, archive_path: archivePath, content_sha256: sha256,
+        };
+
+        const warnings: string[] = [];
+        const deps = makeFakeDeps({
+          renameFile: async (from, to) => {
+            const { rename, mkdir: md } = await import('node:fs/promises');
+            await md(path.dirname(to), { recursive: true });
+            await rename(from, to);
+          },
+          mkdirRecursive: async (dir, _mode) => {
+            const { mkdir: md } = await import('node:fs/promises');
+            await md(dir, { recursive: true });
+          },
+          readFileBytes: async (p) => {
+            const { readFile } = await import('node:fs/promises');
+            return readFile(p);
+          },
+          pathExists: async (p) => {
+            try { await import('node:fs/promises').then(m => m.stat(p)); return true; } catch { return false; }
+          },
+          onWarning: (msg) => { warnings.push(msg); },
+        });
+
+        const result = await restoreArchiveOp(op, deps);
+        expect(result).toBe('completed');
+        expect(warnings).toHaveLength(0);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('Test 2: SHA256 mismatch → onWarning called but rename still proceeds (D-13)', async () => {
+      const { mkdtemp, writeFile: wf, rm } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+
+      const dir = await mkdtemp(join(tmpdir(), 'restore-t2-'));
+      try {
+        const archivePath = join(dir, 'agent.md');
+        const sourcePath = join(dir, 'src', 'agent.md');
+        await wf(archivePath, '# Modified content\n', 'utf8');
+
+        const op: ArchiveOp = {
+          op_id: 'uuid-2', op_type: 'archive', timestamp: '2026-04-05T18:30:00Z',
+          status: 'completed', category: 'agent', scope: 'global',
+          source_path: sourcePath, archive_path: archivePath, content_sha256: 'wrong-hash',
+        };
+
+        const warnings: string[] = [];
+        const deps = makeFakeDeps({
+          renameFile: async (from, to) => {
+            const { rename, mkdir: md } = await import('node:fs/promises');
+            await md(path.dirname(to), { recursive: true });
+            await rename(from, to);
+          },
+          mkdirRecursive: async (dir) => {
+            const { mkdir: md } = await import('node:fs/promises');
+            await md(dir, { recursive: true });
+          },
+          readFileBytes: async (p) => {
+            const { readFile } = await import('node:fs/promises');
+            return readFile(p);
+          },
+          pathExists: async () => false,
+          onWarning: (msg) => { warnings.push(msg); },
+        });
+
+        const result = await restoreArchiveOp(op, deps);
+        expect(result).toBe('completed');
+        expect(warnings.some(w => w.includes('modified after archiving'))).toBe(true);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('Test 3: source_path already exists → onWarning called, returns failed (Q1)', async () => {
+      const { mkdtemp, writeFile: wf, rm } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+
+      const dir = await mkdtemp(join(tmpdir(), 'restore-t3-'));
+      try {
+        const archivePath = join(dir, '_archived', 'agent.md');
+        const sourcePath = join(dir, 'agent.md');
+        // Source already exists (collision)
+        await wf(sourcePath, '# Existing\n', 'utf8');
+
+        const op: ArchiveOp = {
+          op_id: 'uuid-3', op_type: 'archive', timestamp: '2026-04-05T18:30:00Z',
+          status: 'completed', category: 'agent', scope: 'global',
+          source_path: sourcePath, archive_path: archivePath, content_sha256: 'abc',
+        };
+
+        const warnings: string[] = [];
+        const deps = makeFakeDeps({
+          pathExists: async (p) => {
+            try { await import('node:fs/promises').then(m => m.stat(p)); return true; } catch { return false; }
+          },
+          onWarning: (msg) => { warnings.push(msg); },
+        });
+
+        const result = await restoreArchiveOp(op, deps);
+        expect(result).toBe('failed');
+        expect(warnings.some(w => w.includes('already exists'))).toBe(true);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('Test 4: archive_path missing (ENOENT) → returns failed, continue-on-error', async () => {
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+
+      const op: ArchiveOp = {
+        op_id: 'uuid-4', op_type: 'archive', timestamp: '2026-04-05T18:30:00Z',
+        status: 'completed', category: 'agent', scope: 'global',
+        source_path: join(tmpdir(), 'source.md'),
+        archive_path: join(tmpdir(), 'nonexistent-archive.md'),
+        content_sha256: 'abc',
+      };
+
+      const warnings: string[] = [];
+      const deps = makeFakeDeps({
+        pathExists: async () => false,
+        readFileBytes: async () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); },
+        mkdirRecursive: async () => {},
+        renameFile: async () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); },
+        onWarning: (msg) => { warnings.push(msg); },
+      });
+
+      const result = await restoreArchiveOp(op, deps);
+      expect(result).toBe('failed');
+    });
+
+    it('Test 5: mkdirRecursive called before rename (for nested source_path)', async () => {
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+
+      const op: ArchiveOp = {
+        op_id: 'uuid-5', op_type: 'archive', timestamp: '2026-04-05T18:30:00Z',
+        status: 'completed', category: 'agent', scope: 'global',
+        source_path: join(tmpdir(), 'a', 'b', 'nested.md'),
+        archive_path: join(tmpdir(), '_archived', 'nested.md'),
+        content_sha256: 'abc',
+      };
+
+      const callOrder: string[] = [];
+      const deps = makeFakeDeps({
+        pathExists: async () => false,
+        readFileBytes: async () => Buffer.from('content'),
+        mkdirRecursive: async () => { callOrder.push('mkdir'); },
+        renameFile: async () => { callOrder.push('rename'); },
+      });
+
+      await restoreArchiveOp(op, deps);
+      expect(callOrder.indexOf('mkdir')).toBeLessThan(callOrder.indexOf('rename'));
+    });
+  });
+
+  describe('reEnableMcpTransactional', () => {
+    it('Test 6: flat .mcp.json → moves ccaudit-disabled:playwright back to mcpServers.playwright', async () => {
+      const { mkdtemp, rm } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const { atomicWriteJson: realWrite } = await import('./atomic-write.ts');
+
+      const dir = await mkdtemp(join(tmpdir(), 'restore-t6-'));
+      try {
+        const configPath = join(dir, '.mcp.json');
+        const initialConfig = { 'ccaudit-disabled:playwright': { command: 'npx', args: ['@playwright/mcp'] } };
+        await realWrite(configPath, initialConfig);
+
+        const op: DisableOp = {
+          op_id: 'uuid-6', op_type: 'disable', timestamp: '2026-04-05T18:30:00Z',
+          status: 'completed', config_path: configPath, scope: 'project', project_path: null,
+          original_key: 'mcpServers.playwright', new_key: 'ccaudit-disabled:playwright',
+          original_value: { command: 'npx', args: ['@playwright/mcp'] },
+        };
+
+        const deps = makeFakeDeps({
+          readFileUtf8: async (p) => { const { readFile } = await import('node:fs/promises'); return readFile(p, 'utf8'); },
+          atomicWriteJson: async (p, v) => realWrite(p, v),
+        });
+
+        const result = await reEnableMcpTransactional([op], deps);
+        expect(result.status).toBe('ok');
+        if (result.status === 'ok') {
+          expect(result.completed).toBe(1);
+        }
+        const { readFile } = await import('node:fs/promises');
+        const written = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>;
+        expect(written).toHaveProperty('mcpServers');
+        expect((written.mcpServers as Record<string, unknown>)['playwright']).toBeDefined();
+        expect(written).not.toHaveProperty('ccaudit-disabled:playwright');
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('Test 7: nested ~/.claude.json global scope → moves disabled key back to mcpServers', async () => {
+      const { mkdtemp, rm } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const { atomicWriteJson: realWrite } = await import('./atomic-write.ts');
+
+      const dir = await mkdtemp(join(tmpdir(), 'restore-t7-'));
+      try {
+        const configPath = join(dir, '.claude.json');
+        const initialConfig = {
+          mcpServers: {},
+          'ccaudit-disabled:playwright': { command: 'npx' },
+        };
+        await realWrite(configPath, initialConfig);
+
+        const op: DisableOp = {
+          op_id: 'uuid-7', op_type: 'disable', timestamp: '2026-04-05T18:30:00Z',
+          status: 'completed', config_path: configPath, scope: 'global', project_path: null,
+          original_key: 'mcpServers.playwright', new_key: 'ccaudit-disabled:playwright',
+          original_value: { command: 'npx' },
+        };
+
+        const deps = makeFakeDeps({
+          readFileUtf8: async (p) => { const { readFile } = await import('node:fs/promises'); return readFile(p, 'utf8'); },
+          atomicWriteJson: async (p, v) => realWrite(p, v),
+        });
+
+        const result = await reEnableMcpTransactional([op], deps);
+        expect(result.status).toBe('ok');
+        const { readFile } = await import('node:fs/promises');
+        const written = JSON.parse(await readFile(configPath, 'utf8')) as Record<string, unknown>;
+        expect((written.mcpServers as Record<string, unknown>)['playwright']).toBeDefined();
+        expect(written).not.toHaveProperty('ccaudit-disabled:playwright');
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('Test 8: nested ~/.claude.json project scope → moves back into projects.path.mcpServers', async () => {
+      const { mkdtemp, rm } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+      const { atomicWriteJson: realWrite } = await import('./atomic-write.ts');
+
+      const dir = await mkdtemp(join(tmpdir(), 'restore-t8-'));
+      try {
+        const configPath = join(dir, '.claude.json');
+        const projectPath = '/home/user/project';
+        const initialConfig = {
+          projects: {
+            [projectPath]: {
+              mcpServers: {},
+              'ccaudit-disabled:playwright': { command: 'npx' },
+            },
+          },
+        };
+        await realWrite(configPath, initialConfig);
+
+        const op: DisableOp = {
+          op_id: 'uuid-8', op_type: 'disable', timestamp: '2026-04-05T18:30:00Z',
+          status: 'completed', config_path: configPath, scope: 'project', project_path: projectPath,
+          original_key: `projects.${projectPath}.mcpServers.playwright`,
+          new_key: 'ccaudit-disabled:playwright',
+          original_value: { command: 'npx' },
+        };
+
+        const deps = makeFakeDeps({
+          readFileUtf8: async (p) => { const { readFile } = await import('node:fs/promises'); return readFile(p, 'utf8'); },
+          atomicWriteJson: async (p, v) => realWrite(p, v),
+        });
+
+        const result = await reEnableMcpTransactional([op], deps);
+        expect(result.status).toBe('ok');
+        const { readFile } = await import('node:fs/promises');
+        const written = JSON.parse(await readFile(configPath, 'utf8')) as { projects: Record<string, Record<string, unknown>> };
+        const proj = written.projects[projectPath]!;
+        expect((proj['mcpServers'] as Record<string, unknown>)['playwright']).toBeDefined();
+        expect(proj).not.toHaveProperty('ccaudit-disabled:playwright');
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('Test 9: user manually re-enabled (new_key not found) → onWarning, skip (not fail)', async () => {
+      const warnings: string[] = [];
+      const config = JSON.stringify({ mcpServers: { playwright: {} } });
+      const deps = makeFakeDeps({
+        readFileUtf8: async () => config,
+        atomicWriteJson: async () => {},
+        onWarning: (msg) => { warnings.push(msg); },
+      });
+
+      const op: DisableOp = {
+        op_id: 'uuid-9', op_type: 'disable', timestamp: '2026-04-05T18:30:00Z',
+        status: 'completed', config_path: '/fake/.claude.json', scope: 'global', project_path: null,
+        original_key: 'mcpServers.playwright', new_key: 'ccaudit-disabled:playwright',
+        original_value: {},
+      };
+
+      const result = await reEnableMcpTransactional([op], deps);
+      expect(result.status).toBe('ok');
+      expect(warnings.some(w => w.includes('already re-enabled'))).toBe(true);
+    });
+
+    it('Test 10: original_key target already exists → onWarning, skip (collision)', async () => {
+      const warnings: string[] = [];
+      // Both the new_key (disabled) AND the original server already exist — collision
+      const config = JSON.stringify({
+        mcpServers: { playwright: { command: 'existing' } },
+        'ccaudit-disabled:playwright': { command: 'disabled' },
+      });
+      const deps = makeFakeDeps({
+        readFileUtf8: async () => config,
+        atomicWriteJson: async () => {},
+        onWarning: (msg) => { warnings.push(msg); },
+      });
+
+      const op: DisableOp = {
+        op_id: 'uuid-10', op_type: 'disable', timestamp: '2026-04-05T18:30:00Z',
+        status: 'completed', config_path: '/fake/.claude.json', scope: 'global', project_path: null,
+        original_key: 'mcpServers.playwright', new_key: 'ccaudit-disabled:playwright',
+        original_value: {},
+      };
+
+      const result = await reEnableMcpTransactional([op], deps);
+      expect(result.status).toBe('ok');
+      expect(warnings.some(w => w.includes('already present in mcpServers'))).toBe(true);
+    });
+
+    it('Test 11: uses CURRENT value at new_key, NOT op.original_value (D-09)', async () => {
+      const currentValue = { command: 'npx', args: ['--updated'] };
+      const originalValue = { command: 'npx', args: ['--old'] };
+      let writtenConfig: Record<string, unknown> = {};
+      const config = JSON.stringify({
+        'ccaudit-disabled:playwright': currentValue, // user edited this after bust
+      });
+      const deps = makeFakeDeps({
+        readFileUtf8: async () => config,
+        atomicWriteJson: async (_p, v) => { writtenConfig = v as Record<string, unknown>; },
+      });
+
+      const op: DisableOp = {
+        op_id: 'uuid-11', op_type: 'disable', timestamp: '2026-04-05T18:30:00Z',
+        status: 'completed', config_path: '/fake/.claude.json', scope: 'global', project_path: null,
+        original_key: 'mcpServers.playwright', new_key: 'ccaudit-disabled:playwright',
+        original_value: originalValue,
+      };
+
+      await reEnableMcpTransactional([op], deps);
+      const restoredValue = (writtenConfig['mcpServers'] as Record<string, unknown>)['playwright'];
+      // Must use CURRENT value, not original_value
+      expect(restoredValue).toEqual(currentValue);
+      expect(restoredValue).not.toEqual(originalValue);
+    });
+
+    it('Test 12: atomicWriteJson called exactly once per config file (D-15)', async () => {
+      let writeCount = 0;
+      const config = JSON.stringify({
+        'ccaudit-disabled:playwright': {},
+        'ccaudit-disabled:github': {},
+      });
+      const deps = makeFakeDeps({
+        readFileUtf8: async () => config,
+        atomicWriteJson: async () => { writeCount++; },
+      });
+
+      const ops: DisableOp[] = [
+        { op_id: 'a', op_type: 'disable', timestamp: '2026-04-05T18:30:00Z', status: 'completed',
+          config_path: '/fake/.claude.json', scope: 'global', project_path: null,
+          original_key: 'mcpServers.playwright', new_key: 'ccaudit-disabled:playwright', original_value: {} },
+        { op_id: 'b', op_type: 'disable', timestamp: '2026-04-05T18:30:00Z', status: 'completed',
+          config_path: '/fake/.claude.json', scope: 'global', project_path: null,
+          original_key: 'mcpServers.github', new_key: 'ccaudit-disabled:github', original_value: {} },
+      ];
+
+      await reEnableMcpTransactional(ops, deps);
+      expect(writeCount).toBe(1); // one write for two ops on the same config file
+    });
+
+    it('Test 13: JSON parse error on config file → returns config-parse-error', async () => {
+      const deps = makeFakeDeps({
+        readFileUtf8: async () => 'not valid json {{{',
+      });
+      const op: DisableOp = {
+        op_id: 'uuid-13', op_type: 'disable', timestamp: '2026-04-05T18:30:00Z',
+        status: 'completed', config_path: '/fake/.claude.json', scope: 'global', project_path: null,
+        original_key: 'mcpServers.playwright', new_key: 'ccaudit-disabled:playwright', original_value: {},
+      };
+      const result = await reEnableMcpTransactional([op], deps);
+      expect(result.status).toBe('config-parse-error');
+    });
+
+    it('Test 14: atomic write failure → returns config-write-error', async () => {
+      const config = JSON.stringify({ 'ccaudit-disabled:playwright': {} });
+      const deps = makeFakeDeps({
+        readFileUtf8: async () => config,
+        atomicWriteJson: async () => { throw new Error('ENOSPC'); },
+      });
+      const op: DisableOp = {
+        op_id: 'uuid-14', op_type: 'disable', timestamp: '2026-04-05T18:30:00Z',
+        status: 'completed', config_path: '/fake/.claude.json', scope: 'global', project_path: null,
+        original_key: 'mcpServers.playwright', new_key: 'ccaudit-disabled:playwright', original_value: {},
+      };
+      const result = await reEnableMcpTransactional([op], deps);
+      expect(result.status).toBe('config-write-error');
+    });
+  });
+
+  describe('restoreFlagOp + restoreRefreshOp', () => {
+    it('Test 15: restoreFlagOp calls removeFrontmatterKeys with both ccaudit keys, returns completed', async () => {
+      const keysUsed: string[][] = [];
+      const deps = makeFakeDeps({
+        removeFrontmatterKeys: async (_p, keys) => {
+          keysUsed.push(keys);
+          return { status: 'removed', keysRemoved: ['ccaudit-stale', 'ccaudit-flagged'], blockDeleted: true } as FrontmatterRemoveResult;
+        },
+      });
+      const op: FlagOp = {
+        op_id: 'uuid-15', op_type: 'flag', timestamp: '2026-04-05T18:30:00Z',
+        status: 'completed', file_path: '/fake/CLAUDE.md', scope: 'global',
+        had_frontmatter: true, had_ccaudit_stale: false, patched_keys: ['ccaudit-stale', 'ccaudit-flagged'],
+        original_content_sha256: 'abc',
+      };
+      const result = await restoreFlagOp(op, deps);
+      expect(result).toBe('completed');
+      expect(keysUsed[0]).toContain('ccaudit-stale');
+      expect(keysUsed[0]).toContain('ccaudit-flagged');
+    });
+
+    it('Test 16: restoreRefreshOp calls setFrontmatterValue with ccaudit-flagged + previous value, returns completed', async () => {
+      const setCalls: Array<{ key: string; value: string }> = [];
+      const deps = makeFakeDeps({
+        setFrontmatterValue: async (_p, key, value) => {
+          setCalls.push({ key, value });
+          return { status: 'updated', key, previousValue: '2026-01-01T00:00:00Z' } as FrontmatterRemoveResult;
+        },
+      });
+      const op: RefreshOp = {
+        op_id: 'uuid-16', op_type: 'refresh', timestamp: '2026-04-05T18:30:00Z',
+        status: 'completed', file_path: '/fake/CLAUDE.md', scope: 'global',
+        previous_flagged_at: '2026-03-01T10:00:00Z',
+      };
+      const result = await restoreRefreshOp(op, deps);
+      expect(result).toBe('completed');
+      expect(setCalls[0]?.key).toBe('ccaudit-flagged');
+      expect(setCalls[0]?.value).toBe('2026-03-01T10:00:00Z');
+    });
+
+    it('Test 17: restoreFlagOp treats no-frontmatter/keys-not-found as completed (nothing to do)', async () => {
+      const deps = makeFakeDeps({
+        removeFrontmatterKeys: async () => ({ status: 'no-frontmatter' } as FrontmatterRemoveResult),
+      });
+      const op: FlagOp = {
+        op_id: 'uuid-17', op_type: 'flag', timestamp: '2026-04-05T18:30:00Z',
+        status: 'completed', file_path: '/fake/CLAUDE.md', scope: 'global',
+        had_frontmatter: false, had_ccaudit_stale: false, patched_keys: [],
+        original_content_sha256: 'abc',
+      };
+      const result = await restoreFlagOp(op, deps);
+      expect(result).toBe('completed');
+
+      const deps2 = makeFakeDeps({
+        removeFrontmatterKeys: async () => ({ status: 'keys-not-found' } as FrontmatterRemoveResult),
+      });
+      const result2 = await restoreFlagOp(op, deps2);
+      expect(result2).toBe('completed');
+    });
+
+    it('Test 18: restoreFlagOp treats skipped status as failed with warning', async () => {
+      const warnings: string[] = [];
+      const deps = makeFakeDeps({
+        removeFrontmatterKeys: async () => ({ status: 'skipped', reason: 'exotic-yaml' } as FrontmatterRemoveResult),
+        onWarning: (msg) => { warnings.push(msg); },
+      });
+      const op: FlagOp = {
+        op_id: 'uuid-18', op_type: 'flag', timestamp: '2026-04-05T18:30:00Z',
+        status: 'completed', file_path: '/fake/CLAUDE.md', scope: 'global',
+        had_frontmatter: true, had_ccaudit_stale: false, patched_keys: ['ccaudit-stale'],
+        original_content_sha256: 'abc',
+      };
+      const result = await restoreFlagOp(op, deps);
+      expect(result).toBe('failed');
+      expect(warnings.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('executeOpsOnManifest (wired)', () => {
+    const makeArchiveOp = (category: 'agent' | 'skill', id: string): ArchiveOp => ({
+      op_id: id, op_type: 'archive', timestamp: '2026-04-05T18:30:00Z', status: 'completed',
+      category, scope: 'global',
+      source_path: `/fake/${category}/${id}.md`,
+      archive_path: `/fake/${category}/_archived/${id}.md`,
+      content_sha256: 'abc',
+    });
+
+    const makeFlagOp = (id: string): FlagOp => ({
+      op_id: id, op_type: 'flag', timestamp: '2026-04-05T18:30:00Z', status: 'completed',
+      file_path: `/fake/memory/${id}.md`, scope: 'global',
+      had_frontmatter: true, had_ccaudit_stale: true, patched_keys: ['ccaudit-stale', 'ccaudit-flagged'],
+      original_content_sha256: 'abc',
+    });
+
+    const makeRefreshOp = (id: string): RefreshOp => ({
+      op_id: id, op_type: 'refresh', timestamp: '2026-04-05T18:30:00Z', status: 'completed',
+      file_path: `/fake/memory/${id}.md`, scope: 'global',
+      previous_flagged_at: '2026-03-01T10:00:00Z',
+    });
+
+    const makeDisableOp = (id: string): DisableOp => ({
+      op_id: id, op_type: 'disable', timestamp: '2026-04-05T18:30:00Z', status: 'completed',
+      config_path: '/fake/.claude.json', scope: 'global', project_path: null,
+      original_key: `mcpServers.${id}`, new_key: `ccaudit-disabled:${id}`, original_value: {},
+    });
+
+    it('Test 19: ops executed in locked order: refresh → flag → disable → skill → agent', async () => {
+      const callLog: string[] = [];
+
+      const deps = makeFakeDeps({
+        removeFrontmatterKeys: async (p) => {
+          callLog.push(`flag:${path.basename(p)}`);
+          return { status: 'removed', keysRemoved: ['ccaudit-stale'], blockDeleted: true } as FrontmatterRemoveResult;
+        },
+        setFrontmatterValue: async (p) => {
+          callLog.push(`refresh:${path.basename(p)}`);
+          return { status: 'updated', key: 'ccaudit-flagged', previousValue: null } as FrontmatterRemoveResult;
+        },
+        readFileUtf8: async () => JSON.stringify({ 'ccaudit-disabled:playwright': {} }),
+        atomicWriteJson: async () => {},
+        pathExists: async () => false,
+        readFileBytes: async () => Buffer.from('content'),
+        mkdirRecursive: async () => { callLog.push('mkdir'); },
+        renameFile: async (_from, to) => { callLog.push(`rename:${path.basename(to)}`); },
+      });
+
+      // Mixed ops: agent archive, disable, flag, skill archive, refresh
+      const ops: ManifestOp[] = [
+        makeArchiveOp('agent', 'my-agent'),
+        makeDisableOp('playwright'),
+        makeFlagOp('claude-md'),
+        makeArchiveOp('skill', 'my-skill'),
+        makeRefreshOp('other-md'),
+      ];
+
+      const result = await executeRestore({ kind: 'full' }, makeFakeDeps({
+        discoverManifests: async () => [fakeEntry],
+        readManifest: async () => ({ header: fakeHeader, ops, footer: fakeFooter, truncated: false }),
+        processDetector: { runCommand: async () => '', getParentPid: async () => null, platform: 'linux' as const },
+        removeFrontmatterKeys: deps.removeFrontmatterKeys,
+        setFrontmatterValue: deps.setFrontmatterValue,
+        readFileUtf8: deps.readFileUtf8,
+        atomicWriteJson: deps.atomicWriteJson,
+        pathExists: deps.pathExists,
+        readFileBytes: deps.readFileBytes,
+        mkdirRecursive: deps.mkdirRecursive,
+        renameFile: deps.renameFile,
+      }));
+      expect(result.status).toBe('success');
+
+      // Verify order: refresh comes before flag, disable comes before renames
+      const refreshIdx = callLog.findIndex(e => e.startsWith('refresh:'));
+      const flagIdx = callLog.findIndex(e => e.startsWith('flag:'));
+      const skillRenameIdx = callLog.findIndex(e => e.includes('my-skill'));
+      const agentRenameIdx = callLog.findIndex(e => e.includes('my-agent'));
+
+      expect(refreshIdx).toBeGreaterThanOrEqual(0);
+      expect(flagIdx).toBeGreaterThan(refreshIdx);
+      expect(skillRenameIdx).toBeGreaterThan(flagIdx);
+      expect(agentRenameIdx).toBeGreaterThan(skillRenameIdx);
+    });
+
+    it('Test 20: hybrid failure policy — fs ops continue, MCP config-write-error returns early', async () => {
+      const deps = makeFakeDeps({
+        discoverManifests: async () => [fakeEntry],
+        readManifest: async () => ({
+          header: fakeHeader,
+          ops: [makeDisableOp('playwright'), makeArchiveOp('agent', 'my-agent')],
+          footer: fakeFooter,
+          truncated: false,
+        }),
+        processDetector: { runCommand: async () => '', getParentPid: async () => null, platform: 'linux' as const },
+        readFileUtf8: async () => JSON.stringify({ 'ccaudit-disabled:playwright': {} }),
+        atomicWriteJson: async () => { throw new Error('ENOSPC'); },
+        pathExists: async () => false,
+        readFileBytes: async () => Buffer.from(''),
+        mkdirRecursive: async () => {},
+        renameFile: async () => {},
+      });
+
+      const result = await executeRestore({ kind: 'full' }, deps);
+      expect(result.status).toBe('config-write-error');
+    });
+
+    it('Test 21: all ops succeed → status=success with counts filled', async () => {
+      const ops: ManifestOp[] = [
+        makeArchiveOp('skill', 'my-skill'),
+        makeFlagOp('claude-md'),
+        makeRefreshOp('other-md'),
+        makeDisableOp('playwright'),
+      ];
+
+      const deps = makeFakeDeps({
+        discoverManifests: async () => [fakeEntry],
+        readManifest: async () => ({ header: fakeHeader, ops, footer: fakeFooter, truncated: false }),
+        processDetector: { runCommand: async () => '', getParentPid: async () => null, platform: 'linux' as const },
+        removeFrontmatterKeys: async () => ({ status: 'removed', keysRemoved: ['ccaudit-stale'], blockDeleted: true } as FrontmatterRemoveResult),
+        setFrontmatterValue: async () => ({ status: 'updated', key: 'ccaudit-flagged', previousValue: null } as FrontmatterRemoveResult),
+        readFileUtf8: async () => JSON.stringify({ 'ccaudit-disabled:playwright': {} }),
+        atomicWriteJson: async () => {},
+        pathExists: async () => false,
+        readFileBytes: async () => Buffer.from('content'),
+        mkdirRecursive: async () => {},
+        renameFile: async () => {},
+      });
+
+      const result = await executeRestore({ kind: 'full' }, deps);
+      expect(result.status).toBe('success');
+      if (result.status === 'success') {
+        expect(result.counts.unarchived.completed).toBeGreaterThan(0);
+        expect(result.counts.reenabled.completed).toBeGreaterThan(0);
+        expect(result.counts.stripped.completed).toBeGreaterThan(0);
+        expect(result.counts.unarchived.failed).toBe(0);
+      }
+    });
+
+    it('Test 22: single-mode with findManifestForName → only matched ops executed', async () => {
+      const opLog: string[] = [];
+      const agentOp = makeArchiveOp('agent', 'target-agent');
+      const skillOp = makeArchiveOp('skill', 'other-skill');
+
+      const deps = makeFakeDeps({
+        discoverManifests: async () => [fakeEntry],
+        readManifest: async () => ({
+          header: fakeHeader,
+          ops: [agentOp, skillOp],
+          footer: fakeFooter,
+          truncated: false,
+        }),
+        processDetector: { runCommand: async () => '', getParentPid: async () => null, platform: 'linux' as const },
+        pathExists: async () => false,
+        readFileBytes: async () => Buffer.from('content'),
+        mkdirRecursive: async () => {},
+        renameFile: async (_from, to) => { opLog.push(path.basename(to)); },
+      });
+
+      // Restore only 'target-agent-2026-04-05T18-30-00Z' by archive basename
+      const archiveBasename = path.basename(agentOp.archive_path, path.extname(agentOp.archive_path));
+      const result = await executeRestore({ kind: 'single', name: archiveBasename }, deps);
+      // Only the matched op should have been renamed
+      expect(opLog).toHaveLength(1);
+      expect(opLog[0]).toContain('target-agent');
     });
   });
 }

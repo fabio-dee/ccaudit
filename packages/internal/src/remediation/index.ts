@@ -88,6 +88,10 @@ export {
   findManifestForRestore,
   findManifestForName,
   extractServerName,
+  restoreArchiveOp,
+  reEnableMcpTransactional,
+  restoreFlagOp,
+  restoreRefreshOp,
 } from './restore.ts';
 export type {
   RestoreDeps,
