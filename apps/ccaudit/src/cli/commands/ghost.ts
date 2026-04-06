@@ -41,6 +41,7 @@ import {
   renderGhostSummary,
   renderTopGhosts,
   renderGhostFooter,
+  renderGlobalBaseline,
   renderProjectsTable,
   renderProjectsVerbose,
   renderHealthScore,
@@ -597,7 +598,11 @@ export const ghostCommand = define({
           console.log('');
         }
 
-        // Projects table: always shown when project-scoped ghosts exist
+        // Global baseline always shown when ghosts exist
+        console.log(renderGlobalBaseline(globalSummary));
+        console.log('');
+
+        // Projects table: only when project-scoped ghosts exist
         if (projectSummaries.length > 0) {
           console.log(renderProjectsTable(globalSummary, projectSummaries));
           console.log('');

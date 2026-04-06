@@ -140,14 +140,33 @@ function formatTokenShort(tokens: number): string {
 }
 
 /**
- * Render a ranked projects table showing ghost overhead by project.
- * Global is always the first row; top-N projects follow, sorted by token cost.
+ * Render the global baseline section — items that load in every session,
+ * regardless of project context.
  *
  * Format:
- *   🏗️  Projects by Ghost Overhead:
+ *   🌐 Global Baseline (loads every session):
  *
- *     Scope              Ghosts    Token Cost
- *     (global)               38    ~45k tokens
+ *     Ghosts:  38    Session Cost: ~45k tokens
+ */
+export function renderGlobalBaseline(global: ProjectGhostSummary): string {
+  const lines: string[] = [];
+  lines.push(colorize.bold('\u{1F310} Global Baseline (loads every session):'));
+  lines.push('');
+  const ghosts = String(global.ghostCount).padStart(3);
+  const cost = formatTokensShortPlain(global.totalTokens);
+  lines.push(`  Ghosts: ${ghosts}    Session Cost: ${cost}`);
+  return lines.join('\n');
+}
+
+/**
+ * Render a ranked projects table showing ghost overhead by project.
+ * Top-N projects follow, sorted by token cost. Each row shows the combined
+ * cost (global baseline + project-specific overhead).
+ *
+ * Format:
+ *   🏗️  Per-Project Overhead (added on top of global):
+ *
+ *     Scope              Ghosts    Session Cost
  *     ~/repos/nexus          55    ~48k tokens
  *     ... and 11 more projects
  */
@@ -157,14 +176,11 @@ export function renderProjectsTable(
   topN: number = 5,
 ): string {
   const lines: string[] = [];
-  lines.push(colorize.bold('\u{1F3D7}\uFE0F  Projects by Ghost Overhead:'));
+  lines.push(colorize.bold('\u{1F3D7}\uFE0F  Per-Project Overhead (added on top of global):'));
   lines.push('');
 
   const header = '  ' + 'Scope'.padEnd(32) + 'Ghosts'.padStart(7) + '    Session Cost';
   lines.push(header);
-
-  // Global row (always first) — baseline for sessions not in any project
-  lines.push(formatProjectRow(global));
 
   // Top-N project rows — each shows total session cost (global + project)
   const shown = projects.slice(0, topN);
@@ -431,24 +447,13 @@ if (import.meta.vitest) {
     it('contains the header', () => {
       const global = makeSummary('(global)', 10, 5000);
       const result = renderProjectsTable(global, []);
-      expect(result).toContain('Projects by Ghost Overhead');
-    });
-
-    it('always shows global row first', () => {
-      const global = makeSummary('(global)', 10, 5000);
-      const projects = [makeSummary('~/repo-a', 5, 2000)];
-      const result = renderProjectsTable(global, projects);
-      const globalIdx = result.indexOf('(global)');
-      const projIdx = result.indexOf('~/repo-a');
-      expect(globalIdx).toBeLessThan(projIdx);
+      expect(result).toContain('Per-Project Overhead');
     });
 
     it('project rows show combined session cost (global + project)', () => {
       const global = makeSummary('(global)', 10, 5000);
       const projects = [makeSummary('~/repo-a', 3, 2000)];
       const result = renderProjectsTable(global, projects);
-      // Global row shows its own cost: 5000 tokens
-      expect(result).toContain('~5.0k tokens');
       // Project row shows combined: 5000 + 2000 = 7000 tokens
       expect(result).toContain('~7.0k tokens');
       // Project row shows combined ghost count: 10 + 3 = 13
@@ -489,6 +494,29 @@ if (import.meta.vitest) {
       const projects = [makeSummary('~/repo', 5, 2000)];
       const result = renderProjectsTable(global, projects, 5);
       expect(result).not.toContain('more project');
+    });
+  });
+
+  describe('renderGlobalBaseline', () => {
+    function makeGlobal(ghostCount: number, totalTokens: number): ProjectGhostSummary {
+      return { projectPath: null, displayPath: '(global)', totalTokens, ghostCount, items: [] };
+    }
+
+    it('renders the Global Baseline header', () => {
+      const result = renderGlobalBaseline(makeGlobal(38, 45000));
+      expect(result).toContain('Global Baseline');
+    });
+
+    it('contains ghost count and token cost', () => {
+      const result = renderGlobalBaseline(makeGlobal(38, 45000));
+      expect(result).toContain('38');
+      expect(result).toContain('~45k tokens');
+    });
+
+    it('works gracefully with zero ghosts and zero tokens', () => {
+      const result = renderGlobalBaseline(makeGlobal(0, 0));
+      expect(result).toContain('Global Baseline');
+      expect(result).toContain('~0 tokens');
     });
   });
 
