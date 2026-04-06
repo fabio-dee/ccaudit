@@ -70,7 +70,7 @@
 ### Remediation (v1.2)
 
 - [ ] **RMED-01**: `ccaudit --dangerously-bust-ghosts` is the remediation command; the flag name itself is the viral UX asset
-- [ ] **RMED-02**: Two-stage checkpoint gate before confirmation ceremony: (1) checkpoint file exists at ~/.claude/ccaudit/.last-dry-run, (2) `computeGhostHash(current_inventory)` matches `checkpoint.ghost_hash`. The previously-worded time-based recency gate was dropped per Phase 8 D-01 in favor of hash-only invalidation, matching the PROJECT.md Key Decision "Hash-based checkpoint expiry" (time-based is wrong because it cannot capture "inventory changed").
+- [ ] **RMED-02**: Three-stage checkpoint gate before triple confirmation: (1) checkpoint exists, (2) hash matches current inventory, (3) checkpoint is recent
 - [ ] **RMED-03**: Hard preflight check: detect running Claude Code processes and refuse to mutate `~/.claude.json` if Claude Code is running (concurrent writes corrupt OAuth tokens and config)
 - [ ] **RMED-04**: Agents archived to `~/.claude/agents/_archived/` (not deleted); project-local agents to `.claude/agents/_archived/`
 - [ ] **RMED-05**: Skills archived to `~/.claude/skills/_archived/` (not deleted)
@@ -78,7 +78,7 @@
 - [ ] **RMED-07**: Stale memory files flagged with `ccaudit-stale: true` frontmatter (not moved, not deleted; still load normally -- flag is for human review)
 - [ ] **RMED-08**: Incremental restore manifest written: each remediation operation appended as it completes; crash mid-operation still allows partial restore
 - [ ] **RMED-09**: Atomic write pattern for all `~/.claude.json` mutations (write to temp, then `rename`)
-- [ ] **RMED-10**: Two-prompt confirmation UX: [1/2] `Proceed busting? [y/N]` -> [2/2] type exactly `proceed busting`. The original three-prompt "I accept full responsibility" design was superseded by Phase 8 D-15/D-16 in favor of a lighter ceremony with the typed-phrase `--yes-proceed-busting` non-TTY bypass flag.
+- [ ] **RMED-10**: Triple confirmation UX: [1/3] proceed? -> [2/3] are you sure? -> [3/3] type "I accept full responsibility"
 - [ ] **RMED-11**: `ccaudit restore`: full rollback from last bust
 - [ ] **RMED-12**: `ccaudit restore <name>`: restore single archived item
 - [ ] **RMED-13**: `ccaudit restore --list`: show all archived items with dates

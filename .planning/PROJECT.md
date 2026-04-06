@@ -51,15 +51,13 @@ Show users exactly how many tokens their ghost inventory wastes — and give the
 - [x] Checkpoint contains: timestamp, ghost inventory hash (sha256 over canonicalized agent/skill/MCP inventory + mtimes), item counts, savings, ccaudit_version (Validated in Phase 7: Dry-Run & Checkpoint)
 
 **v1.2 — Remediation**
-- [x] `ccaudit --dangerously-bust-ghosts`: gated remediation with two-prompt "proceed busting" ceremony (Validated in Phase 8: Remediation Core — the ceremony was lightened from three-prompt "I accept full responsibility" to two-prompt per D-15 without losing the viral typed-phrase asset)
-- [x] Checkpoint enforcement: two-gate verification — (1) checkpoint exists, (2) hash matches current inventory. Hash-based expiry only; the "checkpoint is recent" time-based gate from the original RMED-02 was dropped per D-01 because the hash subsumes the intent (Validated in Phase 8)
-- [x] Hard preflight gate: ps/tasklist scan detects running Claude Code processes and refuses to mutate `~/.claude.json` with exit 3; self-invocation detection via parent-pid chain walk emits a tailored "open a standalone terminal" message (Validated in Phase 8)
-- [x] Atomic write pattern for all config mutations: shared `atomicWriteJson` helper (extracted from Phase 7 checkpoint.ts per D-18) with graceful-fs-style Windows EPERM retry loop (10ms initial, +10ms per retry capped at 100ms, 10s total, stat-before-retry) (Validated in Phase 8)
-- [x] Archive agents/skills to `_archived/` subdirectory (not delete); nested subdirectory structure preserved (e.g., `agents/design/foo.md` → `_archived/design/foo.md`); ISO timestamp suffix resolves repeat-bust collisions (Validated in Phase 8)
-- [x] Disable MCP servers via key-rename — supports BOTH `~/.claude.json` nested schema (project-scoped under `projects.<path>.mcpServers`) AND `.mcp.json` flat schema (top-level `mcpServers`) per dual-schema `disableMcpTransactional`; preserves valid JSON, preserves full config for restore; ISO timestamp suffix resolves key collisions (Validated in Phase 8)
-- [x] Flag stale memory files with `ccaudit-stale: true` frontmatter via hand-rolled zero-dep YAML patcher — handles no-frontmatter (prepend), flat key:value (inject/refresh), exotic YAML (skip with reason); idempotent `ccaudit-flagged` timestamp refresh on re-bust per D-07 (Validated in Phase 8)
-- [x] Incremental restore manifest: JSONL append-only at `~/.claude/ccaudit/manifests/bust-<ISO>.jsonl` with per-op `fd.sync()` durability, header/footer bracket records for Phase 9 crash detection, 5 op type schemas (archive/disable/flag/refresh/skipped), content_sha256 on archive ops for tamper detection (Validated in Phase 8)
-- [x] Windows CI matrix: `windows-latest` added to `.github/workflows/ci.yaml` per SC-9 (Validated in Phase 8)
+- [ ] `ccaudit --dangerously-bust-ghosts`: gated remediation with triple confirmation
+- [ ] Checkpoint enforcement: must exist + hash must match (hash-based expiry, not time-based)
+- [ ] Hard preflight gate: detect running Claude Code processes and refuse to mutate `~/.claude.json` if running (concurrent writes corrupt OAuth tokens + config)
+- [ ] Atomic write pattern for all config mutations (write to temp file, then rename)
+- [ ] Archive agents/skills to `_archived/` subdirectory (not delete)
+- [ ] Disable MCP servers via key-rename in `~/.claude.json`: move entry from `mcpServers` to `ccaudit-disabled:<name>` key (preserves valid JSON, preserves full config for restore; JSON does not support comments — comment-out is impossible)
+- [ ] Flag stale memory files with `ccaudit-stale: true` frontmatter (not move, not delete)
 - [ ] `ccaudit restore`: full rollback from last bust
 - [ ] `ccaudit restore <name>`: restore single archived item
 - [ ] `ccaudit restore --list`: show all archived items
@@ -150,4 +148,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-05 after Phase 8 Remediation Core execution (8 plans across 3 waves — atomic-write extraction + Windows EPERM retry + collisions/processes/frontmatter/manifest primitives + bust orchestrator with dual-schema `.mcp.json` disable + CLI wiring with exit code ladder + subprocess integration tests + public docs aligned to D-15 two-prompt ceremony; RMED-01..RMED-10 all validated; 474 passing + 1 Windows-skipped across 52 test files, zero Phase 7 regressions, typecheck clean; ROADMAP Phase 8 goal and REQUIREMENTS RMED-10 amended to match shipped two-prompt "proceed busting" ceremony superseding the original three-prompt "I accept full responsibility" design)*
+*Last updated: 2026-04-05 after Phase 6 gap closure round 3 (06-07 closed 4 escaped gaps from the first end-to-end manual test of the v1.0 candidate: JSON schema discoverability via docs/JSON-SCHEMA.md + README + per-command --json help, --no-color visibility in --help via outputArgs gunshi declaration, mcp --csv cross-project aggregation via aggregateMcpByName helper, pnpm -r build subpackage stubs; all three D-16/D-07/RMED-06 invariants preserved with 0-line git diffs; 368/368 tests, coverage 93.61% stmt / 84.71% br / 96% fn / 94.4% lines; Phase 6 v1.0 milestone re-sealed)*

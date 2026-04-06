@@ -147,7 +147,7 @@ Plans:
 - [x] 07-04-PLAN.md — Gap closure: fix scanner mtimeMs + computeGhostHash safety net for un-stat-able paths (broken-symlink skills)
 
 ### Phase 8: Remediation Core
-**Goal**: `ccaudit --dangerously-bust-ghosts` safely remediates all ghost items -- archiving agents/skills, disabling MCP servers via key-rename, flagging stale memory -- with running-process detection, atomic writes, and two-prompt "proceed busting" confirmation ceremony
+**Goal**: `ccaudit --dangerously-bust-ghosts` safely remediates all ghost items -- archiving agents/skills, disabling MCP servers via key-rename, flagging stale memory -- with running-process detection, atomic writes, and triple confirmation
 **Depends on**: Phase 7
 **Requirements**: RMED-01, RMED-02, RMED-03, RMED-04, RMED-05, RMED-06, RMED-07, RMED-08, RMED-09, RMED-10
 **Success Criteria** (what must be TRUE):
@@ -158,18 +158,9 @@ Plans:
   5. Stale memory files receive `ccaudit-stale: true` frontmatter (not moved, not deleted)
   6. All `~/.claude.json` mutations use atomic write-to-temp-then-rename pattern
   7. An incremental restore manifest is written as operations complete (crash mid-operation allows partial restore)
-  8. Two-prompt confirmation UX (D-15): `[1/2] Proceed busting? [y/N]` -> `[2/2] Type exactly: proceed busting`. Non-TTY bypass via `--yes-proceed-busting` flag (D-16).
+  8. Triple confirmation UX: proceed? -> are you sure? -> type "I accept full responsibility"
   9. CI matrix extended to `windows-latest`; `fs.rename` EPERM retry logic verified on Windows with exponential backoff test
-**Plans:** 8 plans
-Plans:
-- [x] 08-01-PLAN.md — Wave 0: extract atomic-write.ts + Windows EPERM retry + CI windows-latest + REQUIREMENTS.md RMED-02 amendment
-- [x] 08-02-PLAN.md — Wave 0: collisions.ts ISO-suffix helpers + processes.ts ps/tasklist scan with parent-chain
-- [x] 08-03-PLAN.md — Wave 0: frontmatter.ts hand-rolled YAML patcher with 10-fixture test set
-- [x] 08-04-PLAN.md — Wave 0: manifest.ts JSONL append writer with header/footer + 5 op type schemas
-- [x] 08-05-PLAN.md — Wave 1: bust.ts orchestrator (checkpoint gate + preflight + ceremony + execute + manifest)
-- [x] 08-06-PLAN.md — Wave 2: CLI wiring — --dangerously-bust-ghosts + --yes-proceed-busting flags + output matrix + exit ladder
-- [x] 08-07-PLAN.md — Wave 3: subprocess integration test covering exit codes 0/1/3/4 + full pipeline side effects
-- [x] 08-08-PLAN.md — Wave 3: README bust section + JSON-SCHEMA bust envelope + handoff doc D-15 amendment
+**Plans**: TBD
 
 ### Phase 9: Restore & Rollback
 **Goal**: Users can fully reverse any remediation -- restoring all archived items at once, restoring a single item by name, or listing what was archived
@@ -179,12 +170,7 @@ Plans:
   1. `ccaudit restore` fully reverses the last bust operation (agents moved back, MCP keys renamed back, frontmatter removed)
   2. `ccaudit restore <name>` restores a single archived item by name
   3. `ccaudit restore --list` shows all archived items with their dates
-**Plans:** 4 plans
-Plans:
-- [ ] 09-01-PLAN.md — Wave 1: manifest discovery (discoverManifests) + restore.ts core orchestrator (RestoreDeps, RestoreResult, process gate, executeRestore skeleton)
-- [ ] 09-02-PLAN.md — Wave 2: restore executors (archive unmove, transactional MCP re-enable, removeFrontmatterKeys, setFrontmatterValue) + wired executeOpsOnManifest
-- [ ] 09-03-PLAN.md — Wave 3: CLI command restore.ts (gunshi positional name + --list flag, exit ladder 0/1/3/4, output matrix rendered/quiet/json/csv) + cli/index.ts registration
-- [ ] 09-04-PLAN.md — Wave 4: subprocess integration test (fake ps fixture, tmpdir HOME, 10+ cases covering all RestoreResult variants + RMED-11/12/13)
+**Plans**: TBD
 
 ### Phase 10: Community Contribution
 **Goal**: Users with `--live` measurements can generate a PR payload to contribute back to the community `mcp-token-estimates.json`, closing the data quality loop

@@ -131,3 +131,29 @@ export type {
   BustCounts,
   CeremonyResult,
 } from './remediation/index.ts';
+
+// Remediation module (Phase 9 — restore orchestrator + manifest discovery)
+// Surfaced here so restore.ts CLI command can import from `@ccaudit/internal`.
+export {
+  executeRestore,
+  findManifestForRestore,
+  findManifestForName,
+  extractServerName,
+  discoverManifests,
+  readManifest,
+  removeFrontmatterKeys,
+  setFrontmatterValue,
+} from './remediation/index.ts';
+export type {
+  RestoreDeps,
+  RestoreResult,
+  RestoreCounts,
+  RestoreMode,
+  ManifestListEntry,
+  ManifestEntry,
+  ManifestOp,
+  ArchiveOp,
+  DisableOp,
+  FlagOp,
+  RefreshOp,
+} from './remediation/index.ts';
