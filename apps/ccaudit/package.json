@@ -1,6 +1,6 @@
 {
   "name": "ccaudit",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "type": "module",
   "description": "Audit Claude Code ghost inventory — agents, skills, MCP servers, and memory files",
   "keywords": [
