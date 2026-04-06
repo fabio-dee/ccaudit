@@ -11,6 +11,7 @@ export interface OutputMode {
   csv: boolean;
   quiet: boolean;
   verbose: boolean;
+  privacyOutput: boolean;
 }
 
 /**
@@ -27,11 +28,13 @@ export function resolveOutputMode(values: {
   csv?: boolean;
   quiet?: boolean;
   verbose?: boolean;
+  privacyOutput?: boolean;
 }): OutputMode {
   let json = values.json ?? false;
   let csv = values.csv ?? false;
   let quiet = values.quiet ?? false;
   let verbose = values.verbose ?? false;
+  const privacyOutput = values.privacyOutput ?? false;
 
   // --ci is sugar for --json --quiet
   if (values.ci) {
@@ -49,7 +52,7 @@ export function resolveOutputMode(values: {
     verbose = false;
   }
 
-  return { json, csv, quiet, verbose };
+  return { json, csv, quiet, verbose, privacyOutput };
 }
 
 /**
@@ -85,7 +88,13 @@ if (import.meta.vitest) {
         csv: false,
         quiet: false,
         verbose: false,
+        privacyOutput: false,
       });
+    });
+
+    it('--privacy-output sets privacyOutput=true', () => {
+      const mode = resolveOutputMode({ privacyOutput: true });
+      expect(mode.privacyOutput).toBe(true);
     });
 
     it('--ci sets json=true and quiet=true', () => {

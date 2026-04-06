@@ -11,6 +11,7 @@ import {
   calculateTotalOverhead,
   calculateWorstCaseOverhead,
   groupGhostsByProject,
+  redactPaths,
   formatTotalOverhead,
   formatSavingsLine,
   calculateHealthScore,
@@ -100,6 +101,12 @@ export const ghostCommand = define({
       type: 'boolean',
       description:
         'Skip the confirmation ceremony (required for non-TTY/CI). Name is intentionally unwieldy — do not copy-paste from the internet.',
+      default: false,
+    },
+    privacyOutput: {
+      type: 'boolean',
+      description:
+        'Redact real project paths from output (replaces with project-01, project-02, etc.)',
       default: false,
     },
   },
@@ -474,6 +481,14 @@ export const ghostCommand = define({
       worstProject,
     } = calculateWorstCaseOverhead(globalSummary, projectSummaries);
 
+    // Apply path redaction for --privacy-output
+    let displayProjectSummaries = projectSummaries;
+    let displayWorstProject = worstProject;
+    if (mode.privacyOutput) {
+      displayProjectSummaries = redactPaths(projectSummaries);
+      displayWorstProject = displayProjectSummaries[0] ?? null;
+    }
+
     // Step 6: Build category summaries
     const categories = ['agent', 'skill', 'mcp-server', 'memory'] as const;
     const summaries: CategorySummary[] = categories.map((cat) => {
@@ -498,6 +513,14 @@ export const ghostCommand = define({
     if (mode.json) {
       // JSON with meta envelope
       const totalTokens = calculateTotalOverhead(ghosts);
+      // Build redaction map from already-redacted summaries
+      const redactionMap = mode.privacyOutput
+        ? new Map(
+            displayProjectSummaries
+              .filter((s) => s.projectPath !== null)
+              .map((s) => [s.projectPath!, s.displayPath]),
+          )
+        : null;
       const envelope = buildJsonEnvelope('ghost', sinceStr, exitCode, {
         window: sinceStr,
         files: files.length,
@@ -524,8 +547,12 @@ export const ghostCommand = define({
           tier: r.tier,
           lastUsed: r.lastUsed?.toISOString() ?? null,
           invocations: r.invocationCount,
-          path: r.item.path,
-          projectPath: r.item.projectPath,
+          path: redactionMap ? '[redacted]' : r.item.path,
+          projectPath: redactionMap
+            ? (r.item.projectPath !== null
+                ? (redactionMap.get(r.item.projectPath) ?? '[redacted]')
+                : null)
+            : r.item.projectPath,
           tokenEstimate: r.tokenEstimate
             ? {
                 tokens: r.tokenEstimate.tokens,
@@ -583,7 +610,7 @@ export const ghostCommand = define({
 
       if (worstCaseTotal > 0) {
         console.log(
-          `Total ghost overhead: ${formatTotalOverhead(worstCaseTotal, globalCost, worstProject)}`,
+          `Total ghost overhead: ${formatTotalOverhead(worstCaseTotal, globalCost, displayWorstProject)}`,
         );
         console.log(formatSavingsLine(worstCaseTotal));
         console.log('');
@@ -604,13 +631,13 @@ export const ghostCommand = define({
 
         // Projects table: only when project-scoped ghosts exist
         if (projectSummaries.length > 0) {
-          console.log(renderProjectsTable(globalSummary, projectSummaries));
+          console.log(renderProjectsTable(globalSummary, displayProjectSummaries));
           console.log('');
         }
 
         // Full per-project breakdown only in verbose mode
         if (mode.verbose && projectSummaries.length > 0) {
-          console.log(renderProjectsVerbose(globalSummary, projectSummaries));
+          console.log(renderProjectsVerbose(globalSummary, displayProjectSummaries));
           console.log('');
         }
       }

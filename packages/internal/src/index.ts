@@ -91,6 +91,7 @@ export {
   classifyRecommendation,
   buildTrendData,
   groupGhostsByProject,
+  redactPaths,
 } from './report/index.ts';
 export type {
   HealthScore,
