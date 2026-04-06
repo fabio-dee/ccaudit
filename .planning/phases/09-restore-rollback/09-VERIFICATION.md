@@ -1,23 +1,16 @@
 ---
 phase: 09-restore-rollback
 verified: 2026-04-06T07:10:00Z
-status: human_needed
+status: passed
 score: 3/3 must-haves verified
 re_verification: false
-human_verification:
-  - test: "Run pnpm -r test run to confirm all 85 app tests and 396 internal tests pass (including restore-command.test.ts Cases 1-11 + 13)"
-    expected: "All tests exit 0 with no failures. The restore-command.test.ts Cases 2, 3, 5, 10 assert on-disk side effects (archive moved back), requiring a real dist build."
-    why_human: "Cannot spawn a live subprocess that requires pnpm build in this verification session; the dist binary exists and the --list spot-check passed, but full subprocess test suite execution needs human confirmation."
-  - test: "Run `ccaudit restore <name>` with a real archived agent name after a prior bust"
-    expected: "The archived file is renamed back from _archived/ to the original source path; exit code 0; --verbose shows no warnings on clean restore."
-    why_human: "There is no bust history on the dev machine (--list returned 'No bust history found'), so single-item restore cannot be exercised against a real manifest."
 ---
 
 # Phase 9: Restore & Rollback Verification Report
 
 **Phase Goal:** Users can fully reverse any remediation -- restoring all archived items at once, restoring a single item by name, or listing what was archived
 **Verified:** 2026-04-06T07:10:00Z
-**Status:** human_needed
+**Status:** PASSED (human-confirmed 2026-04-06)
 **Re-verification:** No — initial verification
 
 ## Goal Achievement
