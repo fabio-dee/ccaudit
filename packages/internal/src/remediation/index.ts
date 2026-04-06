@@ -75,3 +75,28 @@ export type {
 // primitives into the full --dangerously-bust-ghosts flow (D-01..D-18).
 export { runBust, runConfirmationCeremony } from './bust.ts';
 export type { BustResult, BustDeps, BustCounts, CeremonyResult, CeremonyIO } from './bust.ts';
+
+// Phase 9: manifest discovery + restore orchestrator (D-01..D-15)
+// Plan 01 delivers the scaffold: discover manifests + restore skeleton.
+// Plan 02 wires the real op executors (unarchive, re-enable MCP, strip flags).
+export {
+  executeRestore,
+  findManifestForRestore,
+  findManifestForName,
+  extractServerName,
+} from './restore.ts';
+export type {
+  RestoreDeps,
+  RestoreResult,
+  RestoreCounts,
+  RestoreMode,
+  ManifestListEntry,
+} from './restore.ts';
+export {
+  discoverManifests,
+  resolveManifestDir,
+} from './manifest.ts';
+export type {
+  ManifestEntry,
+  DiscoverManifestsDeps,
+} from './manifest.ts';
