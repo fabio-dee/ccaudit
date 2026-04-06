@@ -74,6 +74,14 @@ export function formatTotalOverhead(
   return result;
 }
 
+export function formatSavingsLine(tokens: number): string {
+  let formatted: string;
+  if (tokens >= 10000) formatted = `~${Math.round(tokens / 1000)}k`;
+  else if (tokens >= 1000) formatted = `~${(tokens / 1000).toFixed(1)}k`;
+  else formatted = `~${tokens}`;
+  return `💡 Potential savings after \`ccaudit --dangerously-bust-ghosts\`: ${formatted} tokens/session reclaimed`;
+}
+
 /** Format a raw token count as ~Xk or ~X (no confidence suffix). */
 function formatTokensShort(tokens: number): string {
   if (tokens >= 10000) return `~${Math.round(tokens / 1000)}k tokens`;
@@ -187,6 +195,28 @@ if (import.meta.vitest) {
       const result = formatTotalOverhead(45000, 45000, null, 200000);
       expect(result).not.toContain('global:');
       expect(result).not.toContain('worst project');
+    });
+  });
+
+  describe('formatSavingsLine', () => {
+    it('formats 93000 tokens as ~93k', () => {
+      const result = formatSavingsLine(93000);
+      expect(result).toContain('~93k');
+    });
+
+    it('formats 3500 tokens as ~3.5k', () => {
+      const result = formatSavingsLine(3500);
+      expect(result).toContain('~3.5k');
+    });
+
+    it('formats 250 tokens without k suffix', () => {
+      const result = formatSavingsLine(250);
+      expect(result).toContain('~250');
+    });
+
+    it('contains the command string', () => {
+      const result = formatSavingsLine(1000);
+      expect(result).toContain('ccaudit --dangerously-bust-ghosts');
     });
   });
 }

@@ -8,7 +8,7 @@ export { lookupMcpEstimate, getMcpEstimatesMap, CONTEXT_WINDOW_SIZE } from './mc
 export { estimateFromFileSize, BYTES_PER_TOKEN } from './file-size-estimator.ts';
 
 // Token display formatting
-export { formatTokenEstimate, formatTotalOverhead } from './format.ts';
+export { formatTokenEstimate, formatTotalOverhead, formatSavingsLine } from './format.ts';
 
 // Enrichment pipeline
 export { enrichScanResults, calculateTotalOverhead, calculateWorstCaseOverhead } from './estimate.ts';

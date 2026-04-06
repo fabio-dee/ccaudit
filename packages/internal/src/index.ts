@@ -71,6 +71,7 @@ export {
   estimateFromFileSize,
   formatTokenEstimate,
   formatTotalOverhead,
+  formatSavingsLine,
   listMcpTools,
   measureMcpTokens,
   BYTES_PER_TOKEN,

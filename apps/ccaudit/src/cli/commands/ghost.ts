@@ -12,6 +12,7 @@ import {
   calculateWorstCaseOverhead,
   groupGhostsByProject,
   formatTotalOverhead,
+  formatSavingsLine,
   calculateHealthScore,
   classifyRecommendation,
   buildChangePlan,
@@ -583,6 +584,7 @@ export const ghostCommand = define({
         console.log(
           `Total ghost overhead: ${formatTotalOverhead(worstCaseTotal, globalCost, worstProject)}`,
         );
+        console.log(formatSavingsLine(worstCaseTotal));
         console.log('');
       }
 
