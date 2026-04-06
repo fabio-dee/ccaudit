@@ -32,6 +32,7 @@ The chosen stack is sound. Every library is actively maintained, used together i
 | Technology | Version | Purpose | Confidence | Rationale |
 |------------|---------|---------|------------|-----------|
 | **cli-table3** | ^0.6.x | Terminal tables | HIGH | 0.6.5. Stable, 4750+ dependents. Built-in TS types. Supports column spanning, word wrapping, ANSI colors. |
+| **picocolors** | ^1.x | Terminal colors | HIGH | Used by ccusage for non-table color output (warnings, progress). Minimal, auto-detects NO_COLOR/FORCE_COLOR. |
 
 ### Error Handling
 
@@ -66,36 +67,47 @@ This mirrors ccusage's layout exactly (`apps/*`, `packages/internal`, `packages/
 
 ## Gaps to Fill
 
-### 1. Shebang Injection (tsdown config)
+### 1. Shebang Injection (source-file approach)
 
 **Status:** Not configured yet.
-**Solution:** Use `outputOptions.banner` in tsdown config. This is the ccusage/sitemcp pattern:
+**Solution:** Place shebang directly in source file (not tsdown config). This is what ccusage actually does:
 
 ```typescript
-// apps/ccaudit/tsdown.config.ts
+// apps/ccaudit/src/index.ts
+#!/usr/bin/env node
+import { run } from './commands/index.ts';
+await run();
+```
+
+tsdown preserves the shebang in output. No `outputOptions.banner` needed (the sitemcp pattern works too, but ccusage's source-file approach is simpler).
+
+**tsdown config** (from actual ccusage `apps/ccusage/tsdown.config.ts`):
+```typescript
 import { defineConfig } from 'tsdown';
 
 export default defineConfig({
-  entry: 'src/index.ts',
+  entry: ['./src/*.ts', '!./src/**/*.test.ts', '!./src/_*.ts'],
   outDir: 'dist',
+  format: 'esm',
   clean: true,
-  dts: false,                    // CLI binary, no type exports
-  fixedExtension: true,          // Always .js, not .mjs
-  publint: true,                 // Validate package structure
-  unused: { level: 'error' },    // Fail on unused imports (unplugin-unused)
-  nodeProtocol: true,            // Enforce node: protocol for builtins
-  outputOptions: {
-    banner: '#!/usr/bin/env node\n',
+  sourcemap: false,
+  minify: 'dce-only',
+  treeshake: true,
+  publint: true,
+  unused: true,
+  nodeProtocol: true,
+  define: {
+    'import.meta.vitest': 'undefined',  // Strip in-source tests
   },
 });
 ```
 
-**Confidence:** HIGH -- verified from [sitemcp/tsdown.config.ts](https://github.com/ryoppippi/sitemcp/blob/main/tsdown.config.ts).
+**Confidence:** HIGH -- verified from actual ccusage source code.
 
-### 2. package.json `bin` Field
+### 2. package.json `bin` Field (with publishConfig)
 
 **Status:** Not configured yet.
-**Solution:**
+**Solution:** ccusage uses a dual `bin`/`publishConfig.bin` pattern — source `bin` points to `.ts` for dev, published `bin` points to `.js`:
 
 ```jsonc
 // apps/ccaudit/package.json
@@ -103,31 +115,37 @@ export default defineConfig({
   "name": "ccaudit",
   "type": "module",
   "bin": {
-    "ccaudit": "./dist/index.js"
+    "ccaudit": "./src/index.ts"
+  },
+  "publishConfig": {
+    "bin": {
+      "ccaudit": "./dist/index.js"
+    },
+    "exports": {
+      ".": "./dist/index.js"
+    }
   },
   "files": ["dist"],
   "scripts": {
     "build": "tsdown",
-    "start": "node ./src/index.ts",
     "test": "TZ=UTC vitest",
     "prepack": "pnpm run build && clean-pkg-json"
   },
-  // All runtime deps go here -- bundler inlines them
   "devDependencies": {
-    "gunshi": "catalog:",
-    "valibot": "catalog:",
-    "tinyglobby": "catalog:",
-    "cli-table3": "catalog:",
-    "@praha/byethrow": "catalog:",
-    "tsdown": "catalog:",
-    "vitest": "catalog:",
-    "clean-pkg-json": "catalog:"
+    "gunshi": "catalog:runtime",
+    "valibot": "catalog:runtime",
+    "tinyglobby": "catalog:runtime",
+    "cli-table3": "catalog:runtime",
+    "@praha/byethrow": "catalog:runtime",
+    "tsdown": "catalog:build",
+    "vitest": "catalog:testing",
+    "clean-pkg-json": "catalog:release"
   }
   // NO "dependencies" block -- zero runtime deps
 }
 ```
 
-**Confidence:** HIGH -- matches ccusage pattern exactly.
+**Confidence:** HIGH -- verified from actual ccusage source code (dual bin pattern confirmed).
 
 ### 3. In-Source Testing (vitest config)
 
@@ -145,18 +163,16 @@ export default defineConfig({
 });
 ```
 
-For production builds, tsdown must strip test blocks. Use `inputOptions` to define:
+For production builds, tsdown must strip test blocks. Use top-level `define` property:
 
 ```typescript
-// In tsdown.config.ts, add:
-inputOptions: {
-  define: {
-    'import.meta.vitest': 'undefined',
-  },
+// In tsdown.config.ts (already shown in section 1 above):
+define: {
+  'import.meta.vitest': 'undefined',
 },
 ```
 
-**Confidence:** MEDIUM -- vitest docs confirm the pattern; tsdown's `inputOptions.define` approach is inferred from rolldown docs rather than a direct tsdown example. May need `rolldownOptions` instead. Test this during setup.
+**Confidence:** HIGH -- verified from actual ccusage `tsdown.config.ts`. The correct syntax is top-level `define`, not `inputOptions.define` or `rolldownOptions.define`.
 
 ### 4. pnpm Catalog Configuration
 
@@ -553,13 +569,15 @@ All of these go into the root or workspace catalog. Individual `apps/*/package.j
 
 ## Open Questions (for phase-specific research)
 
-1. **tsdown `define` for `import.meta.vitest` stripping**: The exact config syntax (`inputOptions.define` vs `rolldownOptions.define`) needs testing during setup. The vitest docs show Vite's `define`, but tsdown's equivalent may differ slightly.
+1. ~~**tsdown `define` for `import.meta.vitest` stripping**~~ **RESOLVED by code study**: Top-level `define` property. Confirmed from ccusage source.
 
-2. **gunshi subcommand lazy loading**: How lazy loading works with tsdown bundling (does tree-shaking respect dynamic imports in gunshi subcommands?). Verify during implementation.
+2. ~~**gunshi subcommand lazy loading**~~ **RESOLVED by code study**: ccusage does NOT use lazy loading — all commands are imported eagerly. For ccaudit's 4-5 commands, eager loading is fine.
 
-3. **Windows CI**: Should CI test on Windows? ccusage does not appear to, but ccaudit reads user home directory paths that differ. Consider adding `windows-latest` to CI matrix.
+3. **Windows CI**: Should CI test on Windows? ccusage does not (uses Nix on ARM Ubuntu). Consider adding `windows-latest` to CI matrix given path handling concerns.
 
-4. **Node.js minimum version**: ccusage targets Node 20+. ccaudit should match. Verify `node:readline` async iterator support (available since Node 18).
+4. **Node.js minimum version**: ccusage targets Node 20+. ccaudit should match. `node:readline` async iterator is available since Node 18.
+
+5. **Agent tool name `Task` vs `Agent`**: Code study found both names in different repos. Must support both. Need to verify which Claude Code versions use which name.
 
 ---
 
