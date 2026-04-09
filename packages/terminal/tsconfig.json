@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "emitDeclarationOnly": true,
+    "declaration": true,
+    "allowImportingTsExtensions": true,
+    "types": ["vitest/importMeta", "node"]
+  },
+  "include": ["src/**/*.ts"],
+  "references": [{ "path": "../internal" }]
+}

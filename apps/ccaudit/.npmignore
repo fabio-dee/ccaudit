@@ -1,0 +1,11 @@
+src/
+scripts/
+__tests__/
+*.test.ts
+*.spec.ts
+vitest.config.ts
+tsconfig*.json
+tsdown.config.ts
+.claude/
+coverage/
+*.tsbuildinfo

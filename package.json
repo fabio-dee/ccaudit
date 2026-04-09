@@ -1,0 +1,36 @@
+{
+  "name": "ccaudit-monorepo",
+  "private": true,
+  "homepage": "https://github.com/fabio-dee/ccaudit#readme",
+  "bugs": "https://github.com/fabio-dee/ccaudit/issues",
+  "author": "Fabio Alf Dee (https://github.com/fabio-dee)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fabio-dee/ccaudit.git"
+  },
+  "type": "module",
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "prepare": "node scripts/setup-hooks.mjs",
+    "build": "pnpm -r build",
+    "test": "TZ=UTC vitest",
+    "lint": "eslint .",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "@eslint/js": "catalog:",
+    "@types/node": "catalog:",
+    "eslint": "catalog:",
+    "jiti": "catalog:",
+    "oxfmt": "catalog:",
+    "typescript": "catalog:",
+    "typescript-eslint": "catalog:",
+    "vitest": "catalog:"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "packageManager": "pnpm@10.33.0"
+}

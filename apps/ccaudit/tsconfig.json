@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "types": ["vitest/importMeta", "node"]
+  },
+  "include": ["src/**/*.ts"],
+  "references": [{ "path": "../../packages/internal" }, { "path": "../../packages/terminal" }]
+}

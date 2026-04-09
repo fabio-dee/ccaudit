@@ -1,0 +1,6 @@
+{"type":"system","sessionId":"sess-002","timestamp":"2026-03-27T20:00:00.000Z","cwd":"/test/malformed","message":{"role":"system","content":"System prompt"}}
+this is not json at all
+{"invalid json without closing brace
+{"type":"assistant","sessionId":"sess-002","timestamp":"2026-03-27T21:00:00.000Z","cwd":"/test/malformed","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_04","name":"Agent","input":{"subagent_type":"Coder","prompt":"fix bug"}}]}}
+
+{"type":"progress","data":"some progress event"}

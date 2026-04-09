@@ -1,0 +1,5 @@
+{"type":"system","sessionId":"sess-001","timestamp":"2026-03-27T20:00:00.000Z","cwd":"/test/project","message":{"role":"system","content":"System prompt"}}
+{"type":"assistant","sessionId":"sess-001","timestamp":"2026-03-27T21:00:00.000Z","cwd":"/test/project","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01","name":"Agent","input":{"subagent_type":"Explore","prompt":"test"}}]}}
+{"type":"assistant","sessionId":"sess-001","timestamp":"2026-03-27T21:10:00.000Z","cwd":"/test/project","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_02","name":"Skill","input":{"skill":"gsd:plan-phase","args":"1"}}]}}
+{"type":"assistant","sessionId":"sess-001","timestamp":"2026-03-27T21:20:00.000Z","cwd":"/test/project","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_03","name":"mcp__Chrome__get_tabs","input":{"createIfEmpty":"True"}}]}}
+{"type":"user","sessionId":"sess-001","timestamp":"2026-03-27T21:25:00.000Z","cwd":"/test/project","message":{"role":"user","content":"thanks"}}

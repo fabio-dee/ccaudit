@@ -1,0 +1,18 @@
+// Scanner types
+export type { InventoryItem, ScanResult, ScannerOptions, InvocationSummary } from './types.ts';
+
+// Classification
+export { classifyGhost, LIKELY_GHOST_MS, DEFINITE_GHOST_MS } from './classify.ts';
+
+// Invocation lookup
+export { buildInvocationMaps } from './invocation-map.ts';
+
+// Individual scanners
+export { scanAgents } from './scan-agents.ts';
+export { scanSkills, resolveSkillName } from './scan-skills.ts';
+export { scanMcpServers, readClaudeConfig } from './scan-mcp.ts';
+export type { ClaudeConfig } from './scan-mcp.ts';
+export { scanMemoryFiles } from './scan-memory.ts';
+
+// Coordinator
+export { scanAll, matchInventory, groupByProject } from './scan-all.ts';

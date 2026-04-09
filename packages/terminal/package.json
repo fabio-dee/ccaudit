@@ -1,0 +1,23 @@
+{
+  "name": "@ccaudit/terminal",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "TZ=UTC vitest",
+    "typecheck": "tsc"
+  },
+  "devDependencies": {
+    "@ccaudit/internal": "workspace:*",
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "cli-table3": "catalog:",
+    "picocolors": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

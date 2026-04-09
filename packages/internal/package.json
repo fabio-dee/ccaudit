@@ -1,0 +1,23 @@
+{
+  "name": "@ccaudit/internal",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "TZ=UTC vitest",
+    "typecheck": "tsc"
+  },
+  "devDependencies": {
+    "@praha/byethrow": "catalog:",
+    "@types/node": "catalog:",
+    "@vitest/coverage-v8": "catalog:",
+    "tinyglobby": "catalog:",
+    "typescript": "catalog:",
+    "valibot": "catalog:",
+    "vitest": "catalog:"
+  }
+}
