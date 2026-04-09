@@ -14,7 +14,7 @@ npx ccaudit-cli --dangerously-bust-ghosts  # do it (fully reversible)
 
 > ccusage tells you what you spent. ccaudit tells you what's wasting it.
 
-Current release: **v1.1.0**.
+Current release: **v1.2.1**.
 
 ---
 
@@ -301,7 +301,7 @@ Limitations:
 
 ## Version
 
-- Current package version: **1.1.0**
+- Current package version: **1.2.1**
 - Build source of truth: `apps/ccaudit/package.json` and `apps/ccaudit/src/_version.ts`
 
 ---
