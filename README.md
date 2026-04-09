@@ -16,6 +16,8 @@ npx ccaudit-cli --dangerously-bust-ghosts  # do it (fully reversible)
 
 Current release: **v1.2.1**.
 
+![Image](https://github.com/user-attachments/assets/6419f75e-e37a-43ab-ae6a-45e884abd6ad)
+
 ---
 
 ## Example snapshot
