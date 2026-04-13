@@ -77,9 +77,13 @@ without changes.
   the terminal output.
 - **Restore reads v1.2.1 manifests unchanged.** `ccaudit restore` against a
   v1.2.1 bust manifest completes without modification or error.
-- **`bust.ts` and `restore.ts` untouched.** `packages/internal/src/remediation/bust.ts`
-  is 1,483 lines, identical to v1.2.1. `packages/internal/src/remediation/restore.ts`
-  is 1,987 lines, identical to v1.2.1. All new logic lives in new files.
+- **`bust.ts` untouched.** `packages/internal/src/remediation/bust.ts` is 1,483
+  lines, identical to v1.2.1. All new bust logic lives in new files.
+- **`restore.ts` manifest contract preserved.** `packages/internal/src/remediation/restore.ts`
+  keeps its v1.2.1 manifest shape and on-disk behavior, so every v1.2.1 bust
+  manifest restores without modification. The only change this release is an
+  internal process-gate fix on the parent-chain self-invocation path — no
+  consumer-visible surface moves.
 - **Exit code ladder unchanged.** `0` success, `1` ghosts found / soft error,
   `2` checkpoint write failure, `3` running Claude Code process detected,
   `4` non-TTY without `--yes-proceed-busting`. Framework-level bust and

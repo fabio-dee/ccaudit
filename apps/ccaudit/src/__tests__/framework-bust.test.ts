@@ -33,14 +33,6 @@ const distPath = path.resolve(here, '..', '..', 'dist', 'index.js');
 // Repo root is four levels up from __tests__ (src/__tests__ → src → ccaudit → apps → repo)
 const repoRoot = path.resolve(here, '..', '..', '..', '..');
 const bustTsPath = path.resolve(repoRoot, 'packages', 'internal', 'src', 'remediation', 'bust.ts');
-const restoreTsPath = path.resolve(
-  repoRoot,
-  'packages',
-  'internal',
-  'src',
-  'remediation',
-  'restore.ts',
-);
 
 // ── Fake ps script body (copy from bust-command.test.ts) ───────
 
@@ -237,14 +229,14 @@ describe('Phase 4: framework-as-unit bust protection (integration)', () => {
     await rm(tmpHome, { recursive: true, force: true });
   });
 
-  // ── BUST-07 NO-TOUCH invariants ──────────────────────────────
+  // ── BUST-07 NO-TOUCH invariant (bust.ts only) ────────────────
+  // restore.ts is no longer asserted identical to v1.2.1: v1.3.0 lands a
+  // documented internal process-gate fix (parent-chain self-invocation).
+  // See CHANGELOG.md for the manifest-compatibility statement. bust.ts
+  // remains truly untouched.
   describe('BUST-07: NO-TOUCH file line counts', () => {
     it('packages/internal/src/remediation/bust.ts is exactly 1483 lines', () => {
       expect(countLines(bustTsPath)).toBe(1483);
-    });
-
-    it('packages/internal/src/remediation/restore.ts is exactly 2032 lines', () => {
-      expect(countLines(restoreTsPath)).toBe(2032);
     });
   });
 

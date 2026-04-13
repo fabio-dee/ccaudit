@@ -643,13 +643,20 @@ export async function executeRestore(mode: RestoreMode, deps: RestoreDeps): Prom
     // D-04: walk our own parent chain; if any detected pid is an ancestor
     // of ccaudit (ccaudit was spawned from inside a Claude Code session,
     // typically via the Bash tool), emit the tailored self-invocation error.
-    const chain = await walkParentChain(deps.selfPid, deps.processDetector);
-    const detectedPids = new Set(detection.processes.map((p) => p.pid));
-    const selfInvocationPid = chain.find((p) => detectedPids.has(p));
-    const selfInvocation = selfInvocationPid !== undefined;
-    const message = selfInvocation
-      ? `You appear to be running ccaudit from inside a Claude Code session (parent pid: ${selfInvocationPid}). Open a standalone terminal and run this command there.`
-      : buildProcessGateMessage(detection.processes);
+    let selfInvocation = false;
+    let message = buildProcessGateMessage(detection.processes);
+    try {
+      const chain = await walkParentChain(deps.selfPid, deps.processDetector);
+      const detectedPids = new Set(detection.processes.map((p) => p.pid));
+      const selfInvocationPid = chain.find((p) => detectedPids.has(p));
+      if (selfInvocationPid !== undefined) {
+        selfInvocation = true;
+        message = `You appear to be running ccaudit from inside a Claude Code session (parent pid: ${selfInvocationPid}). Open a standalone terminal and run this command there.`;
+      }
+    } catch {
+      // walkParentChain is best-effort enrichment; fall back to the standard
+      // process-gate message when PPID lookup fails.
+    }
     return {
       status: 'running-process',
       pids: detection.processes.map((p) => p.pid),
@@ -851,6 +858,31 @@ if (import.meta.vitest) {
       if (result.status === 'running-process') {
         expect(result.pids).toContain(1234);
         expect(result.selfInvocation).toBe(false);
+        expect(result.message).toMatch(/re-run ccaudit restore/);
+      }
+    });
+
+    it('Test 3c: falls back to non-enriched message when getParentPid throws', async () => {
+      // Regression: walkParentChain is best-effort signal enrichment. If
+      // getParentPid throws on the hot path, executeRestore must still return
+      // the blocked running-process result (not propagate the error).
+      const deps = makeFakeDeps({
+        discoverManifests: async () => [fakeEntry],
+        selfPid: 999,
+        processDetector: {
+          runCommand: async () => '  1234 claude\n',
+          getParentPid: async () => {
+            throw new Error('EPERM: parent pid lookup failed');
+          },
+          platform: 'linux',
+        },
+      });
+      const result = await executeRestore({ kind: 'full' }, deps);
+      expect(result.status).toBe('running-process');
+      if (result.status === 'running-process') {
+        expect(result.pids).toContain(1234);
+        expect(result.selfInvocation).toBe(false);
+        expect(result.message).not.toMatch(/inside a Claude Code session/);
         expect(result.message).toMatch(/re-run ccaudit restore/);
       }
     });
