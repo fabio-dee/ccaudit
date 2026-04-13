@@ -17,7 +17,7 @@
  *       are READ-ONLY; helpers are copied by value — not imported.
  * D-12: subprocess tests always pass `--since 3650d` for date-agnostic fixtures.
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { mkdtemp, mkdir, writeFile, rm, chmod, cp } from 'node:fs/promises';
@@ -448,6 +448,18 @@ describe('TEST-06: snapshot matrix (3 widths × 3 modes)', () => {
   let enrichedItems: TokenCostResult[];
   let frameworkColumnValues: Map<string, string | null>;
   let originalColumns: number | undefined;
+
+  // Freeze the system clock so the "Last Used" column renders as a stable
+  // "740d ago" relative to NOW (= 2024-04-01) regardless of when CI runs.
+  // Without this, snapshots drift by one day every 24h.
+  beforeAll(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    vi.setSystemTime(NOW + 740 * 86_400_000);
+  });
+
+  afterAll(() => {
+    vi.useRealTimers();
+  });
 
   beforeAll(async () => {
     // Build TokenCostResult[] via makeResult factory — deterministic + fast.
