@@ -63,7 +63,11 @@ function knownItemsMatch(
   if (knownItems.length === 0) return false;
   if (!knownItems.includes(itemName)) return false;
   const presentCount = allItems.reduce(
-    (count, candidate) => (knownItems.includes(candidate.name) ? count + 1 : count),
+    (count, candidate) =>
+      (candidate.category === 'agent' || candidate.category === 'skill') &&
+      knownItems.includes(candidate.name)
+        ? count + 1
+        : count,
     0,
   );
   return presentCount >= KNOWN_ITEMS_THRESHOLD;
@@ -282,6 +286,19 @@ if (import.meta.vitest) {
         makeItem({ name: 'plan-ceo-review', category: 'skill' }),
         makeItem({ name: 'plan-eng-review', category: 'skill' }),
         makeItem({ name: 'random-other', category: 'skill' }),
+      ];
+      expect(detectFramework(items[3]!, items)).toBeNull();
+    });
+
+    it('does NOT count mcp-server/memory entries toward the knownItems cohort threshold', () => {
+      // Regression: knownItemsMatch must filter by category='agent'|'skill' when
+      // counting cohort presence. Three mcp-server entries sharing gstack
+      // knownItem names must NOT push a non-knownItems agent over threshold.
+      const items = [
+        makeItem({ name: 'office-hours', category: 'mcp-server' }),
+        makeItem({ name: 'plan-ceo-review', category: 'mcp-server' }),
+        makeItem({ name: 'plan-eng-review', category: 'mcp-server' }),
+        makeItem({ name: 'unrelated-agent', category: 'agent' }),
       ];
       expect(detectFramework(items[3]!, items)).toBeNull();
     });
