@@ -1208,17 +1208,23 @@ describe('TEST-08: coverage threshold regression guard', () => {
 // ── TEST-09: Performance smoke (150 items) ──────────────────────────────────
 
 const perfEnabled = process.env.CI === 'true' || process.env.RUN_PERF !== undefined;
+// Skip on Windows: the 500ms budget is calibrated for POSIX I/O, and the
+// 150-file fixture build routinely exceeds vitest's 10s beforeAll timeout on
+// Windows CI (antivirus + NTFS latency). afterAll `rm` also flakes with
+// ENOTEMPTY when Windows file handles haven't released. Ubuntu + macOS
+// coverage is sufficient for the perf regression guard.
+const perfSkip = !binaryExists || !perfEnabled || process.platform === 'win32';
 
-describe.skipIf(!binaryExists || !perfEnabled)('TEST-09: performance smoke (150 items)', () => {
+describe.skipIf(perfSkip)('TEST-09: performance smoke (150 items)', () => {
   let perfHome: string;
 
   beforeAll(async () => {
     perfHome = await mkdtemp(path.join(tmpdir(), 'ccaudit-phase5-perf-'));
     await buildPerfFixture(perfHome, 150);
-  });
+  }, 60_000);
 
   afterAll(async () => {
-    await rm(perfHome, { recursive: true, force: true });
+    await rm(perfHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
 
   it('ghost --json completes within 500ms budget (median of 3)', async () => {
