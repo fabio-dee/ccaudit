@@ -114,9 +114,28 @@ export const inventoryCommand = define({
     // (default-mode filter + verbose-mode column cell lookup). Populated only
     // when grouping is active so the render helper falls back to v1.2.1 layout
     // when --no-group-frameworks is set.
-    const fwMap: Map<string, string | null> | undefined = mode.groupFrameworks
-      ? new Map(enriched.map((r) => [r.item.path, r.item.framework ?? null]))
-      : undefined;
+    //
+    // Seed FIRST from grouped.frameworks[].members — annotateFrameworks only
+    // sets item.framework for Tier-1 curated matches, but Tier-2 heuristic
+    // groups (e.g., a `foo-*` cluster of 3+ items) assemble members whose
+    // item.framework is still null. Keying off item.framework alone would
+    // leak heuristic members past the default-mode filter. Then layer
+    // item.framework on top for anything not already covered by an actual
+    // group (should be empty in practice, but keeps the invariant explicit).
+    let fwMap: Map<string, string | null> | undefined;
+    if (mode.groupFrameworks) {
+      fwMap = new Map();
+      for (const fw of grouped.frameworks) {
+        for (const m of fw.members) fwMap.set(m.path, fw.id);
+      }
+      for (const r of enriched) {
+        if (!fwMap.has(r.item.path)) {
+          fwMap.set(r.item.path, r.item.framework ?? null);
+        }
+      }
+    }
+    const resolveFramework = (r: (typeof enriched)[number]): string | null =>
+      fwMap?.get(r.item.path) ?? r.item.framework ?? null;
 
     // Output routing (in order of precedence)
     if (mode.json) {
@@ -161,7 +180,7 @@ export const inventoryCommand = define({
               }
             : null,
           recommendation: classifyRecommendation(r.tier),
-          ...(mode.groupFrameworks ? { framework: r.item.framework ?? null } : {}),
+          ...(mode.groupFrameworks ? { framework: resolveFramework(r) } : {}),
           ...calculateUrgencyScore(r.lastUsed, r.tokenEstimate),
         })),
       });
@@ -188,7 +207,7 @@ export const inventoryCommand = define({
         String(r.tokenEstimate?.tokens ?? 0),
         classifyRecommendation(r.tier),
         r.tokenEstimate?.confidence ?? 'none',
-        ...(appendFramework ? [r.item.framework ?? ''] : []),
+        ...(appendFramework ? [resolveFramework(r) ?? ''] : []),
       ]);
       console.log(csvTable(headers, rows, !mode.quiet));
     } else if (mode.quiet) {
@@ -203,7 +222,7 @@ export const inventoryCommand = define({
             r.lastUsed?.toISOString() ?? 'never',
             String(r.tokenEstimate?.tokens ?? 0),
             classifyRecommendation(r.tier),
-            ...(appendFramework ? [r.item.framework ?? ''] : []),
+            ...(appendFramework ? [resolveFramework(r) ?? ''] : []),
           ]),
         );
       }

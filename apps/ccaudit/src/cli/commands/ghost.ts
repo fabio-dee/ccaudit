@@ -777,6 +777,21 @@ export const ghostCommand = define({
       ? groupByFramework(toGhostItems(enriched))
       : { frameworks: [], ungrouped: [] };
 
+    // Step 5.1a: Build path → frameworkId lookup from the actual group membership.
+    // annotateFrameworks only sets item.framework for Tier-1 curated matches;
+    // Tier-2 heuristic groups assemble members whose item.framework is still
+    // null. Downstream renderers that read r.item.framework directly would
+    // treat heuristic members as ungrouped (duplicating them in the Top Ghosts
+    // table that already lives inside the Frameworks section). Resolve
+    // membership off grouped.frameworks[].members instead — mirrors the
+    // pattern in packages/internal/src/remediation/framework-bust.ts.
+    const frameworkByPath = new Map<string, string>();
+    for (const fw of grouped.frameworks) {
+      for (const m of fw.members) frameworkByPath.set(m.path, fw.id);
+    }
+    const resolveFramework = (r: TokenCostResult): string | null =>
+      frameworkByPath.get(r.item.path) ?? r.item.framework ?? null;
+
     // Step 5.2: Sort frameworks by displayName ASC (case-insensitive) per OUT-04.
     const sortedFrameworks: FrameworkGroup[] = grouped.frameworks
       .slice()
@@ -907,7 +922,7 @@ export const ghostCommand = define({
               }
             : null,
           recommendation: classifyRecommendation(r.tier),
-          ...(mode.groupFrameworks ? { framework: r.item.framework ?? null } : {}),
+          ...(mode.groupFrameworks ? { framework: resolveFramework(r) } : {}),
           ...calculateUrgencyScore(r.lastUsed, r.tokenEstimate),
         })),
       });
@@ -934,7 +949,7 @@ export const ghostCommand = define({
         String(r.tokenEstimate?.tokens ?? 0),
         classifyRecommendation(r.tier),
         r.tokenEstimate?.confidence ?? 'none',
-        ...(appendFramework ? [r.item.framework ?? ''] : []),
+        ...(appendFramework ? [resolveFramework(r) ?? ''] : []),
       ]);
       console.log(csvTable(headers, rows, !mode.quiet));
     } else if (mode.quiet) {
@@ -949,7 +964,7 @@ export const ghostCommand = define({
             r.lastUsed?.toISOString() ?? 'never',
             String(r.tokenEstimate?.tokens ?? 0),
             classifyRecommendation(r.tier),
-            ...(appendFramework ? [r.item.framework ?? ''] : []),
+            ...(appendFramework ? [resolveFramework(r) ?? ''] : []),
           ]),
         );
       }
@@ -1017,9 +1032,12 @@ export const ghostCommand = define({
       } else {
         // Step 6.1: Top ghosts — filter out framework members when grouping is on
         // (they are already represented in the Frameworks section rendered below
-        // per the v1.3.x UI reorder todo 2026-04-11).
+        // per the v1.3.x UI reorder todo 2026-04-11). Uses resolveFramework so
+        // heuristic Tier-2 members (item.framework still null but grouped via
+        // groupByFramework) are also excluded from Top Ghosts — otherwise they
+        // double-appear inside the Frameworks section AND Top Ghosts.
         const topGhostsInput = mode.groupFrameworks
-          ? ghosts.filter((r) => r.item.framework == null)
+          ? ghosts.filter((r) => resolveFramework(r) == null)
           : ghosts;
         const topGhostsStr = renderTopGhosts(topGhostsInput, 5);
         if (topGhostsStr) {

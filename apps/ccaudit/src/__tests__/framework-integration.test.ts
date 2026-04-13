@@ -368,6 +368,57 @@ describe.skipIf(!binaryExists)('TEST-04 + TEST-05: full pipeline against canonic
     expect(loneSkill!.framework).toBeNull();
   });
 
+  // Regression guard for Fix 2 (release/v1.3.0): annotateFrameworks only sets
+  // item.framework for Tier-1 curated matches. Tier-2 heuristic groups (the
+  // foo-* cluster in this fixture) retain item.framework === null on their
+  // members. Before the fix, downstream renderers read r.item.framework
+  // directly, so heuristic members:
+  //   (a) serialized as framework: null in the JSON items[] array, and
+  //   (b) slipped through the Top Ghosts filter (r.item.framework == null)
+  //       and got rendered BOTH inside their Frameworks section AND inside
+  //       the Top Ghosts table — visible duplication.
+  // The fix resolves membership via grouped.frameworks[].members (mirrors
+  // packages/internal/src/remediation/framework-bust.ts).
+  it('TEST-04: heuristic foo-* members carry framework="foo" in JSON items[] (Fix 2 regression)', async () => {
+    const result = await runCommand(tmpHome, ['ghost', '--json', '--since', '3650d']);
+    expect(result.code).toBe(1);
+    const envelope = JSON.parse(result.stdout) as {
+      items: Array<{ name: string; framework: string | null }>;
+    };
+    const fooMembers = envelope.items.filter((i) => i.name.startsWith('foo-'));
+    // Fixture has exactly 3 heuristic foo-* agents (foo-alpha, foo-beta, foo-gamma).
+    expect(fooMembers).toHaveLength(3);
+    for (const m of fooMembers) {
+      expect(m.framework).toBe('foo');
+    }
+  });
+
+  it('TEST-04: heuristic foo-* members are NOT duplicated in the Top Ghosts table (Fix 2 regression)', async () => {
+    // Default (non-JSON) rendering. The Top Ghosts section's title is stable
+    // across terminal widths; any foo-* name appearing AFTER that title would
+    // mean the heuristic cluster double-appears (Frameworks section + Top
+    // Ghosts). Global Baseline follows Top Ghosts — scope the search to the
+    // segment between them.
+    const result = await runCommand(tmpHome, ['ghost', '--since', '3650d']);
+    expect([0, 1]).toContain(result.code);
+    const stdout = result.stdout;
+    const topStart = stdout.indexOf('Top global ghosts by token cost');
+    // If the Top Ghosts section is present, none of the foo-* members should
+    // appear inside it. (If the section is omitted because every ghost is
+    // framework-attributed, topStart === -1 and there is nothing to check —
+    // which is itself the passing outcome.)
+    if (topStart !== -1) {
+      // Next section marker: Global Baseline (renderGlobalBaseline output).
+      // Fall back to end-of-output if the marker is absent.
+      const nextSectionIdx = stdout.indexOf('Global', topStart + 1);
+      const topEnd = nextSectionIdx === -1 ? stdout.length : nextSectionIdx;
+      const topSegment = stdout.slice(topStart, topEnd);
+      expect(topSegment).not.toContain('foo-alpha');
+      expect(topSegment).not.toContain('foo-beta');
+      expect(topSegment).not.toContain('foo-gamma');
+    }
+  });
+
   it('TEST-05: --dry-run WITHOUT --force-partial protects all GSD ghost members', async () => {
     const result = await runCommand(tmpHome, [
       'ghost',
