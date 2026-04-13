@@ -128,7 +128,8 @@ if (import.meta.vitest) {
     });
   });
 
-  describe('buildArchivePath', () => {
+  // Windows: path.relative/join produce backslash paths; assertions use hardcoded forward slashes.
+  describe.skipIf(process.platform === 'win32')('buildArchivePath', () => {
     const categoryRoot = '/home/u/.claude/agents';
     const archivedDir = '/home/u/.claude/ccaudit/archived/agents';
 

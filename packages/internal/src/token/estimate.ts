@@ -1,4 +1,4 @@
-import { lookupMcpEstimate } from './mcp-estimates-data.ts';
+import { lookupMcpEstimate, DEFAULT_UNKNOWN_MCP_TOKENS } from './mcp-estimates-data.ts';
 import { estimateFromFileSize } from './file-size-estimator.ts';
 import type { ScanResult } from '../scanner/types.ts';
 import type { TokenCostResult, TokenEstimate } from './types.ts';
@@ -35,6 +35,12 @@ export async function enrichScanResults(results: ScanResult[]): Promise<TokenCos
               tokens: entry.estimatedTokens,
               confidence: entry.confidence,
               source: `mcp-token-estimates.json (${entry.toolCount} tools)`,
+            };
+          } else {
+            tokenEstimate = {
+              tokens: DEFAULT_UNKNOWN_MCP_TOKENS,
+              confidence: 'estimated',
+              source: 'default estimate (server not in bundled data)',
             };
           }
           break;
@@ -163,7 +169,7 @@ if (import.meta.vitest) {
       expect(result[0].tokenEstimate!.source).toContain('mcp-token-estimates.json');
     });
 
-    it('should return tokenEstimate = null for unknown MCP server', async () => {
+    it('should return default 2000-token fallback for unknown MCP server', async () => {
       const input: ScanResult[] = [
         {
           item: {
@@ -179,7 +185,10 @@ if (import.meta.vitest) {
         },
       ];
       const result = await enrichScanResults(input);
-      expect(result[0].tokenEstimate).toBeNull();
+      expect(result[0].tokenEstimate).not.toBeNull();
+      expect(result[0].tokenEstimate!.tokens).toBe(2000);
+      expect(result[0].tokenEstimate!.confidence).toBe('estimated');
+      expect(result[0].tokenEstimate!.source).toContain('default');
     });
 
     it('should use fixed registry entry cost for agent item (not file size)', async () => {

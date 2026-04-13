@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, public-main-private-mirror]
   pull_request:
-    branches: [main]
+    branches: [main, public-main-private-mirror]
 
 permissions: read-all
 
@@ -36,15 +36,24 @@ jobs:
 
   test:
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            node-version: 22
+          - os: ubuntu-latest
+            node-version: 20
+          - os: macos-latest
+            node-version: 22
+          - os: windows-latest
+            node-version: 22
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node-version }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r build

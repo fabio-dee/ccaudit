@@ -1,3 +1,5 @@
+import type { TokenEstimate } from './token/types.ts';
+
 /**
  * Scope of a ghost item -- global (~/.claude/) or project-local (.claude/).
  */
@@ -46,6 +48,14 @@ export interface GhostItem {
   urgencyScore: number;
   /** Days since last use, pre-computed integer (null if never used) */
   daysSinceLastUse: number | null;
+  /** Framework group identity. null when explicitly ungrouped; undefined when not annotated. */
+  framework?: string | null;
+  /**
+   * Token cost estimate. Always non-null for agents and MCP servers (unknown MCPs
+   * fall back to DEFAULT_UNKNOWN_MCP_TOKENS). May be null for memory / skill
+   * items when file-size estimation fails (e.g., unreadable file).
+   */
+  tokenEstimate?: TokenEstimate | null;
 }
 
 /**
@@ -95,6 +105,65 @@ if (import.meta.vitest) {
       expect(item.lastUsed).toBeInstanceOf(Date);
       expect(item.urgencyScore).toBe(3);
       expect(item.daysSinceLastUse).toBe(6);
+    });
+
+    it('should accept an item with framework field set (D-02 / SCAN-02 prelim)', () => {
+      const withFramework: GhostItem = {
+        name: 'gsd-planner',
+        path: '/home/user/.claude/agents/gsd-planner.md',
+        scope: 'global',
+        category: 'agent',
+        tier: 'definite-ghost',
+        lastUsed: null,
+        urgencyScore: 55,
+        daysSinceLastUse: null,
+        framework: 'gsd',
+      };
+      expect(withFramework.framework).toBe('gsd');
+
+      const ungrouped: GhostItem = {
+        name: 'custom-agent',
+        path: '/home/user/.claude/agents/custom.md',
+        scope: 'global',
+        category: 'agent',
+        tier: 'likely-ghost',
+        lastUsed: new Date('2026-03-15T00:00:00Z'),
+        urgencyScore: 40,
+        daysSinceLastUse: 27,
+        framework: null,
+      };
+      expect(ungrouped.framework).toBeNull();
+    });
+
+    it('should accept an item with optional tokenEstimate field set (D-14)', () => {
+      const withTokens: GhostItem = {
+        name: 'gsd-planner',
+        path: '/home/user/.claude/agents/gsd-planner.md',
+        scope: 'global',
+        category: 'agent',
+        tier: 'definite-ghost',
+        lastUsed: null,
+        urgencyScore: 55,
+        daysSinceLastUse: null,
+        framework: 'gsd',
+        tokenEstimate: { tokens: 25, confidence: 'estimated', source: 'file size' },
+      };
+      expect(withTokens.tokenEstimate?.tokens).toBe(25);
+      expect(withTokens.tokenEstimate?.confidence).toBe('estimated');
+
+      const withoutTokens: GhostItem = {
+        name: 'mystery-mcp',
+        path: '/home/user/.claude.json',
+        scope: 'global',
+        category: 'mcp-server',
+        tier: 'likely-ghost',
+        lastUsed: new Date('2026-03-15T00:00:00Z'),
+        urgencyScore: 40,
+        daysSinceLastUse: 27,
+        framework: null,
+        tokenEstimate: null,
+      };
+      expect(withoutTokens.tokenEstimate).toBeNull();
     });
   });
 

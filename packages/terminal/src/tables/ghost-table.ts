@@ -1,5 +1,10 @@
 import { colorize } from '../color.ts';
-import type { CategorySummary, ProjectGhostSummary, TokenCostResult } from '@ccaudit/internal';
+import type {
+  CategorySummary,
+  ProjectGhostSummary,
+  TokenCostResult,
+  ItemCategory,
+} from '@ccaudit/internal';
 import { formatTokenEstimate } from '@ccaudit/internal';
 import {
   stripAnsi,
@@ -62,7 +67,10 @@ const CATEGORY_PAD = 13;
  *   Agents        Defined: 140   Used:  12   Ghost: 128   ~47k tokens/session
  *   Memory Files  Loaded:    9   Active:  3  Stale:   6   ~12k tokens/session
  */
-export function renderGhostSummary(summaries: CategorySummary[]): string {
+export function renderGhostSummary(
+  summaries: CategorySummary[],
+  frameworkGhostsByCategory?: Partial<Record<ItemCategory, number>>,
+): string {
   const lines: string[] = [];
 
   for (const s of summaries) {
@@ -79,9 +87,11 @@ export function renderGhostSummary(summaries: CategorySummary[]): string {
     const val3 = String(s.ghost).padStart(3);
     const tokenStr = formatTokenShort(s.tokenCost);
 
-    lines.push(
-      `${catName} ${label1} ${val1}   ${label2} ${val2}   ${label3} ${val3}   ${tokenStr}`,
-    );
+    const fwInCat = frameworkGhostsByCategory?.[s.category as ItemCategory] ?? 0;
+    const ghostCell =
+      fwInCat > 0 ? `${label3} ${val3} (${fwInCat} in frameworks above)` : `${label3} ${val3}`;
+
+    lines.push(`${catName} ${label1} ${val1}   ${label2} ${val2}   ${ghostCell}   ${tokenStr}`);
   }
 
   return lines.join('\n');
@@ -218,7 +228,7 @@ export function renderGhostFooter(
 /**
  * Format a last-used date as "Nd ago" or "never".
  */
-function formatLastUsed(lastUsed: Date | null): string {
+export function formatLastUsed(lastUsed: Date | null): string {
   if (lastUsed === null) return 'never';
   const now = Date.now();
   const diffMs = now - lastUsed.getTime();
@@ -506,7 +516,7 @@ export function renderProjectsVerbose(
 }
 
 /** Format token count as ~Xk or ~X without confidence suffix. */
-function formatTokensShortPlain(tokens: number): string {
+export function formatTokensShortPlain(tokens: number): string {
   if (tokens >= 10000) return `~${Math.round(tokens / 1000)}k tokens`;
   if (tokens >= 1000) return `~${(tokens / 1000).toFixed(1)}k tokens`;
   return `~${tokens} tokens`;
@@ -600,6 +610,7 @@ function buildCloseColumnsDivider(colWidths: [number, number, number, number]): 
 function renderCategoryRows(
   summaries: CategorySummary[],
   colWidths: [number, number, number, number],
+  frameworkGhostsByCategory?: Partial<Record<ItemCategory, number>>,
 ): string[] {
   const output: string[] = [];
 
@@ -618,10 +629,13 @@ function renderCategoryRows(
       ? 'Stale:  ' + String(s.ghost).padStart(3) + ' ' + formatTokenShort(s.tokenCost)
       : 'Ghost:  ' + String(s.ghost).padStart(3) + ' ' + formatTokenShort(s.tokenCost);
 
+    const fwInCat = frameworkGhostsByCategory?.[s.category as ItemCategory] ?? 0;
+    const col3TextWithFw = fwInCat > 0 ? `${col3Text} (${fwInCat} in frameworks above)` : col3Text;
+
     const cell0 = wrapCell(col0Text, colWidths[0]);
     const cell1 = wrapCell(col1Text, colWidths[1]);
     const cell2 = wrapCell(col2Text, colWidths[2]);
-    const cell3 = wrapCell(col3Text, colWidths[3]);
+    const cell3 = wrapCell(col3TextWithFw, colWidths[3]);
 
     const rowHeight = Math.max(cell0.length, cell1.length, cell2.length, cell3.length);
 
@@ -649,6 +663,7 @@ function computeNaturalWidth(
   header: string,
   summaries: CategorySummary[],
   bottomLines: string[],
+  frameworkGhostsByCategory?: Partial<Record<ItemCategory, number>>,
 ): number {
   // Header row: "│ " + title + trailing_pad + " │" → 4 + visLen(title)
   let maxW = 4 + stripAnsi(header.split('\n')[0]!).length;
@@ -657,9 +672,12 @@ function computeNaturalWidth(
   // col4 content needs padding of 2 (1 space each side)
   for (const s of summaries) {
     const isMemory = s.category === 'memory';
-    const col4Text = isMemory
+    const baseCol4Text = isMemory
       ? 'Stale:  ' + String(s.ghost).padStart(3) + ' ' + formatTokenShort(s.tokenCost)
       : 'Ghost:  ' + String(s.ghost).padStart(3) + ' ' + formatTokenShort(s.tokenCost);
+    const fwInCat = frameworkGhostsByCategory?.[s.category as ItemCategory] ?? 0;
+    const col4Text =
+      fwInCat > 0 ? `${baseCol4Text} (${fwInCat} in frameworks above)` : baseCol4Text;
     maxW = Math.max(maxW, 46 + stripAnsi(col4Text).length + 2);
   }
 
@@ -679,10 +697,11 @@ export function renderGhostOutputBox(
   bottomLines: string[],
   progressPct: number | null,
   termWidth?: number,
+  frameworkGhostsByCategory?: Partial<Record<ItemCategory, number>>,
 ): string {
   const tw = Math.min(
     termWidth ?? getTerminalWidth(),
-    computeNaturalWidth(header, summaries, bottomLines),
+    computeNaturalWidth(header, summaries, bottomLines, frameworkGhostsByCategory),
   );
   const innerWidth = tw - 2; // chars between outer │ and │
   const contentWidth = innerWidth - 2; // prose line content (1 pad each side)
@@ -713,7 +732,7 @@ export function renderGhostOutputBox(
     return row.slice(0, tw - 1) + row[row.length - 1]!;
   };
   lines.push(clampRow(buildAfterHeaderDivider(colWidths)));
-  for (const row of renderCategoryRows(summaries, colWidths)) {
+  for (const row of renderCategoryRows(summaries, colWidths, frameworkGhostsByCategory)) {
     lines.push(clampRow(row));
   }
   lines.push(clampRow(buildCloseColumnsDivider(colWidths)));
@@ -787,6 +806,40 @@ if (import.meta.vitest) {
       expect(result).toContain('Skills');
       expect(result).toContain('MCP Servers');
       expect(result).toContain('Memory Files');
+    });
+  });
+
+  describe('renderGhostSummary — frameworkGhostsByCategory parenthetical', () => {
+    const summaries: CategorySummary[] = [
+      { category: 'agent', defined: 140, used: 12, ghost: 128, tokenCost: 47000 },
+      { category: 'skill', defined: 90, used: 8, ghost: 82, tokenCost: 18000 },
+    ];
+
+    it('omits parenthetical when frameworkGhostsByCategory is undefined', () => {
+      const out = renderGhostSummary(summaries);
+      expect(out).not.toContain('in frameworks above');
+    });
+
+    it('omits parenthetical when value is zero', () => {
+      const out = renderGhostSummary(summaries, { agent: 0 });
+      expect(out).not.toContain('in frameworks above');
+    });
+
+    it('appends parenthetical to the agent row when count is non-zero', () => {
+      const out = renderGhostSummary(summaries, { agent: 81 });
+      expect(out).toContain('(81 in frameworks above)');
+      // The parenthetical lives on the agent row, not the skill row
+      const lines = out.split('\n');
+      const agentLine = lines.find((l) => l.includes('Agents'));
+      const skillLine = lines.find((l) => l.includes('Skills'));
+      expect(agentLine).toContain('(81 in frameworks above)');
+      expect(skillLine).not.toContain('in frameworks above');
+    });
+
+    it('appends parentheticals to multiple rows independently', () => {
+      const out = renderGhostSummary(summaries, { agent: 81, skill: 12 });
+      expect(out).toContain('(81 in frameworks above)');
+      expect(out).toContain('(12 in frameworks above)');
     });
   });
 
@@ -1541,6 +1594,14 @@ if (import.meta.vitest) {
       // eslint-disable-next-line no-control-regex
       const stripped = barLine!.replace(/\x1b\[[0-9;]*m/g, '');
       expect(stripped.length).toBeLessThanOrEqual(40);
+    });
+
+    it('renders parenthetical inside the box when frameworkGhostsByCategory is provided', () => {
+      const summaries: CategorySummary[] = [
+        { category: 'agent', defined: 140, used: 12, ghost: 128, tokenCost: 47000 },
+      ];
+      const out = renderGhostOutputBox('Test header', summaries, [], null, 120, { agent: 81 });
+      expect(out).toContain('81 in frameworks above');
     });
   });
 }

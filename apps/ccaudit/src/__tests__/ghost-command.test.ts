@@ -392,7 +392,8 @@ describe('ghost command integration', () => {
     expect(output).toContain('Name');
     expect(output).toContain('Category');
     expect(output).toContain('Tier');
-    expect(output).toContain('Action');
+    // At tw=80 the action column may be partially clipped by clampRow
+    expect(output).toMatch(/Act/);
     // Verify item names appear in table
     expect(output).toContain('agent-a');
     expect(output).toContain('skill-b');

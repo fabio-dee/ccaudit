@@ -35,7 +35,7 @@ import type {
 } from './manifest.ts';
 import type { FrontmatterRemoveResult } from './frontmatter.ts';
 import type { ProcessDetectorDeps } from './processes.ts';
-import { detectClaudeProcesses } from './processes.ts';
+import { detectClaudeProcesses, walkParentChain } from './processes.ts';
 
 // -- Deps interface -----------------------------------------------
 
@@ -640,16 +640,28 @@ export async function executeRestore(mode: RestoreMode, deps: RestoreDeps): Prom
     return { status: 'process-detection-failed', error: detection.error };
   }
   if (detection.processes.length > 0) {
+    // D-04: walk our own parent chain; if any detected pid is an ancestor
+    // of ccaudit (ccaudit was spawned from inside a Claude Code session,
+    // typically via the Bash tool), emit the tailored self-invocation error.
+    let selfInvocation = false;
+    let message = buildProcessGateMessage(detection.processes);
+    try {
+      const chain = await walkParentChain(deps.selfPid, deps.processDetector);
+      const detectedPids = new Set(detection.processes.map((p) => p.pid));
+      const selfInvocationPid = chain.find((p) => detectedPids.has(p));
+      if (selfInvocationPid !== undefined) {
+        selfInvocation = true;
+        message = `You appear to be running ccaudit from inside a Claude Code session (parent pid: ${selfInvocationPid}). Open a standalone terminal and run this command there.`;
+      }
+    } catch {
+      // walkParentChain is best-effort enrichment; fall back to the standard
+      // process-gate message when PPID lookup fails.
+    }
     return {
       status: 'running-process',
       pids: detection.processes.map((p) => p.pid),
-      selfInvocation: detection.processes.some(
-        // ClaudeProcess has no selfInvocation field — that walk happens in bust.ts.
-        // For restore, we use the same conservative check: any detected process is a block.
-        // Self-invocation sub-case can be added in Plan 03's CLI wiring.
-        () => false,
-      ),
-      message: buildProcessGateMessage(detection.processes),
+      selfInvocation,
+      message,
     };
   }
 
@@ -807,6 +819,71 @@ if (import.meta.vitest) {
       expect(result.status).toBe('running-process');
       if (result.status === 'running-process') {
         expect(result.pids).toContain(1234);
+      }
+    });
+
+    it('Test 3a: detects self-invocation via parent chain (D-04)', async () => {
+      // Parent tree: ccaudit (999) -> shell (500) -> claude (100) -> init (1)
+      const tree: Record<number, number> = { 999: 500, 500: 100, 100: 1 };
+      const deps = makeFakeDeps({
+        discoverManifests: async () => [fakeEntry],
+        selfPid: 999,
+        processDetector: {
+          runCommand: async () => '  100 claude\n',
+          getParentPid: async (pid: number) => tree[pid] ?? null,
+          platform: 'darwin',
+        },
+      });
+      const result = await executeRestore({ kind: 'full' }, deps);
+      expect(result.status).toBe('running-process');
+      if (result.status === 'running-process') {
+        expect(result.selfInvocation).toBe(true);
+        expect(result.message).toMatch(/inside a Claude Code session/);
+        expect(result.message).toMatch(/parent pid: 100/);
+      }
+    });
+
+    it('Test 3b: running-process without self-invocation shows generic message', async () => {
+      const deps = makeFakeDeps({
+        discoverManifests: async () => [fakeEntry],
+        selfPid: 99999,
+        processDetector: {
+          runCommand: async () => '  1234 claude\n',
+          getParentPid: async () => null,
+          platform: 'linux',
+        },
+      });
+      const result = await executeRestore({ kind: 'full' }, deps);
+      expect(result.status).toBe('running-process');
+      if (result.status === 'running-process') {
+        expect(result.pids).toContain(1234);
+        expect(result.selfInvocation).toBe(false);
+        expect(result.message).toMatch(/re-run ccaudit restore/);
+      }
+    });
+
+    it('Test 3c: falls back to non-enriched message when getParentPid throws', async () => {
+      // Regression: walkParentChain is best-effort signal enrichment. If
+      // getParentPid throws on the hot path, executeRestore must still return
+      // the blocked running-process result (not propagate the error).
+      const deps = makeFakeDeps({
+        discoverManifests: async () => [fakeEntry],
+        selfPid: 999,
+        processDetector: {
+          runCommand: async () => '  1234 claude\n',
+          getParentPid: async () => {
+            throw new Error('EPERM: parent pid lookup failed');
+          },
+          platform: 'linux',
+        },
+      });
+      const result = await executeRestore({ kind: 'full' }, deps);
+      expect(result.status).toBe('running-process');
+      if (result.status === 'running-process') {
+        expect(result.pids).toContain(1234);
+        expect(result.selfInvocation).toBe(false);
+        expect(result.message).not.toMatch(/inside a Claude Code session/);
+        expect(result.message).toMatch(/re-run ccaudit restore/);
       }
     });
 

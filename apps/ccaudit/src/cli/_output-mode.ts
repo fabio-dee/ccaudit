@@ -14,6 +14,8 @@ export interface OutputMode {
   quiet: boolean;
   verbose: boolean;
   privacy: boolean;
+  /** True by default; false when --no-group-frameworks is set. Controls framework-grouping display + JSON envelope (D-22). */
+  groupFrameworks: boolean;
 }
 
 /**
@@ -31,6 +33,7 @@ export function resolveOutputMode(values: {
   quiet?: boolean;
   verbose?: boolean;
   privacy?: boolean;
+  noGroupFrameworks?: boolean;
 }): OutputMode {
   let json = values.json ?? false;
   let csv = values.csv ?? false;
@@ -54,7 +57,9 @@ export function resolveOutputMode(values: {
     verbose = false;
   }
 
-  return { json, csv, quiet, verbose, privacy };
+  const groupFrameworks = !(values.noGroupFrameworks ?? false);
+
+  return { json, csv, quiet, verbose, privacy, groupFrameworks };
 }
 
 /**
@@ -84,13 +89,14 @@ if (import.meta.vitest) {
   const { describe, it, expect } = import.meta.vitest;
 
   describe('resolveOutputMode', () => {
-    it('returns all false for empty values', () => {
+    it('returns default mode (groupFrameworks=true) for empty values', () => {
       expect(resolveOutputMode({})).toEqual({
         json: false,
         csv: false,
         quiet: false,
         verbose: false,
         privacy: false,
+        groupFrameworks: true,
       });
     });
 
@@ -125,6 +131,27 @@ if (import.meta.vitest) {
       const mode = resolveOutputMode({ ci: true, csv: true });
       expect(mode.json).toBe(true);
       expect(mode.csv).toBe(false);
+    });
+
+    it('groupFrameworks defaults to true when noGroupFrameworks is not set', () => {
+      expect(resolveOutputMode({}).groupFrameworks).toBe(true);
+    });
+
+    it('--no-group-frameworks sets groupFrameworks=false', () => {
+      expect(resolveOutputMode({ noGroupFrameworks: true }).groupFrameworks).toBe(false);
+    });
+
+    it('groupFrameworks=false coexists with --json', () => {
+      const mode = resolveOutputMode({ json: true, noGroupFrameworks: true });
+      expect(mode.json).toBe(true);
+      expect(mode.groupFrameworks).toBe(false);
+    });
+
+    it('groupFrameworks=false coexists with --ci (json + quiet)', () => {
+      const mode = resolveOutputMode({ ci: true, noGroupFrameworks: true });
+      expect(mode.json).toBe(true);
+      expect(mode.quiet).toBe(true);
+      expect(mode.groupFrameworks).toBe(false);
     });
   });
 

@@ -33,7 +33,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -149,6 +149,56 @@ async function runRestore(
       reject(err);
     });
     child.on('close', (code) => {
+      clearTimeout(timer);
+      if (!killed) resolve({ stdout, stderr, exitCode: code });
+    });
+  });
+}
+
+/**
+ * Spawn `ccaudit [flags]` without a hardcoded subcommand.
+ * Used by the round-trip test to invoke --dry-run and --dangerously-bust-ghosts.
+ */
+async function runCli(tmpHome: string, flags: string[], opts: RunOpts = {}): Promise<RunResult> {
+  return new Promise((resolve, reject) => {
+    const originalPath = process.env.PATH ?? '';
+    const defaultPath = `${path.join(tmpHome, 'bin')}:${originalPath}`;
+    const child = spawn(process.execPath, [distPath, ...flags], {
+      env: {
+        ...process.env,
+        HOME: tmpHome,
+        USERPROFILE: tmpHome,
+        XDG_CONFIG_HOME: path.join(tmpHome, '.config'),
+        NO_COLOR: '1',
+        PATH: opts.pathOverride ?? defaultPath,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    child.stdin.end();
+
+    let stdout = '';
+    let stderr = '';
+    let killed = false;
+    const timeoutMs = opts.timeout ?? 30_000;
+
+    const timer = setTimeout(() => {
+      killed = true;
+      child.kill('SIGKILL');
+      reject(new Error(`runCli timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    child.stdout.on('data', (d: Buffer) => {
+      stdout += d.toString();
+    });
+    child.stderr.on('data', (d: Buffer) => {
+      stderr += d.toString();
+    });
+    child.on('error', (err: Error) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on('close', (code: number | null) => {
       clearTimeout(timer);
       if (!killed) resolve({ stdout, stderr, exitCode: code });
     });
@@ -326,7 +376,8 @@ async function buildBasicFixture(options: BuildFixtureOptions = {}): Promise<Fix
 
 // ── Test suite ─────────────────────────────────────────────────────
 
-describe('ccaudit restore (subprocess integration)', () => {
+// Windows: subprocess tests rely on fake `ps` shell scripts that require /bin/sh.
+describe.skipIf(process.platform === 'win32')('ccaudit restore (subprocess integration)', () => {
   let tmpHome: string;
 
   beforeEach(() => {
@@ -522,20 +573,123 @@ describe('ccaudit restore (subprocess integration)', () => {
 
   // ── Case 12: round-trip bust → restore (RMED-11 holistic) ─────────
 
-  it.skip('Case 12: round-trip bust → restore reverses all operations', () => {
-    // TODO: Full round-trip requires seeding a valid ~/.claude/ccaudit/.last-dry-run
-    // checkpoint with matching hash, plus a complete agent/skill/MCP fixture that
-    // the bust subprocess can scan, then confirming all paths return to pre-bust
-    // state after restore.
-    //
-    // Individual cases 1–11 provide equivalent coverage for RMED-11 acceptance:
-    // - Case 2 validates full restore end-to-end from a crafted manifest
-    // - Case 8 validates JSON envelope with real counts
-    // - Cases 3, 4, 5, 6, 7 validate each sub-path
-    //
-    // This round-trip case is deferred to a future v1.3+ integration harness
-    // that owns the full bust→restore lifecycle with automated checkpoint seeding.
-  });
+  it('Case 12: round-trip bust → restore reverses all operations', async () => {
+    // ── Fixture setup ─────────────────────────────────────────────
+    tmpHome = await setupEmptyHome();
+
+    // 1. Session JSONL (required for discoverSessionFiles)
+    const sessionDir = path.join(tmpHome, '.claude', 'projects', 'fake-project');
+    await mkdir(sessionDir, { recursive: true });
+    const sessionLine = JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      cwd: '/fake/project',
+      timestamp: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+      sessionId: 'fixture-session',
+    });
+    await writeFile(path.join(sessionDir, 'session-1.jsonl'), sessionLine + '\n', 'utf8');
+
+    // 2. Ghost agent
+    const agentContent = '# Ghost Agent\n\nA test agent for round-trip.\n';
+    const agentPath = path.join(tmpHome, '.claude', 'agents', 'round-trip-agent.md');
+    await writeFile(agentPath, agentContent, 'utf8');
+
+    // 3. Ghost MCP in ~/.claude.json
+    const originalMcpValue = { command: 'npx', args: ['rt'] };
+    const claudeJsonPath = path.join(tmpHome, '.claude.json');
+    await writeFile(
+      claudeJsonPath,
+      JSON.stringify({ mcpServers: { 'round-trip-mcp': originalMcpValue } }),
+      'utf8',
+    );
+
+    // 4. Ghost memory file with old mtime (40 days ago → definite-ghost)
+    const memoryContent = '# Round-trip memory\n';
+    const memoryPath = path.join(tmpHome, '.claude', 'CLAUDE.md');
+    await writeFile(memoryPath, memoryContent, 'utf8');
+    const oldTime = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+    await utimes(memoryPath, oldTime, oldTime);
+
+    // ── Subprocess 1: Dry-run (creates checkpoint) ────────────────
+    const dryRun = await runCli(tmpHome, ['--dry-run', '--json']);
+    expect(dryRun.exitCode, `dry-run stderr: ${dryRun.stderr}`).toBe(0);
+
+    // ── Subprocess 2: Bust ────────────────────────────────────────
+    const bust = await runCli(tmpHome, [
+      '--dangerously-bust-ghosts',
+      '--yes-proceed-busting',
+      '--json',
+    ]);
+    expect(bust.exitCode, `bust stderr: ${bust.stderr}`).toBe(0);
+
+    const bustParsed = JSON.parse(bust.stdout) as Record<string, unknown>;
+    const bustResult = bustParsed.bust as {
+      status: string;
+      manifestPath: string;
+      counts: {
+        archive: { completed: number; failed: number };
+        disable: { completed: number; failed: number };
+        flag: { completed: number; failed: number; refreshed: number; skipped: number };
+      };
+    };
+    expect(bustResult.status).toBe('success');
+    expect(bustResult.counts.archive.completed).toBe(1);
+    expect(bustResult.counts.disable.completed).toBe(1);
+    expect(bustResult.counts.flag.completed).toBe(1);
+
+    // ── Verify bust side effects on disk ──────────────────────────
+    const archivedAgentPath = path.join(
+      tmpHome,
+      '.claude',
+      'ccaudit',
+      'archived',
+      'agents',
+      'round-trip-agent.md',
+    );
+    expect(existsSync(archivedAgentPath)).toBe(true);
+    expect(existsSync(agentPath)).toBe(false);
+
+    const postBustConfig = JSON.parse(await readFile(claudeJsonPath, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    const postBustMcpServers = (postBustConfig.mcpServers ?? {}) as Record<string, unknown>;
+    expect(postBustMcpServers['round-trip-mcp']).toBeUndefined();
+    expect(postBustConfig['ccaudit-disabled:round-trip-mcp']).toBeDefined();
+
+    const postBustMemory = await readFile(memoryPath, 'utf8');
+    expect(postBustMemory).toMatch(/ccaudit-stale: true/);
+    expect(postBustMemory).toMatch(/ccaudit-flagged:/);
+
+    // ── Subprocess 3: Restore ─────────────────────────────────────
+    const restore = await runRestore(tmpHome, ['--json']);
+    expect(restore.exitCode, `restore stderr: ${restore.stderr}`).toBe(0);
+
+    const restoreParsed = JSON.parse(restore.stdout) as Record<string, unknown>;
+    expect(restoreParsed.status).toBe('success');
+
+    // ── Verify full restoration to pre-bust state ─────────────────
+    // Agent restored to original location with original content
+    expect(existsSync(agentPath)).toBe(true);
+    expect(existsSync(archivedAgentPath)).toBe(false);
+    const restoredAgent = await readFile(agentPath, 'utf8');
+    expect(restoredAgent).toBe(agentContent);
+
+    // MCP re-enabled in ~/.claude.json
+    const restoredConfig = JSON.parse(await readFile(claudeJsonPath, 'utf8')) as Record<
+      string,
+      unknown
+    >;
+    const restoredMcpServers = (restoredConfig.mcpServers ?? {}) as Record<string, unknown>;
+    expect(restoredMcpServers['round-trip-mcp']).toEqual(originalMcpValue);
+    expect(restoredConfig['ccaudit-disabled:round-trip-mcp']).toBeUndefined();
+
+    // Memory frontmatter stripped
+    const restoredMemory = await readFile(memoryPath, 'utf8');
+    expect(restoredMemory).not.toMatch(/ccaudit-stale/);
+    expect(restoredMemory).not.toMatch(/ccaudit-flagged/);
+    expect(restoredMemory).toContain('# Round-trip memory');
+  }, 90_000);
 
   // ── Case 13: process-detection-failed → exit 3 ────────────────────
   //

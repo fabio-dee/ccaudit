@@ -30,6 +30,11 @@ export const outputArgs = {
     description: 'Disable ANSI colors in output (also respects NO_COLOR env var)',
     default: false,
   },
+  'no-group-frameworks': {
+    type: 'boolean' as const,
+    description: 'Disable framework grouping — output reverts to v1.2.1 layout',
+    default: false,
+  },
 } as const;
 
 if (import.meta.vitest) {
@@ -82,6 +87,21 @@ if (import.meta.vitest) {
       const desc = (outputArgs as Record<string, { description?: string }>)['no-color'].description;
       expect(typeof desc).toBe('string');
       expect(desc).toContain('NO_COLOR');
+    });
+
+    it('has no-group-frameworks key with type boolean and default false', () => {
+      expect(outputArgs).toHaveProperty('no-group-frameworks');
+      expect((outputArgs as Record<string, unknown>)['no-group-frameworks']).toMatchObject({
+        type: 'boolean',
+        default: false,
+      });
+    });
+
+    it('no-group-frameworks description mentions v1.2.1 layout', () => {
+      const desc = (outputArgs as Record<string, { description?: string }>)['no-group-frameworks']
+        .description;
+      expect(typeof desc).toBe('string');
+      expect(desc).toContain('v1.2.1');
     });
   });
 }

@@ -1,0 +1,245 @@
+{
+  "meta": {
+    "command": "ghost",
+    "version": "1.2.1",
+    "since": "3650d",
+    "timestamp": "2026-04-11T17:21:09.327Z",
+    "exitCode": 1
+  },
+  "window": "3650d",
+  "files": 1,
+  "projects": 1,
+  "inventory": 14,
+  "ghosts": {
+    "total": 12,
+    "likely": 0,
+    "definite": 12
+  },
+  "healthScore": {
+    "score": 64,
+    "grade": "Fair",
+    "ghostPenalty": 36,
+    "tokenPenalty": 0
+  },
+  "totalOverhead": {
+    "tokens": 299
+  },
+  "items": [
+    {
+      "name": "foo-alpha",
+      "category": "agent",
+      "scope": "global",
+      "tier": "definite-ghost",
+      "lastUsed": null,
+      "invocations": 0,
+      "path": "/var/folders/bt/gqd_kpts42l1zh7cynpqjhhr0000gn/T/ccaudit-v121-capture-7jmzy8/.claude/agents/foo-alpha.md",
+      "projectPath": null,
+      "tokenEstimate": {
+        "tokens": 25,
+        "confidence": "estimated",
+        "source": "agent registry index entry (lazy-loaded, ~25 tokens/agent)"
+      },
+      "recommendation": "archive",
+      "urgencyScore": 73,
+      "daysSinceLastUse": null
+    },
+    {
+      "name": "foo-beta",
+      "category": "agent",
+      "scope": "global",
+      "tier": "definite-ghost",
+      "lastUsed": null,
+      "invocations": 0,
+      "path": "/var/folders/bt/gqd_kpts42l1zh7cynpqjhhr0000gn/T/ccaudit-v121-capture-7jmzy8/.claude/agents/foo-beta.md",
+      "projectPath": null,
+      "tokenEstimate": {
+        "tokens": 25,
+        "confidence": "estimated",
+        "source": "agent registry index entry (lazy-loaded, ~25 tokens/agent)"
+      },
+      "recommendation": "archive",
+      "urgencyScore": 73,
+      "daysSinceLastUse": null
+    },
+    {
+      "name": "foo-gamma",
+      "category": "agent",
+      "scope": "global",
+      "tier": "definite-ghost",
+      "lastUsed": null,
+      "invocations": 0,
+      "path": "/var/folders/bt/gqd_kpts42l1zh7cynpqjhhr0000gn/T/ccaudit-v121-capture-7jmzy8/.claude/agents/foo-gamma.md",
+      "projectPath": null,
+      "tokenEstimate": {
+        "tokens": 25,
+        "confidence": "estimated",
+        "source": "agent registry index entry (lazy-loaded, ~25 tokens/agent)"
+      },
+      "recommendation": "archive",
+      "urgencyScore": 73,
+      "daysSinceLastUse": null
+    },
+    {
+      "name": "gsd-code-reviewer",
+      "category": "agent",
+      "scope": "global",
+      "tier": "definite-ghost",
+      "lastUsed": null,
+      "invocations": 0,
+      "path": "/var/folders/bt/gqd_kpts42l1zh7cynpqjhhr0000gn/T/ccaudit-v121-capture-7jmzy8/.claude/agents/gsd-code-reviewer.md",
+      "projectPath": null,
+      "tokenEstimate": {
+        "tokens": 25,
+        "confidence": "estimated",
+        "source": "agent registry index entry (lazy-loaded, ~25 tokens/agent)"
+      },
+      "recommendation": "archive",
+      "urgencyScore": 73,
+      "daysSinceLastUse": null
+    },
+    {
+      "name": "gsd-roadmapper",
+      "category": "agent",
+      "scope": "global",
+      "tier": "definite-ghost",
+      "lastUsed": null,
+      "invocations": 0,
+      "path": "/var/folders/bt/gqd_kpts42l1zh7cynpqjhhr0000gn/T/ccaudit-v121-capture-7jmzy8/.claude/agents/gsd-roadmapper.md",
+      "projectPath": null,
+      "tokenEstimate": {
+        "tokens": 25,
+        "confidence": "estimated",
+        "source": "agent registry index entry (lazy-loaded, ~25 tokens/agent)"
+      },
+      "recommendation": "archive",
+      "urgencyScore": 73,
+      "daysSinceLastUse": null
+    },
+    {
+      "name": "gsd-verifier",
+      "category": "agent",
+      "scope": "global",
+      "tier": "definite-ghost",
+      "lastUsed": null,
+      "invocations": 0,
+      "path": "/var/folders/bt/gqd_kpts42l1zh7cynpqjhhr0000gn/T/ccaudit-v121-capture-7jmzy8/.claude/agents/gsd-verifier.md",
+      "projectPath": null,
+      "tokenEstimate": {
+        "tokens": 25,
+        "confidence": "estimated",
+        "source": "agent registry index entry (lazy-loaded, ~25 tokens/agent)"
+      },
+      "recommendation": "archive",
+      "urgencyScore": 73,
+      "daysSinceLastUse": null
+    },
+    {
+      "name": "solo-agent",
+      "category": "agent",
+      "scope": "global",
+      "tier": "definite-ghost",
+      "lastUsed": null,
+      "invocations": 0,
+      "path": "/var/folders/bt/gqd_kpts42l1zh7cynpqjhhr0000gn/T/ccaudit-v121-capture-7jmzy8/.claude/agents/solo-agent.md",
+      "projectPath": null,
+      "tokenEstimate": {
+        "tokens": 25,
+        "confidence": "estimated",
+        "source": "agent registry index entry (lazy-loaded, ~25 tokens/agent)"
+      },
+      "recommendation": "archive",
+      "urgencyScore": 73,
+      "daysSinceLastUse": null
+    },
+    {
+      "name": "backend-dev",
+      "category": "agent",
+      "scope": "global",
+      "tier": "definite-ghost",
+      "lastUsed": null,
+      "invocations": 0,
+      "path": "/var/folders/bt/gqd_kpts42l1zh7cynpqjhhr0000gn/T/ccaudit-v121-capture-7jmzy8/.claude/agents/engineering/backend-dev.md",
+      "projectPath": null,
+      "tokenEstimate": {
+        "tokens": 25,
+        "confidence": "estimated",
+        "source": "agent registry index entry (lazy-loaded, ~25 tokens/agent)"
+      },
+      "recommendation": "archive",
+      "urgencyScore": 73,
+      "daysSinceLastUse": null
+    },
+    {
+      "name": "devops",
+      "category": "agent",
+      "scope": "global",
+      "tier": "definite-ghost",
+      "lastUsed": null,
+      "invocations": 0,
+      "path": "/var/folders/bt/gqd_kpts42l1zh7cynpqjhhr0000gn/T/ccaudit-v121-capture-7jmzy8/.claude/agents/engineering/devops.md",
+      "projectPath": null,
+      "tokenEstimate": {
+        "tokens": 25,
+        "confidence": "estimated",
+        "source": "agent registry index entry (lazy-loaded, ~25 tokens/agent)"
+      },
+      "recommendation": "archive",
+      "urgencyScore": 73,
+      "daysSinceLastUse": null
+    },
+    {
+      "name": "frontend-dev",
+      "category": "agent",
+      "scope": "global",
+      "tier": "definite-ghost",
+      "lastUsed": null,
+      "invocations": 0,
+      "path": "/var/folders/bt/gqd_kpts42l1zh7cynpqjhhr0000gn/T/ccaudit-v121-capture-7jmzy8/.claude/agents/engineering/frontend-dev.md",
+      "projectPath": null,
+      "tokenEstimate": {
+        "tokens": 25,
+        "confidence": "estimated",
+        "source": "agent registry index entry (lazy-loaded, ~25 tokens/agent)"
+      },
+      "recommendation": "archive",
+      "urgencyScore": 73,
+      "daysSinceLastUse": null
+    },
+    {
+      "name": "ml-engineer",
+      "category": "agent",
+      "scope": "global",
+      "tier": "definite-ghost",
+      "lastUsed": null,
+      "invocations": 0,
+      "path": "/var/folders/bt/gqd_kpts42l1zh7cynpqjhhr0000gn/T/ccaudit-v121-capture-7jmzy8/.claude/agents/engineering/ml-engineer.md",
+      "projectPath": null,
+      "tokenEstimate": {
+        "tokens": 25,
+        "confidence": "estimated",
+        "source": "agent registry index entry (lazy-loaded, ~25 tokens/agent)"
+      },
+      "recommendation": "archive",
+      "urgencyScore": 73,
+      "daysSinceLastUse": null
+    },
+    {
+      "name": "lone-skill",
+      "category": "skill",
+      "scope": "global",
+      "tier": "definite-ghost",
+      "lastUsed": null,
+      "invocations": 0,
+      "path": "/var/folders/bt/gqd_kpts42l1zh7cynpqjhhr0000gn/T/ccaudit-v121-capture-7jmzy8/.claude/skills/lone-skill",
+      "projectPath": null,
+      "tokenEstimate": {
+        "tokens": 24,
+        "confidence": "estimated",
+        "source": "file size (96 bytes / 4 bytes per token)"
+      },
+      "recommendation": "archive",
+      "urgencyScore": 73,
+      "daysSinceLastUse": null
+    }
+  ]
+}

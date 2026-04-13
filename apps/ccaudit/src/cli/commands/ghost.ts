@@ -11,6 +11,8 @@ import {
   calculateTotalOverhead,
   calculateWorstCaseOverhead,
   groupGhostsByProject,
+  groupByFramework,
+  toGhostItems,
   redactPaths,
   buildRedactionMap,
   formatTotalOverhead,
@@ -30,6 +32,7 @@ import {
   patchFrontmatter,
   atomicWriteJson,
   defaultProcessDeps,
+  applyFrameworkProtection,
 } from '@ccaudit/internal';
 import type {
   InvocationRecord,
@@ -37,10 +40,17 @@ import type {
   Checkpoint,
   BustResult,
   BustDeps,
+  FrameworkGroup,
+  GroupedInventory,
+  ItemCategory,
+  FrameworkBustResult,
+  TokenCostResult,
 } from '@ccaudit/internal';
+import type { ProtectedItem } from '@ccaudit/terminal';
 import {
   renderHeader,
   humanizeSinceWindow,
+  renderFrameworksSection,
   renderTopGhosts,
   renderGhostFooter,
   renderGlobalBaseline,
@@ -113,6 +123,12 @@ export const ghostCommand = define({
         'Redact real project paths from output (replaces with project-01, project-02, etc.)',
       default: false,
     },
+    forcePartial: {
+      type: 'boolean',
+      description:
+        'Bypass framework-as-unit bust protection. Archive ghost members of partially-used frameworks. Also affects --dry-run preview and checkpoint hash — both runs MUST use the same value.',
+      default: false,
+    },
   },
   async run(ctx) {
     const sinceStr = ctx.values.since ?? '7d';
@@ -130,7 +146,11 @@ export const ghostCommand = define({
     initColor();
 
     // Resolve output mode from all flag values
-    const mode = resolveOutputMode(ctx.values);
+    const noGroupFrameworksVal = ctx.values['no-group-frameworks'];
+    const mode = resolveOutputMode({
+      ...ctx.values,
+      noGroupFrameworks: typeof noGroupFrameworksVal === 'boolean' ? noGroupFrameworksVal : false,
+    });
 
     if (mode.verbose) {
       console.error(`[ccaudit] Scanning sessions (window: ${sinceStr})...`);
@@ -177,18 +197,55 @@ export const ghostCommand = define({
     // Step 3.5: Enrich with token estimates
     const enriched = await enrichScanResults(results);
 
+    // v1.3.0 Phase 4 helper: adapt TokenCostResult[] to the terminal package's
+    // ProtectedItem[] shape used by renderChangePlan / renderChangePlanVerbose.
+    const toProtectedItems = (items: TokenCostResult[]): ProtectedItem[] =>
+      items.map((r) => ({
+        category: r.item.category,
+        scope: r.item.scope,
+        name: r.item.name,
+        projectPath: r.item.projectPath,
+        path: r.item.path,
+        tokens: r.tokenEstimate?.tokens ?? 0,
+        framework: r.item.framework ?? null,
+        tier: r.tier,
+      }));
+
     // Step 3.6: Dry-run branch (Phase 7, D-01 through D-20)
     // Lifted before the inventory rendering chain per RESEARCH §CLI Integration —
     // single decision point, four output modes per command mode (8 test cases total).
     if (ctx.values.dryRun) {
-      const plan = buildChangePlan(enriched);
+      // v1.3.0 Phase 4: framework-as-unit bust protection (D-27).
+      // Filter must run BEFORE buildChangePlan and BEFORE computeGhostHash so
+      // both dry-run and bust paths see the same eligible set (hashes match).
+      const dryRunProtection = applyFrameworkProtection(enriched, {
+        forcePartial: ctx.values.forcePartial === true,
+        groupFrameworks: mode.groupFrameworks,
+      });
+
+      // D-39 informational warning: --force-partial is a no-op when grouping disabled.
+      if (!mode.groupFrameworks && ctx.values.forcePartial === true) {
+        console.error(
+          'warning: --force-partial has no effect with --no-group-frameworks; framework protection is already disabled.',
+        );
+      }
+
+      // Verbose stderr log for protection activity (Claude's Discretion / RESEARCH §1.4).
+      if (mode.verbose && dryRunProtection.warnings.length > 0) {
+        console.error(
+          `[ccaudit] Framework protection: ${dryRunProtection.protectedItems.length} item(s) protected across ${dryRunProtection.warnings.length} framework(s)`,
+        );
+      }
+
+      const plan = buildChangePlan(dryRunProtection.filtered);
 
       // Compute the hash over archive-eligible items (D-10 through D-16)
-      const ghostHash = await computeGhostHash(enriched);
+      // Pass the FILTERED list so dry-run and bust hashes match by construction.
+      const ghostHash = await computeGhostHash(dryRunProtection.filtered);
 
       // Compute worst-case session overhead for total_overhead checkpoint field.
       // Mirrors Step 5.5 logic: group ghosts, then sum global + worst project cost.
-      const dryRunGhosts = enriched.filter((r) => r.tier !== 'used');
+      const dryRunGhosts = dryRunProtection.filtered.filter((r) => r.tier !== 'used');
       const { global: dryRunGlobalSummary, projects: dryRunProjectSummaries } =
         groupGhostsByProject(dryRunGhosts, homedir());
       const dryRunRedactionMap = ctx.values.privacy
@@ -227,6 +284,11 @@ export const ghostCommand = define({
       // Render to stdout FIRST per D-20 (user sees output even if checkpoint write fails)
       if (mode.json) {
         // D-02: dry-run honors --json. Envelope payload = { dryRun, changePlan, checkpoint }.
+        // v1.3.0 Phase 4: protected items must be redacted via the same
+        // helper as archive/disable/flag (privacy mode parity, OUT-05).
+        const protectedItemsForEnvelope = mode.groupFrameworks
+          ? toProtectedItems(dryRunProtection.protectedItems)
+          : [];
         const envelope = buildJsonEnvelope('ghost', sinceStr, 0, {
           dryRun: true,
           changePlan: {
@@ -235,6 +297,14 @@ export const ghostCommand = define({
             flag: redactItems(plan.flag),
             counts: plan.counts,
             savings: plan.savings,
+            // v1.3.0 Phase 4 (D-30): additive — omitted entirely when grouping
+            // disabled or no frameworks were protected.
+            ...(mode.groupFrameworks && dryRunProtection.protectedItems.length > 0
+              ? { protected: redactItems(protectedItemsForEnvelope) }
+              : {}),
+            ...(mode.groupFrameworks && dryRunProtection.warnings.length > 0
+              ? { protectionWarnings: dryRunProtection.warnings }
+              : {}),
           },
           checkpoint: {
             path:
@@ -261,19 +331,39 @@ export const ghostCommand = define({
           'tokens',
           'tier',
         ];
-        const rows = [...plan.archive, ...plan.disable, ...plan.flag].map((i) => {
-          const r = dryRunRedactionMap ? redactItem(i) : i;
-          return [
-            i.action,
-            i.category,
-            i.name,
-            i.scope,
-            r.projectPath ?? '',
-            r.path,
-            String(i.tokens),
-            i.tier,
-          ];
-        });
+        // v1.3.0 Phase 4: append protected items as additional rows with
+        // action='protected'. Omitted when grouping is disabled (v1.2.1 byte-identity).
+        const csvProtectedRows = mode.groupFrameworks
+          ? toProtectedItems(dryRunProtection.protectedItems).map((p) => {
+              const r = dryRunRedactionMap ? redactItem(p) : p;
+              return [
+                'protected',
+                p.category,
+                p.name,
+                p.scope,
+                r.projectPath ?? '',
+                r.path,
+                String(p.tokens),
+                p.tier,
+              ];
+            })
+          : [];
+        const rows = [
+          ...[...plan.archive, ...plan.disable, ...plan.flag].map((i) => {
+            const r = dryRunRedactionMap ? redactItem(i) : i;
+            return [
+              i.action,
+              i.category,
+              i.name,
+              i.scope,
+              r.projectPath ?? '',
+              r.path,
+              String(i.tokens),
+              i.tier,
+            ];
+          }),
+          ...csvProtectedRows,
+        ];
         console.log(csvTable(headers, rows, !mode.quiet));
       } else if (mode.quiet) {
         // D-02: dry-run honors --quiet. TSV with same 8 columns as CSV, no header.
@@ -292,18 +382,59 @@ export const ghostCommand = define({
             ]),
           );
         }
+        // v1.3.0 Phase 4: append protected rows with action='protected'.
+        if (mode.groupFrameworks) {
+          for (const p of toProtectedItems(dryRunProtection.protectedItems)) {
+            const r = dryRunRedactionMap ? redactItem(p) : p;
+            console.log(
+              tsvRow([
+                'protected',
+                p.category,
+                p.name,
+                p.scope,
+                r.projectPath ?? '',
+                r.path,
+                String(p.tokens),
+                p.tier,
+              ]),
+            );
+          }
+        }
       } else {
         // Default rendered output (D-05, D-06): header + grouped body + verbose + checkpoint footer
         console.log('');
         console.log(renderHeader('\u{1F47B}', 'Dry-Run', humanizeSinceWindow(sinceStr)));
         console.log('');
-        console.log(renderChangePlan(plan));
+        // v1.3.0 Phase 4 (D-29, D-34): pass framework-protection rendering data
+        // so the yellow warning block + PROTECTED section appear above/below
+        // the existing ARCHIVE/DISABLE/FLAG groups. The renderer omits both
+        // when warnings/protectedItems are empty.
+        const dryRunProtectedForRenderer = mode.groupFrameworks
+          ? toProtectedItems(dryRunProtection.protectedItems).map((p) => ({
+              ...p,
+              ...redactItem(p),
+            }))
+          : [];
+        console.log(
+          renderChangePlan(plan, {
+            protectionWarnings: mode.groupFrameworks ? dryRunProtection.warnings : [],
+            protected: dryRunProtectedForRenderer,
+            forcePartial: ctx.values.forcePartial === true,
+            privacy: ctx.values.privacy === true,
+            redactionMap: dryRunRedactionMap ?? undefined,
+            homedir: homedir(),
+          }),
+        );
         console.log('');
         if (mode.verbose) {
           console.log(
             renderChangePlanVerbose(plan, {
+              protected: dryRunProtectedForRenderer,
+              protectionWarnings: mode.groupFrameworks ? dryRunProtection.warnings : [],
+              forcePartial: ctx.values.forcePartial === true,
               privacy: ctx.values.privacy === true,
               redactionMap: dryRunRedactionMap ?? undefined,
+              homedir: homedir(),
             }),
           );
           console.log('');
@@ -372,6 +503,19 @@ export const ghostCommand = define({
         return;
       }
 
+      // v1.3.0 Phase 4 (D-39): same informational warning as dry-run when
+      // --force-partial is combined with --no-group-frameworks.
+      if (!mode.groupFrameworks && ctx.values.forcePartial === true) {
+        console.error(
+          'warning: --force-partial has no effect with --no-group-frameworks; framework protection is already disabled.',
+        );
+      }
+
+      // v1.3.0 Phase 4 (D-33): captured FrameworkBustResult for the runCeremony
+      // closure and the JSON envelope. Populated inside the scanAndEnrich
+      // closure below.
+      let bustProtection: FrameworkBustResult | null = null;
+
       // Rule #4: Build BustDeps with a SELF-CONTAINED scanAndEnrich.
       // scanAndEnrich drives the FULL discover → parse → scan → enrich pipeline
       // internally rather than closing over the outer `enriched` variable. This
@@ -397,7 +541,22 @@ export const ghostCommand = define({
           const { results: scanResults } = await scanAll(invocations, {
             projectPaths: [...projPaths],
           });
-          return enrichScanResults(scanResults);
+          const rawEnriched = await enrichScanResults(scanResults);
+          // v1.3.0 Phase 4 (D-27): apply framework protection BEFORE returning
+          // to runBust. runBust sees only the filtered set; protected items
+          // never reach archiveOne. Hash matches dry-run by construction
+          // because both paths apply the same pure filter.
+          const protection = applyFrameworkProtection(rawEnriched, {
+            forcePartial: ctx.values.forcePartial === true,
+            groupFrameworks: mode.groupFrameworks,
+          });
+          if (mode.verbose && protection.warnings.length > 0) {
+            console.error(
+              `[ccaudit] Framework protection: ${protection.protectedItems.length} item(s) protected across ${protection.warnings.length} framework(s)`,
+            );
+          }
+          bustProtection = protection;
+          return protection.filtered;
         },
         computeHash: (e) => computeGhostHash(e),
         processDetector: defaultProcessDeps,
@@ -405,9 +564,23 @@ export const ghostCommand = define({
         runCeremony: async ({ plan, yes: ceremonyYes }) => {
           // Print the change plan to stdout BEFORE the prompts (D-15) so the
           // user can read exactly what will be busted before they type `y`.
+          // v1.3.0 Phase 4 (D-34): identical rendering to dry-run — yellow
+          // warning block + PROTECTED section visible at ceremony time.
           if (!ceremonyYes && !mode.quiet) {
             console.log('');
-            console.log(renderChangePlan(plan));
+            console.log(
+              renderChangePlan(plan, {
+                protectionWarnings:
+                  mode.groupFrameworks && bustProtection ? bustProtection.warnings : [],
+                protected:
+                  mode.groupFrameworks && bustProtection
+                    ? toProtectedItems(bustProtection.protectedItems)
+                    : [],
+                forcePartial: ctx.values.forcePartial === true,
+                // No redaction at ceremony time — paths are shown literally
+                // because the user is about to confirm them.
+              }),
+            );
             console.log('');
           }
           return runConfirmationCeremony({ plan, yes: ceremonyYes });
@@ -439,9 +612,24 @@ export const ghostCommand = define({
       const result = await runBust({ yes, deps });
 
       // ── Output rendering per BustResult variant ────────────────
+      // bustProtection is reassigned inside the scanAndEnrich closure, so
+      // TS let-narrowing reads it as `null` at this point. Cast back to the
+      // declared union so the subsequent truthy check narrows correctly.
+      const bustProtectionResolved = bustProtection as FrameworkBustResult | null;
       if (mode.json) {
         const envelope = buildJsonEnvelope('ghost', sinceStr, bustResultToExitCode(result), {
-          bust: bustResultToJson(result, ctx.values.privacy === true),
+          bust: {
+            ...bustResultToJson(result, ctx.values.privacy === true),
+            // v1.3.0 Phase 4 (D-30, D-33): informational warnings — omitted
+            // when grouping is disabled or no warnings were emitted. Protected
+            // items are NOT included here because they were never touched by
+            // runBust (no manifest entry to reference).
+            ...(mode.groupFrameworks &&
+            bustProtectionResolved &&
+            bustProtectionResolved.warnings.length > 0
+              ? { protectionWarnings: bustProtectionResolved.warnings }
+              : {}),
+          },
         });
         const indent = mode.quiet ? 0 : 2;
         console.log(JSON.stringify(envelope, null, indent));
@@ -511,6 +699,20 @@ export const ghostCommand = define({
             console.error('servers, or memory files since the checkpoint was created. This is a');
             console.error('safety check -- the bust plan may no longer match your current setup.');
             console.error('');
+            // v1.3.0 Phase 4 (D-37): --force-partial changes which items are
+            // eligible, which changes the hash. If the user added/removed
+            // --force-partial between dry-run and bust, surface the hint.
+            if (ctx.values.forcePartial === true) {
+              console.error(
+                'Hint: you are running with --force-partial, which expands the eligible set.',
+              );
+              console.error(
+                'If --force-partial differs from the prior --dry-run, re-run dry-run with',
+              );
+              console.error('the same flag value to generate a matching checkpoint:');
+              console.error('  ccaudit ghost --dry-run --force-partial');
+              console.error('');
+            }
             console.error('Run ccaudit --dry-run again to generate a fresh plan.');
             break;
           case 'running-process':
@@ -569,6 +771,48 @@ export const ghostCommand = define({
     // Step 5: Filter to ghosts only
     const ghosts = enriched.filter((r) => r.tier !== 'used');
 
+    // Step 5.1: Framework grouping (v1.3.0 D-22). Computed once, reused by
+    // terminal render path, JSON envelope, and CSV/TSV appenders.
+    const grouped: GroupedInventory = mode.groupFrameworks
+      ? groupByFramework(toGhostItems(enriched))
+      : { frameworks: [], ungrouped: [] };
+
+    // Step 5.1a: Build path → frameworkId lookup from the actual group membership.
+    // annotateFrameworks only sets item.framework for Tier-1 curated matches;
+    // Tier-2 heuristic groups assemble members whose item.framework is still
+    // null. Downstream renderers that read r.item.framework directly would
+    // treat heuristic members as ungrouped (duplicating them in the Top Ghosts
+    // table that already lives inside the Frameworks section). Resolve
+    // membership off grouped.frameworks[].members instead — mirrors the
+    // pattern in packages/internal/src/remediation/framework-bust.ts.
+    const frameworkByPath = new Map<string, string>();
+    for (const fw of grouped.frameworks) {
+      for (const m of fw.members) frameworkByPath.set(m.path, fw.id);
+    }
+    const resolveFramework = (r: TokenCostResult): string | null =>
+      frameworkByPath.get(r.item.path) ?? r.item.framework ?? null;
+
+    // Step 5.2: Sort frameworks by displayName ASC (case-insensitive) per OUT-04.
+    const sortedFrameworks: FrameworkGroup[] = grouped.frameworks
+      .slice()
+      .sort((a, b) =>
+        a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' }),
+      );
+
+    // Step 5.3: Compute per-category ghost counts attributable to frameworks
+    // for the D-19 parenthetical annotation. Only count tier !== 'used' members.
+    const frameworkGhostsByCategory: Partial<Record<ItemCategory, number>> = {};
+    if (mode.groupFrameworks) {
+      for (const fg of grouped.frameworks) {
+        for (const member of fg.members) {
+          if (member.tier !== 'used') {
+            const cat = member.category;
+            frameworkGhostsByCategory[cat] = (frameworkGhostsByCategory[cat] ?? 0) + 1;
+          }
+        }
+      }
+    }
+
     // Step 5.5: Group ghosts by project scope and compute worst-case session overhead.
     // A session loads global inventory + ONE project — never all projects simultaneously.
     const { global: globalSummary, projects: projectSummaries } = groupGhostsByProject(
@@ -621,6 +865,22 @@ export const ghostCommand = define({
               .map((s) => [s.projectPath!, s.displayPath]),
           )
         : null;
+      // D-23: additive top-level frameworks field + per-item framework field.
+      // Omitted when mode.groupFrameworks === false to preserve v1.2.1 byte-identity.
+      // The members[] array is intentionally EXCLUDED from the projection —
+      // consumers correlate via the per-item framework field in items[].
+      const frameworksProjection =
+        mode.groupFrameworks && sortedFrameworks.length > 0
+          ? sortedFrameworks.map((f) => ({
+              id: f.id,
+              displayName: f.displayName,
+              source_type: f.source_type,
+              status: f.status,
+              totals: f.totals,
+              memberCount: f.totals.defined,
+            }))
+          : undefined;
+
       const envelope = buildJsonEnvelope('ghost', sinceStr, exitCode, {
         window: sinceStr,
         files: files.length,
@@ -640,6 +900,7 @@ export const ghostCommand = define({
         totalOverhead: {
           tokens: totalTokens,
         },
+        ...(frameworksProjection !== undefined ? { frameworks: frameworksProjection } : {}),
         items: ghosts.map((r) => ({
           name: r.item.name,
           category: r.item.category,
@@ -661,6 +922,7 @@ export const ghostCommand = define({
               }
             : null,
           recommendation: classifyRecommendation(r.tier),
+          ...(mode.groupFrameworks ? { framework: resolveFramework(r) } : {}),
           ...calculateUrgencyScore(r.lastUsed, r.tokenEstimate),
         })),
       });
@@ -668,6 +930,7 @@ export const ghostCommand = define({
       console.log(JSON.stringify(envelope, null, indent));
     } else if (mode.csv) {
       // CSV output (RFC 4180 per D-18, D-19)
+      const appendFramework = mode.verbose && mode.groupFrameworks;
       const headers = [
         'name',
         'category',
@@ -676,6 +939,7 @@ export const ghostCommand = define({
         'tokens',
         'recommendation',
         'confidence',
+        ...(appendFramework ? ['framework'] : []),
       ];
       const rows = enriched.map((r) => [
         r.item.name,
@@ -685,10 +949,12 @@ export const ghostCommand = define({
         String(r.tokenEstimate?.tokens ?? 0),
         classifyRecommendation(r.tier),
         r.tokenEstimate?.confidence ?? 'none',
+        ...(appendFramework ? [resolveFramework(r) ?? ''] : []),
       ]);
       console.log(csvTable(headers, rows, !mode.quiet));
     } else if (mode.quiet) {
       // TSV output (per D-09)
+      const appendFramework = mode.verbose && mode.groupFrameworks;
       for (const r of enriched) {
         console.log(
           tsvRow([
@@ -698,6 +964,7 @@ export const ghostCommand = define({
             r.lastUsed?.toISOString() ?? 'never',
             String(r.tokenEstimate?.tokens ?? 0),
             classifyRecommendation(r.tier),
+            ...(appendFramework ? [resolveFramework(r) ?? ''] : []),
           ]),
         );
       }
@@ -747,6 +1014,8 @@ export const ghostCommand = define({
           summaries,
           bottomLines,
           progressPct,
+          undefined, // termWidth — existing default
+          mode.groupFrameworks ? frameworkGhostsByCategory : undefined,
         ),
       );
       console.log('');
@@ -761,15 +1030,38 @@ export const ghostCommand = define({
           `No ghosts found -- every item in your inventory was used in the last ${humanizeSinceWindow(sinceStr)}.`,
         );
       } else {
-        const topGhostsStr = renderTopGhosts(ghosts, 5);
+        // Step 6.1: Top ghosts — filter out framework members when grouping is on
+        // (they are already represented in the Frameworks section rendered below
+        // per the v1.3.x UI reorder todo 2026-04-11). Uses resolveFramework so
+        // heuristic Tier-2 members (item.framework still null but grouped via
+        // groupByFramework) are also excluded from Top Ghosts — otherwise they
+        // double-appear inside the Frameworks section AND Top Ghosts.
+        const topGhostsInput = mode.groupFrameworks
+          ? ghosts.filter((r) => resolveFramework(r) == null)
+          : ghosts;
+        const topGhostsStr = renderTopGhosts(topGhostsInput, 5);
         if (topGhostsStr) {
           console.log(topGhostsStr);
           console.log('');
         }
 
-        // Global baseline always shown when ghosts exist
+        // Step 6.2: Global baseline always shown when ghosts exist
         console.log(renderGlobalBaseline(globalSummary));
         console.log('');
+
+        // Step 6.3: Frameworks section — rendered after the Global Baseline
+        // block and before the per-project overhead table (v1.3.x UI polish,
+        // supersedes D-18 which originally placed it above Top Ghosts).
+        // Omitted when grouping is disabled or no frameworks detected.
+        if (mode.groupFrameworks && sortedFrameworks.length > 0) {
+          const frameworksOut = renderFrameworksSection(sortedFrameworks, {
+            verbose: mode.verbose,
+          });
+          if (frameworksOut !== '') {
+            console.log(frameworksOut);
+            console.log('');
+          }
+        }
 
         // Projects table: only when project-scoped ghosts exist
         if (projectSummaries.length > 0) {

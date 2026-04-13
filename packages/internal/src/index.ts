@@ -9,6 +9,27 @@ export type {
   ClaudePaths,
 } from './types.ts';
 
+// Framework module (v1.3.0 — framework-aware ghost grouping, Phase 1 data model + Phase 2 type narrowing)
+export type {
+  Framework,
+  FrameworkGroup,
+  FrameworkStatus,
+  DetectResult,
+  DetectableItem,
+  GroupedInventory,
+} from './framework/index.ts';
+export {
+  detectFramework,
+  groupByFramework,
+  computeFrameworkStatus,
+  KNOWN_FRAMEWORKS,
+  KNOWN_ITEMS_THRESHOLD,
+  STOP_PREFIXES,
+  DOMAIN_STOP_FOLDERS,
+  frameworkSchema,
+  registrySchema,
+} from './framework/index.ts';
+
 // Parser module (Phase 2)
 export {
   discoverSessionFiles,
@@ -31,7 +52,7 @@ export type { AnyLine, AssistantLine } from './schemas/session-line.ts';
 export { toolUseBlockSchema, contentBlockSchema } from './schemas/tool-use.ts';
 export type { ToolUseBlock, ContentBlock } from './schemas/tool-use.ts';
 
-// Scanner module (Phase 3)
+// Scanner module (Phase 3 + Phase 2 v1.3.0 framework annotation)
 export {
   scanAll,
   scanAgents,
@@ -44,6 +65,8 @@ export {
   resolveSkillName,
   matchInventory,
   groupByProject,
+  annotateFrameworks,
+  toGhostItems,
   LIKELY_GHOST_MS,
   DEFINITE_GHOST_MS,
 } from './scanner/index.ts';
@@ -70,6 +93,7 @@ export {
   measureMcpTokens,
   BYTES_PER_TOKEN,
   CONTEXT_WINDOW_SIZE,
+  DEFAULT_UNKNOWN_MCP_TOKENS,
 } from './token/index.ts';
 export type {
   TokenEstimate,
@@ -127,6 +151,16 @@ export {
   defaultProcessDeps,
 } from './remediation/index.ts';
 export type { BustResult, BustDeps, BustCounts, CeremonyResult } from './remediation/index.ts';
+
+// Remediation module (v1.3.0 Phase 4 — framework-as-unit bust protection)
+// Surfaced here so the CLI layer (apps/ccaudit/src/cli/commands/ghost.ts)
+// can import alongside runBust without reaching into subpath modules.
+export { applyFrameworkProtection } from './remediation/index.ts';
+export type {
+  FrameworkBustOptions,
+  FrameworkBustResult,
+  ProtectedFrameworkWarning,
+} from './remediation/index.ts';
 
 // Remediation module (Phase 9 — restore orchestrator + manifest discovery)
 // Surfaced here so restore.ts CLI command can import from `@ccaudit/internal`.

@@ -7,6 +7,14 @@ export default defineConfig({
     passWithNoTests: true,
     watch: false,
     reporters: isCI ? ['default', 'github-actions'] : ['default'],
+    // Pin NO_COLOR=1 across all test workers so picocolors caches
+    // isColorSupported=false at module load. This makes inline snapshots
+    // stable regardless of the CI env var (picocolors enables ANSI when
+    // CI=true is set, which otherwise breaks TEST-06 width calculations).
+    env: {
+      NO_COLOR: '1',
+      TZ: 'UTC',
+    },
     projects: ['apps/*/vitest.config.ts', 'packages/*/vitest.config.ts'],
     coverage: {
       // Enforced by CI via `pnpm exec vitest --run --coverage`.
