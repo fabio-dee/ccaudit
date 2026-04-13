@@ -28,12 +28,31 @@ This skill does **not** touch MCP servers (entries in `~/.claude.json` / `.mcp.j
 
 `ccaudit ghost --json` can produce a payload larger than the Bash tool's output buffer (typically 100+ items for a well-used Claude Code setup). **Always redirect to a file first**, then read from the file — don't parse stdout directly.
 
+**Choose the window before running.** `ghost --json` defaults to a 7-day unused-since window, so items unused for longer than 7 days are _already_ in the candidate set — but the `daysSinceLastUse` field will not reach back further than the scan window. If the user specifies an age window (e.g. "unused for 90 days", "90 days+", "3 months+", "anything old", "stale for a quarter"), derive `--since <WINDOW>` before running ghost so age-based filtering later in Step 2 is sound. If the request is non-age-based (e.g. "archive marketing-copy", "clean up SEO skills"), keep the default.
+
+Rule of thumb for deriving `--since`:
+
+- "unused for N days" / "N days+" → `--since ${N}d`
+- "N weeks+" → `--since ${N}w` (or `${N*7}d`)
+- "N months+" / "a quarter" / "3 months+" → `--since ${N*30}d` (e.g. `--since 90d`)
+- "old" / "stale" with no number → default to `--since 90d` and say so in your reply
+- "never used" → default window is fine; filter on `daysSinceLastUse === null` in Step 2
+
+Default (no age filter in the user's request):
+
 ```bash
 npx ccaudit-cli@latest ghost --json > /tmp/ccaudit-audit.json 2>/dev/null || true
 ```
 
+Age-window example (user asked for "unused for 90 days"):
+
+```bash
+npx ccaudit-cli@latest ghost --json --since 90d > /tmp/ccaudit-audit.json 2>/dev/null || true
+```
+
 Why each part:
 
+- `--since <WINDOW>` — widens the scan so items older than the default 7d window are visible and carry accurate `daysSinceLastUse` values (omit for non-age-based requests)
 - `> /tmp/ccaudit-audit.json` — writes the full envelope to a known location
 - `2>/dev/null` — silences progress chatter so stderr doesn't mix in
 - `|| true` — ccaudit exits with code 1 when ghosts are found. **This is expected**, not a failure. Coercing to 0 keeps the Bash tool from flagging it as an error.
