@@ -113,6 +113,7 @@ if (import.meta.vitest) {
     });
 
     it('should silently skip files that fail stat', async () => {
+      if (process.platform === 'win32') return; // symlink creation is permission-sensitive on Windows CI
       const { mkdtemp, writeFile, rm, mkdir, symlink } = await import('node:fs/promises');
       const { tmpdir } = await import('node:os');
       const { join } = await import('node:path');
