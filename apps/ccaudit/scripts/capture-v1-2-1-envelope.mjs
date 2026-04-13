@@ -138,8 +138,11 @@ async function main() {
     }
 
     const parsed = JSON.parse(result.stdout);
-    if (JSON.stringify(parsed).includes('"framework"')) {
-      console.error('[capture] envelope unexpectedly contains the substring "framework"');
+    if (
+      Object.prototype.hasOwnProperty.call(parsed, 'framework') ||
+      Object.prototype.hasOwnProperty.call(parsed, 'frameworks')
+    ) {
+      console.error('[capture] envelope unexpectedly contains a "framework" / "frameworks" key');
       console.error('--no-group-frameworks is not producing a clean v1.2.1-shape envelope');
       process.exit(3);
     }
