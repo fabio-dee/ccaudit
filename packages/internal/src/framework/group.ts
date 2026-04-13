@@ -2,7 +2,7 @@ import type { GhostItem } from '../types.ts';
 import type { Framework, FrameworkGroup, GroupedInventory } from './types.ts';
 import { detectFramework } from './detect.ts';
 import { KNOWN_FRAMEWORKS } from './known-frameworks.ts';
-import { STOP_PREFIXES } from './stop-lists.ts';
+import { STOP_PREFIXES, DOMAIN_STOP_FOLDERS } from './stop-lists.ts';
 import { computeFrameworkStatus } from './status.ts';
 
 /** Minimum number of shared-prefix items required to form a heuristic cluster (DETECT-03). */
@@ -55,7 +55,10 @@ function computeTotals(members: GhostItem[]): FrameworkGroup['totals'] {
  * Rules:
  *   - Extract prefix via `name.split(/[-:_]/)[0].toLowerCase()`
  *   - Skip if prefix length < HEURISTIC_MIN_PREFIX_LENGTH (3)
- *   - Skip if prefix is in STOP_PREFIXES
+ *   - Skip if prefix is in STOP_PREFIXES (generic English fragments)
+ *   - Skip if prefix matches a DOMAIN_STOP_FOLDERS entry (domain-organization
+ *     folder names must never be auto-promoted to frameworks, even when the
+ *     items sit outside those folders)
  *   - Form a cluster only when >= HEURISTIC_MIN_CLUSTER_SIZE (2) items share a prefix
  *
  * Returns a Map<prefix, members[]>. Single-item buckets are dropped before return.
@@ -63,6 +66,7 @@ function computeTotals(members: GhostItem[]): FrameworkGroup['totals'] {
 function buildHeuristicGroups(
   ungrouped: GhostItem[],
   stopPrefixes: Set<string>,
+  domainStopFolders: Set<string>,
 ): Map<string, GhostItem[]> {
   const buckets = new Map<string, GhostItem[]>();
 
@@ -74,6 +78,7 @@ function buildHeuristicGroups(
     const prefix = item.name.split(/[-:_]/)[0]?.toLowerCase() ?? '';
     if (prefix.length < HEURISTIC_MIN_PREFIX_LENGTH) continue;
     if (stopPrefixes.has(prefix)) continue;
+    if (domainStopFolders.has(prefix)) continue;
     const bucket = buckets.get(prefix) ?? [];
     bucket.push(item);
     buckets.set(prefix, bucket);
@@ -123,7 +128,7 @@ export function groupByFramework(
   // Tier 2: heuristic clustering over Tier 1 residue ONLY.
   // Pitfall 5 guard: do NOT pass `items` to buildHeuristicGroups — only the
   // items for which detectFramework returned null are eligible.
-  const heuristicBuckets = buildHeuristicGroups(tier1Unmatched, STOP_PREFIXES);
+  const heuristicBuckets = buildHeuristicGroups(tier1Unmatched, STOP_PREFIXES, DOMAIN_STOP_FOLDERS);
 
   // Compute the set of item names that landed in a heuristic cluster.
   // Any tier1Unmatched item NOT in this set becomes part of `ungrouped`.
@@ -247,6 +252,22 @@ if (import.meta.vitest) {
 
     it('rejects STOP_PREFIXES clusters (api-caller + api-client stay ungrouped)', () => {
       const items = [makeItem({ name: 'api-caller' }), makeItem({ name: 'api-client' })];
+      const result = groupByFramework(items);
+      expect(result.frameworks).toHaveLength(0);
+      expect(result.ungrouped).toHaveLength(2);
+    });
+
+    it('rejects DOMAIN_STOP_FOLDERS prefixes (engineering-a + engineering-b stay ungrouped)', () => {
+      // Regression: without the DOMAIN_STOP_FOLDERS check in buildHeuristicGroups,
+      // two items whose NAME starts with a domain-folder prefix would cluster
+      // into a "engineering" heuristic framework even when they live outside
+      // the engineering/ folder. Tier 1's pathContainsFolder check only gates
+      // on curated folders[], not DOMAIN_STOP_FOLDERS, so this path reached
+      // Tier 2 unfiltered before the fix.
+      const items = [
+        makeItem({ name: 'engineering-a', path: '/home/user/.claude/agents/engineering-a.md' }),
+        makeItem({ name: 'engineering-b', path: '/home/user/.claude/agents/engineering-b.md' }),
+      ];
       const result = groupByFramework(items);
       expect(result.frameworks).toHaveLength(0);
       expect(result.ungrouped).toHaveLength(2);
