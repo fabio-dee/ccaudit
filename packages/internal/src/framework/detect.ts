@@ -62,15 +62,23 @@ function knownItemsMatch(
 ): boolean {
   if (knownItems.length === 0) return false;
   if (!knownItems.includes(itemName)) return false;
-  const presentCount = allItems.reduce(
-    (count, candidate) =>
+  // Count DISTINCT knownItems names present in the inventory, not raw entries.
+  // An item like `office-hours` can legitimately exist in both global
+  // (~/.claude/agents/office-hours.md) and project (<proj>/.claude/agents/
+  // office-hours.md) scope — two DetectableItem entries, same name. Counting
+  // entries would double-credit that single sibling and let KNOWN_ITEMS_THRESHOLD
+  // be satisfied by as few as 2 unique gstack names installed in both scopes,
+  // triggering a false-positive curated match on a prefix-less framework.
+  const presentNames = new Set<string>();
+  for (const candidate of allItems) {
+    if (
       (candidate.category === 'agent' || candidate.category === 'skill') &&
       knownItems.includes(candidate.name)
-        ? count + 1
-        : count,
-    0,
-  );
-  return presentCount >= KNOWN_ITEMS_THRESHOLD;
+    ) {
+      presentNames.add(candidate.name);
+    }
+  }
+  return presentNames.size >= KNOWN_ITEMS_THRESHOLD;
 }
 
 // ─────────────────────────── Public API ───────────────────────────
@@ -301,6 +309,56 @@ if (import.meta.vitest) {
         makeItem({ name: 'unrelated-agent', category: 'agent' }),
       ];
       expect(detectFramework(items[3]!, items)).toBeNull();
+    });
+
+    it('counts DISTINCT knownItems names — cross-scope duplicates do not inflate the cohort', () => {
+      // Regression: a single knownItem installed in both global AND project
+      // scope appears as TWO DetectableItem entries with the same `name`.
+      // The cohort threshold must count distinct names (not raw entries), or
+      // KNOWN_ITEMS_THRESHOLD=3 could be satisfied by just two actual gstack
+      // items (one duplicated across scopes) — a false positive on a
+      // prefix-less framework.
+      const items = [
+        // Same `office-hours` in both scopes (distinct paths).
+        makeItem({
+          name: 'office-hours',
+          category: 'skill',
+          path: '/Users/you/.claude/skills/office-hours.md',
+        }),
+        makeItem({
+          name: 'office-hours',
+          category: 'skill',
+          path: '/proj/.claude/skills/office-hours.md',
+        }),
+        // Second distinct knownItem.
+        makeItem({ name: 'plan-ceo-review', category: 'skill' }),
+      ];
+      // Only 2 DISTINCT knownItems names present → threshold (3) NOT met.
+      expect(detectFramework(items[0]!, items)).toBeNull();
+      expect(detectFramework(items[2]!, items)).toBeNull();
+    });
+
+    it('matches when 3 DISTINCT knownItems names are present even with cross-scope duplicates', () => {
+      // Positive guard for the fix: the unique-name cohort still matches when
+      // the threshold is genuinely met, regardless of scope duplication noise.
+      const items = [
+        makeItem({
+          name: 'office-hours',
+          category: 'skill',
+          path: '/Users/you/.claude/skills/office-hours.md',
+        }),
+        makeItem({
+          name: 'office-hours',
+          category: 'skill',
+          path: '/proj/.claude/skills/office-hours.md',
+        }),
+        makeItem({ name: 'plan-ceo-review', category: 'skill' }),
+        makeItem({ name: 'plan-eng-review', category: 'skill' }),
+      ];
+      expect(detectFramework(items[0]!, items)).toEqual({
+        id: 'gstack',
+        source_type: 'curated',
+      });
     });
   });
 
