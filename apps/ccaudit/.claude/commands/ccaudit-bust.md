@@ -190,7 +190,7 @@ Use your judgment to match candidates against what the user asked for. The filte
 
 Present the matching candidates as a numbered list:
 
-```
+```text
 Found 4 ghost items matching "marketing":
 
   1. marketing-copy         [skill, global, never used,     ~1,200 tokens]
@@ -271,7 +271,7 @@ mv "/Users/you/.claude/skills/marketing-copy" "/Users/you/.claude/ccaudit/archiv
 
 After all moves are attempted, summarize:
 
-```
+```text
 Archived 4 items:
   ✓ marketing-copy         → ~/.claude/ccaudit/archived/skills/marketing-copy.md
   ✓ seo-writer             → ~/.claude/ccaudit/archived/skills/seo-writer.md
@@ -286,7 +286,7 @@ You can also restore manually with `mv`.
 
 If any moves failed, list them separately with the error:
 
-```
+```text
 Failed:
   ✗ old-agent — destination already exists at ~/.claude/ccaudit/archived/agents/old-agent.md
 ```
