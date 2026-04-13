@@ -12,14 +12,14 @@
     "npx",
     "tokens"
   ],
+  "homepage": "https://github.com/fabio-dee/ccaudit#readme",
+  "bugs": {
+    "url": "https://github.com/fabio-dee/ccaudit/issues"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/fabio-dee/ccaudit.git"
-  },
-  "homepage": "https://github.com/fabio-dee/ccaudit#readme",
-  "bugs": {
-    "url": "https://github.com/fabio-dee/ccaudit/issues"
   },
   "bin": {
     "ccaudit": "./dist/index.js"
