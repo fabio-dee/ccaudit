@@ -59,22 +59,28 @@ function knownItemsMatch(
   itemName: string,
   knownItems: string[],
   allItems: DetectableItem[],
+  categories: Framework['categories'],
 ): boolean {
   if (knownItems.length === 0) return false;
   if (!knownItems.includes(itemName)) return false;
-  // Count DISTINCT knownItems names present in the inventory, not raw entries.
-  // An item like `office-hours` can legitimately exist in both global
-  // (~/.claude/agents/office-hours.md) and project (<proj>/.claude/agents/
-  // office-hours.md) scope — two DetectableItem entries, same name. Counting
-  // entries would double-credit that single sibling and let KNOWN_ITEMS_THRESHOLD
-  // be satisfied by as few as 2 unique gstack names installed in both scopes,
-  // triggering a false-positive curated match on a prefix-less framework.
+  // Count DISTINCT knownItems names present in the inventory, filtered to the
+  // framework's own target categories.
+  //
+  // Why DISTINCT: an item like `office-hours` can legitimately exist in both
+  // global (~/.claude/skills/office-hours.md) and project
+  // (<proj>/.claude/skills/office-hours.md) scope — two DetectableItem
+  // entries, same name. Counting raw entries would double-credit that single
+  // sibling and let KNOWN_ITEMS_THRESHOLD be satisfied by as few as 2 unique
+  // gstack names installed in both scopes, producing a false-positive match.
+  //
+  // Why category-filtered: each framework declares the categories it targets
+  // (e.g., gstack.categories === ['skill']). An agent that happens to share
+  // a gstack knownItem name must NOT inflate the skill cohort — otherwise a
+  // user with a couple of gstack skills plus an unrelated `ship.md` agent
+  // could over-count and trigger a false positive on an unrelated skill.
   const presentNames = new Set<string>();
   for (const candidate of allItems) {
-    if (
-      (candidate.category === 'agent' || candidate.category === 'skill') &&
-      knownItems.includes(candidate.name)
-    ) {
+    if (categories.includes(candidate.category) && knownItems.includes(candidate.name)) {
       presentNames.add(candidate.name);
     }
   }
@@ -119,6 +125,13 @@ export function detectFramework(
   // Tier 1: curated list, first-match-wins (D-04). Iterate registry in
   // declaration order. Each entry tries prefix → folder → knownItems.
   for (const fw of registry) {
+    // Respect per-framework category targeting. Each registry entry declares
+    // `categories: Array<'agent'|'skill'|...>` — skipping frameworks that do
+    // not target the current item's category prevents cross-category leaks
+    // (e.g., an `agent` named `office-hours` classifying as `gstack`, which
+    // declares `categories: ['skill']`).
+    if (!fw.categories.includes(item.category)) continue;
+
     // Prefix match (DETECT-02 + D-03 boundary)
     for (const prefix of fw.prefixes) {
       if (prefixMatches(item.name, prefix)) {
@@ -131,9 +144,10 @@ export function detectFramework(
         return { id: fw.id, source_type: 'curated' };
       }
     }
-    // knownItems match (REG-03)
+    // knownItems match (REG-03). Pass fw.categories so the cohort count also
+    // respects per-framework targeting (see knownItemsMatch for rationale).
     if (fw.knownItems && fw.knownItems.length > 0) {
-      if (knownItemsMatch(item.name, fw.knownItems, allItems)) {
+      if (knownItemsMatch(item.name, fw.knownItems, allItems, fw.categories)) {
         return { id: fw.id, source_type: 'curated' };
       }
     }
@@ -335,6 +349,24 @@ if (import.meta.vitest) {
       ];
       // Only 2 DISTINCT knownItems names present → threshold (3) NOT met.
       expect(detectFramework(items[0]!, items)).toBeNull();
+      expect(detectFramework(items[2]!, items)).toBeNull();
+    });
+
+    it('does NOT match an agent against a skill-only framework (per-fw category gate)', () => {
+      // Regression: gstack declares `categories: ['skill']`. Before the
+      // per-framework category gate, 3 gstack knownItems entries installed
+      // as AGENTS could push an unrelated agent into gstack classification.
+      // The outer gate (`if (!fw.categories.includes(item.category)) continue`)
+      // and the mirrored filter inside knownItemsMatch both prevent this.
+      const items = [
+        makeItem({ name: 'office-hours', category: 'agent' }),
+        makeItem({ name: 'plan-ceo-review', category: 'agent' }),
+        makeItem({ name: 'plan-eng-review', category: 'agent' }),
+      ];
+      // Calling detectFramework on any of these AGENTS must return null:
+      // gstack targets skills only, so the cohort never forms from agents.
+      expect(detectFramework(items[0]!, items)).toBeNull();
+      expect(detectFramework(items[1]!, items)).toBeNull();
       expect(detectFramework(items[2]!, items)).toBeNull();
     });
 
