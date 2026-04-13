@@ -197,7 +197,7 @@ export const installSkillCommand = define({
       if (!project && !fileExists) {
         lines.push(
           '',
-          'The skill runs a full ghost audit with a 3-stage confirmation ceremony.',
+          'The skill audits your ghost inventory and archives agents and skills you select in plain English.',
           'Nothing is modified without your explicit approval.',
           '',
           'To refresh after a ccaudit update:',
@@ -270,8 +270,8 @@ if (import.meta.vitest) {
       expect(CCAUDIT_BUST_SKILL_CONTENT).toContain('ccaudit-bust');
     });
 
-    it('references the dangerously-bust-ghosts flag', () => {
-      expect(CCAUDIT_BUST_SKILL_CONTENT).toContain('--dangerously-bust-ghosts');
+    it('references the ghost --json audit command', () => {
+      expect(CCAUDIT_BUST_SKILL_CONTENT).toContain('ghost --json');
     });
   });
 }
