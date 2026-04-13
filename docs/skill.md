@@ -32,7 +32,7 @@ cp apps/ccaudit/.claude/commands/ccaudit-bust.md ~/.claude/commands/ccaudit-bust
 Or use the bundled installer:
 
 ```bash
-npx ccaudit@latest install-skill
+npx ccaudit-cli@latest install-skill
 ```
 
 After copying, the skill is available in any Claude Code session as `/ccaudit-bust`.
@@ -152,17 +152,17 @@ The skill calls `ccaudit ghost --json` internally, but you can use the same endp
 
 ```bash
 # See all ghosts
-npx ccaudit@latest ghost --json
+npx ccaudit-cli@latest ghost --json
 
 # Top 5 agents/skills by urgency
-npx ccaudit@latest ghost --json \
+npx ccaudit-cli@latest ghost --json \
   | jq '[.items[] | select((.category == "agent" or .category == "skill") and .urgencyScore >= 70)] | sort_by(-.urgencyScore) | .[0:5]'
 
 # Count definite ghosts across all categories
-npx ccaudit@latest ghost --json | jq '[.items[] | select(.tier == "definite-ghost")] | length'
+npx ccaudit-cli@latest ghost --json | jq '[.items[] | select(.tier == "definite-ghost")] | length'
 
 # Framework-grouped view (v1.3.0+)
-npx ccaudit@latest ghost --json | jq '.frameworks[]'
+npx ccaudit-cli@latest ghost --json | jq '.frameworks[]'
 ```
 
 See [JSON-SCHEMA.md](./JSON-SCHEMA.md) for the full envelope shape and all field definitions.
