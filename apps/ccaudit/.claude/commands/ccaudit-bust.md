@@ -57,20 +57,35 @@ Why each part:
 - `2>/dev/null` — silences progress chatter so stderr doesn't mix in
 - `|| true` — ccaudit exits with code 1 when ghosts are found. **This is expected**, not a failure. Coercing to 0 keeps the Bash tool from flagging it as an error.
 
-### 1b. Filter to agent/skill ghosts
+### 1b. Filter to agent/skill ghosts (with framework protection)
 
 Run a single `node -e` snippet that reads the file, applies the baseline filter, and optionally adds the user's topic/scope filter. The baseline is always: `category ∈ {agent, skill}` AND `tier ∈ {definite-ghost, likely-ghost}`.
 
-**Baseline only** (show all ghost agents/skills):
+**Framework protection (v1.3.0).** The envelope's top-level `frameworks[]` describes detected framework groups. Any framework whose `status === "partially-used"` has some members that are still in active use — the CLI's `ghost --dangerously-bust-ghosts` flow protects every member of that framework by default (archiving them requires the explicit `--force-partial` flag). This skill mirrors that protection: partially-used members are **excluded from the default candidate list** and surfaced separately so the user can decide whether to override.
+
+If the user's natural-language request explicitly names a framework member (e.g., "archive `gsd-planner`"), still surface the protection warning first and require an explicit second confirmation before archiving it; don't silently bypass the safeguard.
+
+**Baseline only** (show all ghost agents/skills, minus partially-used framework members):
 
 ```bash
 node -e '
 const d = JSON.parse(require("fs").readFileSync("/tmp/ccaudit-audit.json", "utf8"));
-const g = d.items.filter(i =>
+const protectedFws = new Set(
+  (d.frameworks || [])
+    .filter(f => f.status === "partially-used")
+    .map(f => f.id)
+);
+const baseline = d.items.filter(i =>
   (i.category === "agent" || i.category === "skill") &&
   (i.tier === "definite-ghost" || i.tier === "likely-ghost")
 );
-console.log(JSON.stringify(g, null, 2));
+const candidates = baseline.filter(i =>
+  !i.framework || !protectedFws.has(i.framework)
+);
+const protectedMembers = baseline.filter(i =>
+  i.framework && protectedFws.has(i.framework)
+);
+console.log(JSON.stringify({ candidates, protectedMembers }, null, 2));
 '
 ```
 
@@ -79,16 +94,34 @@ console.log(JSON.stringify(g, null, 2));
 ```bash
 node -e '
 const d = JSON.parse(require("fs").readFileSync("/tmp/ccaudit-audit.json", "utf8"));
-const g = d.items.filter(i =>
+const protectedFws = new Set(
+  (d.frameworks || [])
+    .filter(f => f.status === "partially-used")
+    .map(f => f.id)
+);
+const match = i => /marketing/i.test(i.name + " " + i.path);
+const baseline = d.items.filter(i =>
   (i.category === "agent" || i.category === "skill") &&
   (i.tier === "definite-ghost" || i.tier === "likely-ghost") &&
-  /marketing/i.test(i.name + " " + i.path)
+  match(i)
 );
-console.log(JSON.stringify(g, null, 2));
+const candidates = baseline.filter(i =>
+  !i.framework || !protectedFws.has(i.framework)
+);
+const protectedMembers = baseline.filter(i =>
+  i.framework && protectedFws.has(i.framework)
+);
+console.log(JSON.stringify({ candidates, protectedMembers }, null, 2));
 '
 ```
 
 Adapt the regex, category, tier, or scope conditions to match the user's request. Never pipe the original stdout of `ccaudit ghost --json` into `node -e` or similar — always go through the temp file.
+
+**Present `candidates` as the primary list.** If `protectedMembers` is non-empty, show a brief note after the numbered list:
+
+> N item(s) were skipped because their framework is still partially in use: `<framework-id>: <names>`. To archive these anyway, close Claude Code and run `npx ccaudit-cli@latest ghost --dangerously-bust-ghosts --force-partial` from a standalone terminal, or confirm each by name in your next reply.
+
+If the user later explicitly names a protected member, archive it with the same `mv` step as any other item but first warn: "`gsd-planner` is part of `gsd`, which is still partially in use — archive anyway?" and wait for explicit confirmation.
 
 **Ignore** `mcp-server` and `memory` items in the filter — they're out of scope for this skill. If the user's request implies those categories, point them at the external CLI (see Scope section above).
 
@@ -97,6 +130,13 @@ Adapt the regex, category, tier, or scope conditions to match the user's request
 ```json
 {
   "meta": { "command": "ghost", "exitCode": 1 },
+  "frameworks": [
+    {
+      "id": "gsd",
+      "status": "partially-used",
+      "totals": { "defined": 5, "used": 2, "definiteGhost": 3 }
+    }
+  ],
   "items": [
     {
       "name": "marketing-copy",
@@ -105,13 +145,24 @@ Adapt the regex, category, tier, or scope conditions to match the user's request
       "tier": "definite-ghost",
       "path": "/Users/you/.claude/skills/marketing-copy.md",
       "daysSinceLastUse": null,
-      "tokenEstimate": { "tokens": 1200 }
+      "tokenEstimate": { "tokens": 1200 },
+      "framework": null
+    },
+    {
+      "name": "gsd-planner",
+      "category": "agent",
+      "scope": "global",
+      "tier": "definite-ghost",
+      "path": "/Users/you/.claude/agents/gsd-planner.md",
+      "daysSinceLastUse": 42,
+      "tokenEstimate": { "tokens": 800 },
+      "framework": "gsd"
     }
   ]
 }
 ```
 
-`meta.exitCode` of `1` with `items[]` populated is the normal "ghosts found" state. Treat it as success.
+`meta.exitCode` of `1` with `items[]` populated is the normal "ghosts found" state. Treat it as success. `frameworks[]` is the key the protection logic keys off of; `item.framework` (string or null) is how each member is attributed.
 
 ---
 
@@ -191,13 +242,18 @@ mkdir -p ~/.claude/ccaudit/archived/skills
 mkdir -p ~/.claude/ccaudit/archived/agents
 ```
 
-(Adjust for project-scoped items by using the project's `.claude/` root.)
+(Adjust for project-scoped items by using the project's `.claude/` root. The `~` in `mkdir -p ~/...` is fine — tilde expands at word-start when unquoted.)
 
 **Then move one item at a time**:
 
 ```bash
 mv "<source>" "<destination>"
 ```
+
+**Path expansion rule.** When you substitute concrete paths into the `mv` command, do **not** write `"~/.claude/..."` with the tilde inside double quotes — POSIX shells only expand `~` when it's unquoted at the start of a word. Use one of these instead:
+
+- **Preferred**: the literal home path (`"$HOME/.claude/..."`), which expands safely inside double quotes and tolerates paths with spaces.
+- Acceptable: the absolute path you already have in `item.path` (e.g. `"/Users/you/.claude/..."`), because `ccaudit ghost --json` always returns fully-resolved absolute paths.
 
 For skill directories (where `path` ends in `/SKILL.md`), move the parent directory, not the `SKILL.md` file itself:
 
@@ -242,8 +298,10 @@ Failed:
 If the user later says "put marketing-copy back" or "restore seo-writer", reverse the mapping:
 
 ```bash
-mv "~/.claude/ccaudit/archived/skills/marketing-copy.md" "~/.claude/skills/marketing-copy.md"
+mv "$HOME/.claude/ccaudit/archived/skills/marketing-copy.md" "$HOME/.claude/skills/marketing-copy.md"
 ```
+
+(Same tilde rule as Step 4: don't write `"~/..."` — use `"$HOME/..."` or an absolute path. The `~` in the `mkdir` below is fine because it's unquoted at word-start.)
 
 For skill directories, move the directory back. Confirm the original parent directory exists (`mkdir -p ~/.claude/skills` first, to be safe).
 
