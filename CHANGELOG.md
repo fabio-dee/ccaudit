@@ -89,7 +89,7 @@ without changes.
   `4` non-TTY without `--yes-proceed-busting`. Framework-level bust and
   restore reuse this ladder — no new exit codes.
 
-## [1.2.1] - 2024-XX-XX
+## [1.2.1] - 2026-04-09
 
 Baseline release prior to framework-aware ghost grouping. See the git history
 for details.
