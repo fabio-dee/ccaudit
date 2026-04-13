@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-04-13
+
+Metadata-only release to unblock npm publish with provenance. No functional changes.
+
+### Fixed
+
+- Add `repository`, `homepage`, and `bugs` fields to `apps/ccaudit/package.json`.
+  npm's provenance verifier requires `package.json#repository.url` to match the
+  GitHub repo signed in the OIDC claim; the missing field caused the v1.3.0
+  publish to fail with `422 Unprocessable Entity`.
+
 ## [1.3.0] - 2026-04-11
 
 Framework-aware ghost grouping. Users that install GSD, SuperClaude, n-wave, or
