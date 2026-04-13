@@ -49,6 +49,16 @@ export function annotateFrameworks(
     return items.map((item) => ({ ...item }));
   }
 
+  // Pre-filter to agents+skills ONCE before the map. Defense-in-depth at
+  // the caller layer: even though detectFramework's knownItemsMatch reducer
+  // also filters by category, passing a clean cohort here keeps the intent
+  // explicit and removes the unclean mixed-category cast previously used
+  // inline (`items as DetectableItem[]`). Computed outside the loop so the
+  // filter pass is O(n) rather than O(n) per iteration.
+  const detectable = items.filter(
+    (i) => i.category === 'agent' || i.category === 'skill',
+  ) as DetectableItem[];
+
   return items.map((item) => {
     // DETECT-09 scope limit: memory and mcp-server items pass through
     // unchanged. Shallow clone WITHOUT a framework key keeps the
@@ -56,7 +66,7 @@ export function annotateFrameworks(
     if (item.category !== 'agent' && item.category !== 'skill') {
       return { ...item };
     }
-    const result = detectFramework(item, items as DetectableItem[], registry);
+    const result = detectFramework(item, detectable, registry);
     return { ...item, framework: result?.id ?? null };
   });
 }
@@ -197,6 +207,28 @@ if (import.meta.vitest) {
       const result = annotateFrameworks(items);
       expect(result[0]?.framework).toBeUndefined();
       expect(Object.prototype.hasOwnProperty.call(result[0], 'framework')).toBe(false);
+    });
+
+    it('pre-filters mcp-server items out of the detectable cohort (caller-layer defense-in-depth)', () => {
+      // Regression for the annotate.ts pre-filter: even when mcp-server
+      // items share names with a known prefix-less framework's knownItems
+      // (e.g. gstack: "ship", "qa", "review"), they must NOT be counted
+      // toward an unrelated agent's knownItems threshold. The unrelated
+      // agent has no curated signal of its own and must stay null.
+      const items = [
+        makeItem({ name: 'ship', category: 'mcp-server' }),
+        makeItem({ name: 'qa', category: 'mcp-server' }),
+        makeItem({ name: 'review', category: 'mcp-server' }),
+        makeItem({ name: 'unrelated-helper', category: 'agent' }),
+      ];
+      const result = annotateFrameworks(items);
+      const agent = result.find((r) => r.name === 'unrelated-helper');
+      expect(agent?.framework).toBeNull();
+      // mcp-server items still pass through with no framework key.
+      const mcp = result.filter((r) => r.category === 'mcp-server');
+      for (const r of mcp) {
+        expect(Object.prototype.hasOwnProperty.call(r, 'framework')).toBe(false);
+      }
     });
 
     it('sets framework: null on agent items that match neither curated prefix nor folder', () => {
