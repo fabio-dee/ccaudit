@@ -3,8 +3,8 @@
  *
  * Spawns the built binary against a tmpdir fixture containing a partially-used
  * GSD-like framework, a domain-folder agent, and ungrouped ghosts. Verifies
- * BUST-01..06 end-to-end and enforces the BUST-07 NO-TOUCH invariant via
- * line-count assertions on bust.ts and restore.ts.
+ * BUST-01..06 end-to-end and enforces the BUST-07 bust.ts NO-TOUCH invariant
+ * via a line-count assertion.
  *
  * Phase 5 owns the full TEST-04/05 fixture matrix; Phase 4 ships just enough
  * coverage to verify the requirement set:
@@ -14,8 +14,13 @@
  *   BUST-04: yellow warning block present in default-mode stdout
  *   BUST-05: PROTECTED section present in default-mode stdout
  *   BUST-06: --force-partial bypasses protection; ghosts archived
- *   BUST-07: bust.ts (1483 lines) + restore.ts (1987 lines) NO-TOUCH guards
- *   RESTORE-01..03: trivially satisfied — restore.ts not edited (line-count guard)
+ *   BUST-07: bust.ts NO-TOUCH line-count guard (1483 lines, identical to v1.2.1).
+ *            The restore.ts line-count guard was removed in commit 4515c1c
+ *            when v1.3.0 landed an internal process-gate fix in that file;
+ *            manifest compatibility is covered by the restore-command tests
+ *            and documented in CHANGELOG.md.
+ *   RESTORE-01..03: manifest compatibility (v1.2.1 manifests restore cleanly)
+ *            is validated by restore-command.test.ts, not by a line-count guard.
  */
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { spawn } from 'node:child_process';
