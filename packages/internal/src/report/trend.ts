@@ -175,16 +175,24 @@ if (import.meta.vitest) {
 
     it('counts invocations into correct weekly buckets across multiple weeks', () => {
       const FOURTEEN_DAYS = 14 * 24 * 60 * 60 * 1000;
-      const now = Date.now();
 
-      // Create invocations on different weeks
-      const eightDaysAgo = new Date(now - 8 * 24 * 60 * 60 * 1000);
-      const threeDaysAgo = new Date(now - 3 * 24 * 60 * 60 * 1000);
+      // Anchor to Monday of current ISO week to avoid flakiness where
+      // `now - 8d` and `now - 3d` could land in the same ISO week depending
+      // on today's weekday (ISO weeks are Mon-Sun).
+      const now = new Date();
+      now.setUTCHours(12, 0, 0, 0);
+      const dayOfWeek = now.getUTCDay();
+      const daysSinceMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+      const mondayThisWeek = new Date(now);
+      mondayThisWeek.setUTCDate(now.getUTCDate() - daysSinceMonday);
+      const thisWeek = new Date(mondayThisWeek); // Monday of this ISO week
+      const prevWeek = new Date(mondayThisWeek);
+      prevWeek.setUTCDate(mondayThisWeek.getUTCDate() - 3); // Friday of previous ISO week
 
       const invocations = [
-        makeInvocation('agent', eightDaysAgo.toISOString()),
-        makeInvocation('agent', threeDaysAgo.toISOString()),
-        makeInvocation('skill', threeDaysAgo.toISOString()),
+        makeInvocation('agent', prevWeek.toISOString()),
+        makeInvocation('agent', thisWeek.toISOString()),
+        makeInvocation('skill', thisWeek.toISOString()),
       ];
 
       const buckets = buildTrendData(invocations, FOURTEEN_DAYS);
