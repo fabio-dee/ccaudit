@@ -107,3 +107,13 @@ export type {
 } from './restore.ts';
 export { discoverManifests, resolveManifestDir } from './manifest.ts';
 export type { ManifestEntry, DiscoverManifestsDeps } from './manifest.ts';
+
+// v1.3.0 Phase 4: framework-as-unit bust protection helper.
+// Pure synchronous filter — runs at the CLI layer in BOTH the dry-run path
+// and the bust path so checkpoint hashes stay stable. bust.ts is NOT touched.
+export { applyFrameworkProtection } from './framework-bust.ts';
+export type {
+  FrameworkBustOptions,
+  FrameworkBustResult,
+  ProtectedFrameworkWarning,
+} from './framework-bust.ts';

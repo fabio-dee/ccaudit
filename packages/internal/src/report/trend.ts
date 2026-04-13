@@ -172,5 +172,94 @@ if (import.meta.vitest) {
         expect(b.mcp).toBe(0);
       }
     });
+
+    it('counts invocations into correct weekly buckets across multiple weeks', () => {
+      const FOURTEEN_DAYS = 14 * 24 * 60 * 60 * 1000;
+      const now = Date.now();
+
+      // Create invocations on different weeks
+      const eightDaysAgo = new Date(now - 8 * 24 * 60 * 60 * 1000);
+      const threeDaysAgo = new Date(now - 3 * 24 * 60 * 60 * 1000);
+
+      const invocations = [
+        makeInvocation('agent', eightDaysAgo.toISOString()),
+        makeInvocation('agent', threeDaysAgo.toISOString()),
+        makeInvocation('skill', threeDaysAgo.toISOString()),
+      ];
+
+      const buckets = buildTrendData(invocations, FOURTEEN_DAYS);
+
+      // Should have weekly buckets with "Week of" prefix
+      expect(buckets.length).toBeGreaterThanOrEqual(2);
+      for (const b of buckets) {
+        expect(b.period).toMatch(/^Week of /);
+      }
+
+      // Total across all buckets should be 3
+      const totalSum = buckets.reduce((sum, b) => sum + b.total, 0);
+      expect(totalSum).toBe(3);
+
+      // At least two different buckets should have nonzero counts
+      const nonZeroBuckets = buckets.filter((b) => b.total > 0);
+      expect(nonZeroBuckets.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('aligns Sunday invocation to Monday of the same ISO week', () => {
+      const FOURTEEN_DAYS = 14 * 24 * 60 * 60 * 1000;
+
+      // Find the most recent Sunday (or today if it's Sunday)
+      const now = new Date();
+      now.setUTCHours(12, 0, 0, 0);
+      const dayOfWeek = now.getUTCDay();
+      const daysToLastSunday = dayOfWeek === 0 ? 0 : dayOfWeek;
+      // Use last Sunday if today isn't Sunday, otherwise use today
+      const sunday = new Date(now.getTime() - daysToLastSunday * 24 * 60 * 60 * 1000);
+
+      const invocations = [makeInvocation('agent', sunday.toISOString())];
+      const buckets = buildTrendData(invocations, FOURTEEN_DAYS);
+
+      // The Sunday invocation should land in a "Week of <Monday>" bucket
+      // where Monday is 6 days before the Sunday
+      const expectedMonday = new Date(sunday.getTime() - 6 * 24 * 60 * 60 * 1000);
+      const expectedBucketLabel = `Week of ${expectedMonday.toISOString().slice(0, 10)}`;
+
+      const matchingBucket = buckets.find((b) => b.total > 0);
+      expect(matchingBucket).toBeDefined();
+      expect(matchingBucket!.period).toBe(expectedBucketLabel);
+      expect(matchingBucket!.agents).toBe(1);
+    });
+
+    it('counts MCP invocations in weekly buckets', () => {
+      const FOURTEEN_DAYS = 14 * 24 * 60 * 60 * 1000;
+      const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+
+      const invocations = [
+        makeInvocation('mcp', twoDaysAgo.toISOString()),
+        makeInvocation('mcp', twoDaysAgo.toISOString()),
+      ];
+
+      const buckets = buildTrendData(invocations, FOURTEEN_DAYS);
+
+      const nonZeroBucket = buckets.find((b) => b.total > 0);
+      expect(nonZeroBucket).toBeDefined();
+      expect(nonZeroBucket!.mcp).toBe(2);
+      expect(nonZeroBucket!.agents).toBe(0);
+      expect(nonZeroBucket!.skills).toBe(0);
+      expect(nonZeroBucket!.total).toBe(2);
+    });
+
+    it('silently drops invocations older than the time window', () => {
+      const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+
+      // Invocation from 30 days ago — well outside the 7-day window
+      const oldDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const invocations = [makeInvocation('agent', oldDate.toISOString())];
+
+      const buckets = buildTrendData(invocations, SEVEN_DAYS);
+
+      // No bucket should have any counts since the invocation is outside the window
+      const totalSum = buckets.reduce((sum, b) => sum + b.total, 0);
+      expect(totalSum).toBe(0);
+    });
   });
 }

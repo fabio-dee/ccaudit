@@ -14,7 +14,7 @@ npx ccaudit-cli --dangerously-bust-ghosts  # do it (fully reversible)
 
 > ccusage tells you what you spent. ccaudit tells you what's wasting it.
 
-Current release: **v1.2.1**.
+Current release: **v1.3.0**.
 
 ![Image](https://github.com/user-attachments/assets/6419f75e-e37a-43ab-ae6a-45e884abd6ad)
 
@@ -80,14 +80,14 @@ Restore anytime: ccaudit restore
 
 ## Commands
 
-| Command         | What it does                                                             | Notable options                                                                           |
-| --------------- | ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
-| `ghost`         | Default ghost inventory report, plus dry-run and remediation entry point | `--since`, `--dry-run`, `--dangerously-bust-ghosts`, `--yes-proceed-busting`, `--privacy` |
-| `inventory`     | Full inventory with usage statistics                                     | `--since`                                                                                 |
-| `mcp`           | MCP server token costs and frequency                                     | `--since`, `--live`, `--timeout`                                                          |
-| `trend`         | Invocation frequency over time                                           | `--since`                                                                                 |
-| `restore`       | Revert a previous bust                                                   | `[name]`, `--list`                                                                        |
-| `install-skill` | Install the `/ccaudit-bust` Claude Code skill                            | `--dry-run`, `--force`, `--project`                                                       |
+| Command         | What it does                                                             | Notable options                                                                                                                                    |
+| --------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ghost`         | Default ghost inventory report, plus dry-run and remediation entry point | `--since`, `--dry-run`, `--dangerously-bust-ghosts`, `--yes-proceed-busting`, `--privacy`, `--verbose`, `--no-group-frameworks`, `--force-partial` |
+| `inventory`     | Full inventory with usage statistics                                     | `--since`, `--verbose`, `--no-group-frameworks`                                                                                                    |
+| `mcp`           | MCP server token costs and frequency                                     | `--since`, `--live`, `--timeout`                                                                                                                   |
+| `trend`         | Invocation frequency over time                                           | `--since`                                                                                                                                          |
+| `restore`       | Revert a previous bust                                                   | `[name]`, `--list`                                                                                                                                 |
+| `install-skill` | Install the `/ccaudit-bust` Claude Code skill                            | `--dry-run`, `--force`, `--project`                                                                                                                |
 
 ---
 
@@ -116,74 +116,74 @@ Notes:
 
 ### `ghost`
 
-```bash
-npx ccaudit-cli ghost --since 30d
-npx ccaudit-cli ghost --json
-npx ccaudit-cli ghost --csv
-npx ccaudit-cli ghost --quiet
-npx ccaudit-cli ghost --verbose
-npx ccaudit-cli ghost --dry-run
-npx ccaudit-cli ghost --dangerously-bust-ghosts
-npx ccaudit-cli ghost --yes-proceed-busting
-npx ccaudit-cli ghost --privacy
-```
+| Flag                        | Short | Description                                                                                                                                                    |
+| --------------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--since <window>`          | `-s`  | Time window for ghost detection (e.g. `7d`, `30d`, `2w`). Default: `7d`.                                                                                       |
+| `--json`                    | `-j`  | Output as JSON with a `meta` envelope.                                                                                                                         |
+| `--csv`                     |       | RFC 4180 CSV export.                                                                                                                                           |
+| `--quiet`                   | `-q`  | Machine-readable TSV only (suppress decorative text).                                                                                                          |
+| `--verbose`                 | `-v`  | Show scan details on stderr; expand framework rows into member trees.                                                                                          |
+| `--dry-run`                 |       | Preview the change plan without mutating files. Writes a checkpoint to `~/.claude/ccaudit/.last-dry-run`.                                                      |
+| `--dangerously-bust-ghosts` |       | Execute the bust plan: archive ghost agents/skills, disable ghost MCP servers, flag stale memory. Requires a prior `--dry-run` with a matching inventory hash. |
+| `--yes-proceed-busting`     |       | Skip the 3-step confirmation ceremony. Required for non-TTY shells and CI.                                                                                     |
+| `--privacy`                 |       | Redact real project paths from output (replaces with `project-01`, `project-02`, etc.).                                                                        |
+| `--no-group-frameworks`     |       | Disable framework grouping. Output reverts to the v1.2.1 layout.                                                                                               |
+| `--force-partial`           |       | Bypass framework-as-unit bust protection. Must match between `--dry-run` and `--dangerously-bust-ghosts` runs.                                                 |
 
 ### `inventory`
 
-```bash
-npx ccaudit-cli inventory --since 30d
-npx ccaudit-cli inventory --json
-npx ccaudit-cli inventory --csv
-npx ccaudit-cli inventory --quiet
-npx ccaudit-cli inventory --verbose
-```
+| Flag                    | Short | Description                                                             |
+| ----------------------- | ----- | ----------------------------------------------------------------------- |
+| `--since <window>`      | `-s`  | Time window for usage analysis (e.g. `7d`, `30d`, `2w`). Default: `7d`. |
+| `--json`                | `-j`  | Output as JSON with a `meta` envelope.                                  |
+| `--csv`                 |       | RFC 4180 CSV export.                                                    |
+| `--quiet`               | `-q`  | Machine-readable TSV only.                                              |
+| `--verbose`             | `-v`  | Show scan details on stderr; expand framework rows into member trees.   |
+| `--no-group-frameworks` |       | Disable framework grouping. Output reverts to the v1.2.1 layout.        |
 
 ### `mcp`
 
-```bash
-npx ccaudit-cli mcp --since 30d
-npx ccaudit-cli mcp --live
-npx ccaudit-cli mcp --timeout 15000
-npx ccaudit-cli mcp --json
-npx ccaudit-cli mcp --csv
-npx ccaudit-cli mcp --quiet
-npx ccaudit-cli mcp --verbose
-```
-
-`--live` starts the MCP server commands from your Claude config locally so the token count is exact instead of estimated.
+| Flag               | Short | Description                                                                                    |
+| ------------------ | ----- | ---------------------------------------------------------------------------------------------- |
+| `--since <window>` | `-s`  | Time window for ghost detection (e.g. `7d`, `30d`, `2w`). Default: `7d`.                       |
+| `--live`           | `-l`  | Start MCP servers from your Claude config locally for exact token counts instead of estimates. |
+| `--timeout <ms>`   | `-t`  | Timeout per MCP server in milliseconds when using `--live`. Default: `15000`.                  |
+| `--json`           | `-j`  | Output as JSON with a `meta` envelope.                                                         |
+| `--csv`            |       | RFC 4180 CSV export.                                                                           |
+| `--quiet`          | `-q`  | Machine-readable TSV only.                                                                     |
+| `--verbose`        | `-v`  | Show scan details on stderr.                                                                   |
 
 ### `trend`
 
-```bash
-npx ccaudit-cli trend --since 30d
-npx ccaudit-cli trend --json
-npx ccaudit-cli trend --csv
-npx ccaudit-cli trend --quiet
-npx ccaudit-cli trend --verbose
-```
+| Flag               | Short | Description                                                             |
+| ------------------ | ----- | ----------------------------------------------------------------------- |
+| `--since <window>` | `-s`  | Time window for trend analysis (e.g. `7d`, `30d`, `2w`). Default: `7d`. |
+| `--json`           | `-j`  | Output as JSON with a `meta` envelope.                                  |
+| `--csv`            |       | RFC 4180 CSV export.                                                    |
+| `--quiet`          | `-q`  | Machine-readable TSV only.                                              |
+| `--verbose`        | `-v`  | Show scan details on stderr.                                            |
 
 ### `restore`
 
-```bash
-npx ccaudit-cli restore
-npx ccaudit-cli restore code-reviewer
-npx ccaudit-cli restore --list
-npx ccaudit-cli restore --json
-npx ccaudit-cli restore --csv
-npx ccaudit-cli restore --quiet
-npx ccaudit-cli restore --verbose
-```
+| Flag / Arg  | Short | Description                                                            |
+| ----------- | ----- | ---------------------------------------------------------------------- |
+| _(no args)_ |       | Restore all items from the most recent bust manifest.                  |
+| `<name>`    |       | Restore a single archived item by name (e.g. `restore code-reviewer`). |
+| `--list`    |       | List all archived items across all bust manifests (read-only).         |
+| `--json`    | `-j`  | Output as JSON with a `meta` envelope.                                 |
+| `--csv`     |       | RFC 4180 CSV export.                                                   |
+| `--quiet`   | `-q`  | Machine-readable TSV only.                                             |
+| `--verbose` | `-v`  | Show detailed output including warnings.                               |
 
 ### `install-skill`
 
-```bash
-npx ccaudit-cli install-skill
-npx ccaudit-cli install-skill --dry-run
-npx ccaudit-cli install-skill --force
-npx ccaudit-cli install-skill --project
-npx ccaudit-cli install-skill --json
-npx ccaudit-cli install-skill --quiet
-```
+| Flag        | Short | Description                                                                             |
+| ----------- | ----- | --------------------------------------------------------------------------------------- |
+| `--dry-run` |       | Show what would be installed without writing any files.                                 |
+| `--force`   | `-f`  | Overwrite an existing skill file without prompting.                                     |
+| `--project` | `-p`  | Install to `.claude/commands/` in the current directory instead of the global location. |
+| `--json`    | `-j`  | Output as JSON.                                                                         |
+| `--quiet`   | `-q`  | Machine-readable output only.                                                           |
 
 ---
 
@@ -201,6 +201,14 @@ What you get:
 - which MCP servers would be disabled
 - which memory files would be flagged
 - the checkpoint hash needed for later remediation
+
+When framework detection is active (the default), ghost members of partially-used
+frameworks are **skipped** in the change plan. You will see a yellow warning and
+a `PROTECTED` section listing what was held back. Pass `--force-partial` to
+include them — but you must use `--force-partial` on both the `--dry-run` and
+`--dangerously-bust-ghosts` steps, because the flag changes which items are
+eligible and therefore changes the checkpoint hash. Mismatched flags between the
+two steps will produce a hash-mismatch error.
 
 ### Bust ceremony
 
@@ -235,6 +243,12 @@ What gets reversed:
 - agents and skills are archived, not deleted
 - MCP servers are commented out in config, not removed
 - memory files are flagged in frontmatter, not rewritten destructively
+
+Items that were **protected** during a bust (skipped because their framework is
+partially used) are never archived — they stay in place and do not appear in the
+manifest. If you used `--force-partial` to archive framework members anyway,
+those items are included in the manifest and are fully restorable with
+`ccaudit restore`, just like any other busted item.
 
 ---
 
@@ -301,9 +315,109 @@ Limitations:
 
 ---
 
+## Framework detection
+
+Teams that install GSD, SuperClaude, or n-wave drop dozens of agents at once.
+Before v1.3.0 those showed up as 12 or 20 unrelated-looking rows in `ccaudit ghost`
+and it was easy to archive half a framework without realising the other half was
+still active. v1.3.0 groups related agents so you see `GSD · 12 ghost members ·
+~58k tokens` instead.
+
+### The 3-tier algorithm
+
+Every agent and skill flows through three tiers of detection, in order. The first
+tier that matches wins; later tiers do not override earlier ones.
+
+1. **Tier 1 — curated list.** ccaudit ships a hand-maintained registry of
+   well-known Claude Code frameworks (`gsd`, `superclaude`, `nwave`,
+   `superpowers`, `ralph-loop`, `agent-council`, `greg-strategy`, `ideabrowser`,
+   `gstack`, `hermes`). An item matches a curated framework when its filename
+   starts with one of the framework's declared prefixes (case-insensitive,
+   followed by an alphanumeric character) **or** its path contains one of the
+   framework's declared folder segments **or** (for frameworks that ship items
+   without a consistent prefix, like gstack) its name is in the framework's
+   `knownItems[]` list and at least three known items are present in the
+   inventory.
+2. **Tier 2 — heuristic prefix clustering.** Items that do not match Tier 1
+   have their prefix extracted via `name.split(/[-:_]/)[0]`, lowercased. The
+   prefix must be at least 3 characters long and must not appear in
+   `STOP_PREFIXES` (`api`, `app`, `ui`, `test`, `user`, `data`, `util`, etc.).
+   Two or more items sharing the same non-stopped prefix form a heuristic
+   cluster; single items stay ungrouped.
+3. **Tier 3 — ungrouped.** Anything that matched neither tier is listed in
+   the flat inventory like before.
+
+### Domain folders are NOT frameworks
+
+> **Critical negative finding.** Folder names like `engineering/`, `design/`,
+> `marketing/`, `testing/`, `sales/`, `integrations/`, `strategy/`,
+> `project-management/`, `support/`, `paid-media/`, `spatial-computing/`,
+> `examples/`, `scripts/`, `product/`, `specialized/`, `game-development/`,
+> `agents/`, and `skills/` are **domain organisation** folders, not frameworks.
+> ccaudit refuses to group them, even if they happen to cluster by filename.
+> This is enforced twice — once by gating folder-segment matches through the
+> curated list only (Tier 1), and once by an explicit `DOMAIN_STOP_FOLDERS`
+> list that Tier 2 consults. If you see a folder name that looks like it
+> should be a framework but is listed above, that is deliberate.
+
+### Flag reference
+
+| Flag                    | Default | Effect                                                                                                                                                                                      |
+| ----------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--verbose` / `-v`      | off     | Expand each framework row into a tree of its members; used members collapse to a `+ N used members` line.                                                                                   |
+| `--no-group-frameworks` | off     | Disable grouping entirely. Output reverts to the v1.2.1 layout byte-for-byte (no Frameworks section).                                                                                       |
+| `--force-partial`       | off     | Bypass framework-as-unit protection and archive ghost members of partially-used frameworks. Applies to both `--dry-run` and `--dangerously-bust-ghosts`; both runs must use the same value. |
+
+Without `--force-partial`, `ccaudit ghost --dangerously-bust-ghosts` will
+**skip** ghost members of any framework that still has at least one used member.
+You will see a yellow warning and a `PROTECTED` section in the change plan.
+This is intentional — busting half of GSD while the planner is in use would
+break the framework. `--force-partial` is an explicit opt-in override.
+
+ccaudit computes a **status** for each framework group:
+
+- **`fully-used`** — all members were invoked within the `--since` window. Nothing to protect, nothing to archive.
+- **`partially-used`** — at least one member is active and at least one is a ghost. Ghost members are **protected** by default (skipped during bust). This is the only status that triggers protection.
+- **`ghost-all`** — no members are active. The entire framework is eligible for archival with no special protection.
+
+These values appear in `--json` output under each framework group's `status` field.
+
+**Scope:** only agents and skills are candidates for framework detection. MCP servers and memory files always appear in the ungrouped inventory regardless of their names.
+
+**Heuristic display names:** Tier 2 groups auto-generate their display name by title-casing the detected prefix (e.g., items prefixed `quark-` display as "Quark").
+
+**Flag interaction:** `--force-partial` has no effect when `--no-group-frameworks` is active, because framework protection is already disabled. The CLI emits a warning if you combine them.
+
+### Contribute a framework
+
+If you maintain or use a framework that isn't in the curated list, open a PR
+against `packages/internal/src/framework/known-frameworks.ts`. Each entry is
+validated at load time by valibot and must include:
+
+| Field         | Type                                                              | Notes                                                    |
+| ------------- | ----------------------------------------------------------------- | -------------------------------------------------------- |
+| `id`          | `string`                                                          | Stable lowercase id (`gsd`, `superclaude`, `gstack`).    |
+| `displayName` | `string`                                                          | User-facing name.                                        |
+| `description` | `string`                                                          | One-line description.                                    |
+| `prefixes`    | `string[]`                                                        | Filename prefixes including separator (e.g. `'gsd-'`).   |
+| `folders`     | `string[]`                                                        | Folder segment names, no slashes (e.g. `'superpowers'`). |
+| `knownItems`  | `string[]` (optional)                                             | For frameworks without a consistent prefix, like gstack. |
+| `categories`  | `('agent' \| 'skill' \| 'command' \| 'mcp-server' \| 'memory')[]` | Item categories the framework ships.                     |
+| `source`      | `string`                                                          | URL to the framework or `'unverified'`.                  |
+| `source_type` | `'curated'`                                                       | Literal — always `'curated'`.                            |
+
+Please do NOT submit generic prefixes (anything that would collide with
+`STOP_PREFIXES`) or domain folders (anything listed in the negative finding
+above). If you're not sure, open an issue first.
+
+Declaration order in the registry is authoritative — the first matching entry
+wins. Place more-specific entries before more-general ones to avoid shadowing.
+
+---
+
 ## Version
 
-- Current package version: **1.2.1**
+- Current package version: **1.3.0**
 - Build source of truth: `apps/ccaudit/package.json` and `apps/ccaudit/src/_version.ts`
 
 ---

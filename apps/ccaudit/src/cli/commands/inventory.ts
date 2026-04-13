@@ -8,11 +8,14 @@ import {
   calculateHealthScore,
   calculateUrgencyScore,
   classifyRecommendation,
+  groupByFramework,
+  toGhostItems,
 } from '@ccaudit/internal';
-import type { InvocationRecord } from '@ccaudit/internal';
+import type { InvocationRecord, FrameworkGroup, GroupedInventory } from '@ccaudit/internal';
 import {
   renderHeader,
   humanizeSinceWindow,
+  renderFrameworksSection,
   renderInventoryTable,
   renderHealthScore,
   initColor,
@@ -61,7 +64,11 @@ export const inventoryCommand = define({
     initColor();
 
     // Resolve output mode from all flag values
-    const mode = resolveOutputMode(ctx.values);
+    const noGroupFrameworksVal = ctx.values['no-group-frameworks'];
+    const mode = resolveOutputMode({
+      ...ctx.values,
+      noGroupFrameworks: typeof noGroupFrameworksVal === 'boolean' ? noGroupFrameworksVal : false,
+    });
 
     if (mode.verbose) {
       console.error(`[ccaudit] Scanning sessions (window: ${sinceStr})...`);
@@ -90,8 +97,41 @@ export const inventoryCommand = define({
     const hasGhosts = enriched.some((r) => r.tier !== 'used');
     const exitCode = hasGhosts ? 1 : 0;
 
+    // Framework grouping (v1.3.0 D-22). Computed once, reused by terminal +
+    // JSON + CSV + TSV output paths.
+    const grouped: GroupedInventory = mode.groupFrameworks
+      ? groupByFramework(toGhostItems(enriched))
+      : { frameworks: [], ungrouped: [] };
+
+    // Sort frameworks by displayName ASC (case-insensitive) per OUT-04.
+    const sortedFrameworks: FrameworkGroup[] = grouped.frameworks
+      .slice()
+      .sort((a, b) =>
+        a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' }),
+      );
+
+    // Build Map<itemPath, frameworkId | null> for renderInventoryTable D-21
+    // (default-mode filter + verbose-mode column cell lookup). Populated only
+    // when grouping is active so the render helper falls back to v1.2.1 layout
+    // when --no-group-frameworks is set.
+    const fwMap: Map<string, string | null> | undefined = mode.groupFrameworks
+      ? new Map(enriched.map((r) => [r.item.path, r.item.framework ?? null]))
+      : undefined;
+
     // Output routing (in order of precedence)
     if (mode.json) {
+      const frameworksProjection =
+        mode.groupFrameworks && sortedFrameworks.length > 0
+          ? sortedFrameworks.map((f) => ({
+              id: f.id,
+              displayName: f.displayName,
+              source_type: f.source_type,
+              status: f.status,
+              totals: f.totals,
+              memberCount: f.totals.defined,
+            }))
+          : undefined;
+
       const envelope = buildJsonEnvelope('inventory', sinceStr, exitCode, {
         window: sinceStr,
         files: files.length,
@@ -103,6 +143,7 @@ export const inventoryCommand = define({
           ghostPenalty: healthScore.ghostPenalty,
           tokenPenalty: healthScore.tokenPenalty,
         },
+        ...(frameworksProjection !== undefined ? { frameworks: frameworksProjection } : {}),
         items: enriched.map((r) => ({
           name: r.item.name,
           category: r.item.category,
@@ -120,6 +161,7 @@ export const inventoryCommand = define({
               }
             : null,
           recommendation: classifyRecommendation(r.tier),
+          ...(mode.groupFrameworks ? { framework: r.item.framework ?? null } : {}),
           ...calculateUrgencyScore(r.lastUsed, r.tokenEstimate),
         })),
       });
@@ -127,6 +169,7 @@ export const inventoryCommand = define({
       console.log(JSON.stringify(envelope, null, indent));
     } else if (mode.csv) {
       // CSV output (RFC 4180 per D-18, D-19)
+      const appendFramework = mode.verbose && mode.groupFrameworks;
       const headers = [
         'name',
         'category',
@@ -135,6 +178,7 @@ export const inventoryCommand = define({
         'tokens',
         'recommendation',
         'confidence',
+        ...(appendFramework ? ['framework'] : []),
       ];
       const rows = enriched.map((r) => [
         r.item.name,
@@ -144,10 +188,12 @@ export const inventoryCommand = define({
         String(r.tokenEstimate?.tokens ?? 0),
         classifyRecommendation(r.tier),
         r.tokenEstimate?.confidence ?? 'none',
+        ...(appendFramework ? [r.item.framework ?? ''] : []),
       ]);
       console.log(csvTable(headers, rows, !mode.quiet));
     } else if (mode.quiet) {
       // TSV output (per D-09)
+      const appendFramework = mode.verbose && mode.groupFrameworks;
       for (const r of enriched) {
         console.log(
           tsvRow([
@@ -157,6 +203,7 @@ export const inventoryCommand = define({
             r.lastUsed?.toISOString() ?? 'never',
             String(r.tokenEstimate?.tokens ?? 0),
             classifyRecommendation(r.tier),
+            ...(appendFramework ? [r.item.framework ?? ''] : []),
           ]),
         );
       }
@@ -168,7 +215,28 @@ export const inventoryCommand = define({
       if (enriched.length === 0) {
         console.log('No items found in inventory.');
       } else {
-        console.log(renderInventoryTable(enriched));
+        // D-18: Prepend Frameworks section when grouping is active and any
+        // frameworks detected. Omitted in empty/null cases — the helper
+        // returns '' when groups is empty.
+        if (mode.groupFrameworks && sortedFrameworks.length > 0) {
+          const frameworksOut = renderFrameworksSection(sortedFrameworks, {
+            verbose: mode.verbose,
+          });
+          if (frameworksOut !== '') {
+            console.log(frameworksOut);
+            console.log('');
+          }
+        }
+
+        // D-21: pass the framework-column map + verbose flag. When grouping
+        // is disabled (fwMap === undefined), renderInventoryTable renders the
+        // v1.2.1 7-column layout byte-identical to v1.2.1.
+        console.log(
+          renderInventoryTable(enriched, {
+            verbose: mode.verbose,
+            frameworkColumnValues: fwMap,
+          }),
+        );
       }
 
       console.log('');

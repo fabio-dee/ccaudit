@@ -66,3 +66,23 @@ describe.skipIf(!binaryExists)('Gap #4 regression: --no-color visible in --help'
     expect(output).toContain('no-color');
   });
 });
+
+describe.skipIf(!binaryExists)('DOCS-04: v1.3.0 flag visibility in --help', () => {
+  it('ghost --help lists --verbose, --no-group-frameworks, --force-partial', () => {
+    const output = runHelp(['ghost', '--help']);
+    expect(output).toContain('--verbose');
+    expect(output).toContain('--no-group-frameworks');
+    expect(output).toContain('--force-partial');
+  });
+
+  it('inventory --help lists --verbose and --no-group-frameworks', () => {
+    const output = runHelp(['inventory', '--help']);
+    expect(output).toContain('--verbose');
+    expect(output).toContain('--no-group-frameworks');
+  });
+
+  it('inventory --help does NOT list --force-partial (bust-only flag)', () => {
+    const output = runHelp(['inventory', '--help']);
+    expect(output).not.toContain('--force-partial');
+  });
+});

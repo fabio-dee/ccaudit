@@ -134,6 +134,33 @@ if (import.meta.vitest) {
       expect(result.grade).toBe('Critical');
     });
 
+    it('penalises unknown MCP ghosts at 2000-token default (1 definite-ghost -> score 96)', () => {
+      // 1 definite-ghost MCP server with DEFAULT_UNKNOWN_MCP_TOKENS (2000)
+      // ghostPenalty = min(1*3, 60) = 3
+      // tokenPenalty = min(round(2000/200000*100), 20) = min(1, 20) = 1
+      // score = 100 - 3 - 1 = 96
+      const results: TokenCostResult[] = [
+        {
+          item: {
+            name: 'unknown-mcp',
+            path: '/test/.claude.json',
+            scope: 'global',
+            category: 'mcp-server',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 2000, confidence: 'estimated', source: 'default estimate' },
+        },
+      ];
+      const result = calculateHealthScore(results);
+      expect(result.score).toBe(96);
+      expect(result.grade).toBe('Healthy');
+      expect(result.ghostPenalty).toBe(3);
+      expect(result.tokenPenalty).toBe(1);
+    });
+
     it('assigns correct grades at boundary values', () => {
       // Score 80 -> Healthy
       // 16 likely-ghosts + 0 definite-ghosts = ghostPenalty 16, tokenPenalty 0 -> score 84

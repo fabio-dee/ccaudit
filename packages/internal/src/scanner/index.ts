@@ -16,3 +16,6 @@ export { scanMemoryFiles } from './scan-memory.ts';
 
 // Coordinator
 export { scanAll, matchInventory, groupByProject } from './scan-all.ts';
+
+// Annotation layer (Phase 2 — framework field decoration + GhostItem materializer)
+export { annotateFrameworks, toGhostItems } from './annotate.ts';

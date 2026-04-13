@@ -202,364 +202,368 @@ beforeAll(() => {
 
 // ── Test cases ──────────────────────────────────────────────────
 
-describe('ccaudit --dangerously-bust-ghosts (integration)', () => {
-  let tmpHome: string;
+// Windows: subprocess tests rely on fake `ps` shell scripts that require /bin/sh.
+describe.skipIf(process.platform === 'win32')(
+  'ccaudit --dangerously-bust-ghosts (integration)',
+  () => {
+    let tmpHome: string;
 
-  beforeEach(async () => {
-    tmpHome = await mkdtemp(path.join(tmpdir(), 'bust-cmd-'));
-  });
-
-  afterEach(async () => {
-    await rm(tmpHome, { recursive: true, force: true });
-  });
-
-  // ── Exit code 4: non-TTY requires --yes-proceed-busting ──────
-  describe('exit code 4: non-TTY requires --yes-proceed-busting (D-17)', () => {
-    it('piped stdin without --yes-proceed-busting -> exit 4', async () => {
-      await buildBaseFixture(tmpHome);
-      // Run dry-run first so the checkpoint exists (gate 1 passes).
-      await runDryRunFirst(tmpHome);
-      const result = await runBustCommand(tmpHome, ['--dangerously-bust-ghosts']);
-      expect(result.code).toBe(4);
-      expect(result.stderr).toMatch(/requires an interactive terminal/);
-      expect(result.stderr).toMatch(/--yes-proceed-busting/);
+    beforeEach(async () => {
+      tmpHome = await mkdtemp(path.join(tmpdir(), 'bust-cmd-'));
     });
 
-    it('piped stdin WITH --yes-proceed-busting -> bypasses prompt (no exit 4)', async () => {
-      await buildBaseFixture(tmpHome);
-      await runDryRunFirst(tmpHome);
-      const result = await runBustCommand(tmpHome, [
-        '--dangerously-bust-ghosts',
-        '--yes-proceed-busting',
-      ]);
-      // Empty fixture -> no ops to run -> exit 0 (success).
-      expect(result.code, `stderr: ${result.stderr}`).toBe(0);
+    afterEach(async () => {
+      await rm(tmpHome, { recursive: true, force: true });
     });
 
-    it('--ci --dangerously-bust-ghosts implies --yes-proceed-busting', async () => {
-      await buildBaseFixture(tmpHome);
-      await runDryRunFirst(tmpHome);
-      const result = await runBustCommand(tmpHome, ['--dangerously-bust-ghosts', '--ci']);
-      expect(result.code, `stderr: ${result.stderr}`).toBe(0);
-      // --ci implies --json, so stdout should be parseable JSON with bust envelope.
-      const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
-      expect(parsed).toHaveProperty('meta');
-      expect(parsed).toHaveProperty('bust');
-      const bust = parsed.bust as Record<string, unknown>;
-      expect(bust.status).toBe('success');
-    });
-  });
+    // ── Exit code 4: non-TTY requires --yes-proceed-busting ──────
+    describe('exit code 4: non-TTY requires --yes-proceed-busting (D-17)', () => {
+      it('piped stdin without --yes-proceed-busting -> exit 4', async () => {
+        await buildBaseFixture(tmpHome);
+        // Run dry-run first so the checkpoint exists (gate 1 passes).
+        await runDryRunFirst(tmpHome);
+        const result = await runBustCommand(tmpHome, ['--dangerously-bust-ghosts']);
+        expect(result.code).toBe(4);
+        expect(result.stderr).toMatch(/requires an interactive terminal/);
+        expect(result.stderr).toMatch(/--yes-proceed-busting/);
+      });
 
-  // ── Exit code 1: checkpoint gate failures and --csv rejection ──
-  describe('exit code 1: checkpoint and hash gate failures (D-01)', () => {
-    it('no checkpoint -> exit 1 with checkpoint-missing message', async () => {
-      await buildBaseFixture(tmpHome);
-      // Do NOT run --dry-run first, so no checkpoint file exists.
-      const result = await runBustCommand(tmpHome, [
-        '--dangerously-bust-ghosts',
-        '--yes-proceed-busting',
-      ]);
-      expect(result.code).toBe(1);
-      expect(result.stderr).toMatch(/No checkpoint found/);
-      expect(result.stderr).toMatch(/ccaudit --dry-run/);
-    });
-
-    it('hash mismatch (inventory changed) -> exit 1', async () => {
-      await buildBaseFixture(tmpHome);
-      await runDryRunFirst(tmpHome);
-      // Add a new ghost agent AFTER the dry-run to change the inventory.
-      // New agent has no session invocations -> classified as definite-ghost
-      // by matchInventory (lastUsedMs=null) -> hash includes it -> hash differs.
-      await writeFile(
-        path.join(tmpHome, '.claude', 'agents', 'new-ghost.md'),
-        '# new agent',
-        'utf8',
-      );
-      const result = await runBustCommand(tmpHome, [
-        '--dangerously-bust-ghosts',
-        '--yes-proceed-busting',
-      ]);
-      expect(result.code).toBe(1);
-      const output = result.stderr + result.stdout;
-      expect(output).toMatch(/Inventory has changed|hash/i);
-    });
-
-    it('--csv on bust -> exit 1 with rejection message', async () => {
-      await buildBaseFixture(tmpHome);
-      await runDryRunFirst(tmpHome);
-      const result = await runBustCommand(tmpHome, [
-        '--dangerously-bust-ghosts',
-        '--yes-proceed-busting',
-        '--csv',
-      ]);
-      expect(result.code).toBe(1);
-      expect(result.stderr).toMatch(/--csv is not supported/);
-    });
-  });
-
-  // ── Exit code 0: success paths ───────────────────────────────
-  describe('exit code 0: successful bust paths', () => {
-    it('empty fixture + --yes-proceed-busting -> exit 0 with manifest', async () => {
-      await buildBaseFixture(tmpHome);
-      await runDryRunFirst(tmpHome);
-      const result = await runBustCommand(tmpHome, [
-        '--dangerously-bust-ghosts',
-        '--yes-proceed-busting',
-        '--json',
-      ]);
-      expect(result.code, `stderr: ${result.stderr}`).toBe(0);
-      const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
-      expect(parsed.meta).toBeTruthy();
-      expect(parsed.bust).toBeTruthy();
-      const bust = parsed.bust as { status: string; manifestPath: string };
-      expect(bust.status).toBe('success');
-      // Manifest file must exist on disk.
-      expect(existsSync(bust.manifestPath)).toBe(true);
-      // Manifest contains header + footer at minimum (empty plan).
-      const manifestContent = await readFile(bust.manifestPath, 'utf8');
-      const lines = manifestContent.split('\n').filter(Boolean);
-      expect(lines.length).toBeGreaterThanOrEqual(2);
-      const firstLine = JSON.parse(lines[0]!) as Record<string, unknown>;
-      expect(firstLine.record_type).toBe('header');
-      const lastLine = JSON.parse(lines[lines.length - 1]!) as Record<string, unknown>;
-      expect(lastLine.record_type).toBe('footer');
-      expect(lastLine.status).toBe('completed');
-    });
-
-    it('--quiet suppresses progress output, still exits 0', async () => {
-      await buildBaseFixture(tmpHome);
-      await runDryRunFirst(tmpHome);
-      const result = await runBustCommand(tmpHome, [
-        '--dangerously-bust-ghosts',
-        '--yes-proceed-busting',
-        '--quiet',
-      ]);
-      expect(result.code, `stderr: ${result.stderr}`).toBe(0);
-      // Under --quiet the bust branch suppresses the "Done. ..." progress line.
-      expect(result.stdout).not.toMatch(/Done\./);
-    });
-  });
-
-  // ── Exit code 3: running-process preflight ──────────────────
-  describe('exit code 3: running-process preflight (D-02, D-03)', () => {
-    // We cannot reliably spawn a "claude" process on CI runners. Instead we
-    // exercise the fail-closed `spawn-failed` path (D-02): strip PATH so `ps`
-    // is not reachable, which forces `process-detection-failed` and exit 3.
-    //
-    // Skipped on Windows because the plan reserves exit 3 for `tasklist` on
-    // win32, and PATH manipulation to hide tasklist.exe is unreliable in
-    // GitHub Actions Windows runners.
-    it.skipIf(process.platform === 'win32')(
-      'empty PATH so ps is unreachable -> exit 3 (process-detection-failed)',
-      async () => {
+      it('piped stdin WITH --yes-proceed-busting -> bypasses prompt (no exit 4)', async () => {
         await buildBaseFixture(tmpHome);
         await runDryRunFirst(tmpHome);
-        const result = await runBustCommand(
-          tmpHome,
-          ['--dangerously-bust-ghosts', '--yes-proceed-busting'],
-          { pathOverride: '/nonexistent-dir-only' },
+        const result = await runBustCommand(tmpHome, [
+          '--dangerously-bust-ghosts',
+          '--yes-proceed-busting',
+        ]);
+        // Empty fixture -> no ops to run -> exit 0 (success).
+        expect(result.code, `stderr: ${result.stderr}`).toBe(0);
+      });
+
+      it('--ci --dangerously-bust-ghosts implies --yes-proceed-busting', async () => {
+        await buildBaseFixture(tmpHome);
+        await runDryRunFirst(tmpHome);
+        const result = await runBustCommand(tmpHome, ['--dangerously-bust-ghosts', '--ci']);
+        expect(result.code, `stderr: ${result.stderr}`).toBe(0);
+        // --ci implies --json, so stdout should be parseable JSON with bust envelope.
+        const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+        expect(parsed).toHaveProperty('meta');
+        expect(parsed).toHaveProperty('bust');
+        const bust = parsed.bust as Record<string, unknown>;
+        expect(bust.status).toBe('success');
+      });
+    });
+
+    // ── Exit code 1: checkpoint gate failures and --csv rejection ──
+    describe('exit code 1: checkpoint and hash gate failures (D-01)', () => {
+      it('no checkpoint -> exit 1 with checkpoint-missing message', async () => {
+        await buildBaseFixture(tmpHome);
+        // Do NOT run --dry-run first, so no checkpoint file exists.
+        const result = await runBustCommand(tmpHome, [
+          '--dangerously-bust-ghosts',
+          '--yes-proceed-busting',
+        ]);
+        expect(result.code).toBe(1);
+        expect(result.stderr).toMatch(/No checkpoint found/);
+        expect(result.stderr).toMatch(/ccaudit --dry-run/);
+      });
+
+      it('hash mismatch (inventory changed) -> exit 1', async () => {
+        await buildBaseFixture(tmpHome);
+        await runDryRunFirst(tmpHome);
+        // Add a new ghost agent AFTER the dry-run to change the inventory.
+        // New agent has no session invocations -> classified as definite-ghost
+        // by matchInventory (lastUsedMs=null) -> hash includes it -> hash differs.
+        await writeFile(
+          path.join(tmpHome, '.claude', 'agents', 'new-ghost.md'),
+          '# new agent',
+          'utf8',
         );
-        expect(result.code).toBe(3);
-        expect(result.stderr).toMatch(
-          /Could not verify Claude Code is stopped|process-detection-failed/,
+        const result = await runBustCommand(tmpHome, [
+          '--dangerously-bust-ghosts',
+          '--yes-proceed-busting',
+        ]);
+        expect(result.code).toBe(1);
+        const output = result.stderr + result.stdout;
+        expect(output).toMatch(/Inventory has changed|hash/i);
+      });
+
+      it('--csv on bust -> exit 1 with rejection message', async () => {
+        await buildBaseFixture(tmpHome);
+        await runDryRunFirst(tmpHome);
+        const result = await runBustCommand(tmpHome, [
+          '--dangerously-bust-ghosts',
+          '--yes-proceed-busting',
+          '--csv',
+        ]);
+        expect(result.code).toBe(1);
+        expect(result.stderr).toMatch(/--csv is not supported/);
+      });
+    });
+
+    // ── Exit code 0: success paths ───────────────────────────────
+    describe('exit code 0: successful bust paths', () => {
+      it('empty fixture + --yes-proceed-busting -> exit 0 with manifest', async () => {
+        await buildBaseFixture(tmpHome);
+        await runDryRunFirst(tmpHome);
+        const result = await runBustCommand(tmpHome, [
+          '--dangerously-bust-ghosts',
+          '--yes-proceed-busting',
+          '--json',
+        ]);
+        expect(result.code, `stderr: ${result.stderr}`).toBe(0);
+        const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+        expect(parsed.meta).toBeTruthy();
+        expect(parsed.bust).toBeTruthy();
+        const bust = parsed.bust as { status: string; manifestPath: string };
+        expect(bust.status).toBe('success');
+        // Manifest file must exist on disk.
+        expect(existsSync(bust.manifestPath)).toBe(true);
+        // Manifest contains header + footer at minimum (empty plan).
+        const manifestContent = await readFile(bust.manifestPath, 'utf8');
+        const lines = manifestContent.split('\n').filter(Boolean);
+        expect(lines.length).toBeGreaterThanOrEqual(2);
+        const firstLine = JSON.parse(lines[0]!) as Record<string, unknown>;
+        expect(firstLine.record_type).toBe('header');
+        const lastLine = JSON.parse(lines[lines.length - 1]!) as Record<string, unknown>;
+        expect(lastLine.record_type).toBe('footer');
+        expect(lastLine.status).toBe('completed');
+      });
+
+      it('--quiet suppresses progress output, still exits 0', async () => {
+        await buildBaseFixture(tmpHome);
+        await runDryRunFirst(tmpHome);
+        const result = await runBustCommand(tmpHome, [
+          '--dangerously-bust-ghosts',
+          '--yes-proceed-busting',
+          '--quiet',
+        ]);
+        expect(result.code, `stderr: ${result.stderr}`).toBe(0);
+        // Under --quiet the bust branch suppresses the "Done. ..." progress line.
+        expect(result.stdout).not.toMatch(/Done\./);
+      });
+    });
+
+    // ── Exit code 3: running-process preflight ──────────────────
+    describe('exit code 3: running-process preflight (D-02, D-03)', () => {
+      // We cannot reliably spawn a "claude" process on CI runners. Instead we
+      // exercise the fail-closed `spawn-failed` path (D-02): strip PATH so `ps`
+      // is not reachable, which forces `process-detection-failed` and exit 3.
+      //
+      // Skipped on Windows because the plan reserves exit 3 for `tasklist` on
+      // win32, and PATH manipulation to hide tasklist.exe is unreliable in
+      // GitHub Actions Windows runners.
+      it.skipIf(process.platform === 'win32')(
+        'empty PATH so ps is unreachable -> exit 3 (process-detection-failed)',
+        async () => {
+          await buildBaseFixture(tmpHome);
+          await runDryRunFirst(tmpHome);
+          const result = await runBustCommand(
+            tmpHome,
+            ['--dangerously-bust-ghosts', '--yes-proceed-busting'],
+            { pathOverride: '/nonexistent-dir-only' },
+          );
+          expect(result.code).toBe(3);
+          expect(result.stderr).toMatch(
+            /Could not verify Claude Code is stopped|process-detection-failed/,
+          );
+        },
+      );
+    });
+
+    // ── Full pipeline: archive + disable + flag end-to-end ──────
+    describe('full pipeline: archive + disable + flag', () => {
+      it('real fixture: 1 agent + 1 MCP + 1 memory -> manifest with 3 ops, all side effects on disk', async () => {
+        await buildBaseFixture(tmpHome);
+
+        // Ghost agent at ~/.claude/agents/ghost-agent.md.
+        await writeFile(
+          path.join(tmpHome, '.claude', 'agents', 'ghost-agent.md'),
+          '# ghost agent body',
+          'utf8',
         );
-      },
-    );
-  });
 
-  // ── Full pipeline: archive + disable + flag end-to-end ──────
-  describe('full pipeline: archive + disable + flag', () => {
-    it('real fixture: 1 agent + 1 MCP + 1 memory -> manifest with 3 ops, all side effects on disk', async () => {
-      await buildBaseFixture(tmpHome);
+        // Ghost MCP in ~/.claude.json (global scope, nested schema).
+        await writeFile(
+          path.join(tmpHome, '.claude.json'),
+          JSON.stringify({
+            mcpServers: {
+              'ghost-mcp': { command: 'npx', args: ['ghost'] },
+            },
+          }),
+          'utf8',
+        );
 
-      // Ghost agent at ~/.claude/agents/ghost-agent.md.
-      await writeFile(
-        path.join(tmpHome, '.claude', 'agents', 'ghost-agent.md'),
-        '# ghost agent body',
-        'utf8',
-      );
+        // Old memory file: ~/.claude/CLAUDE.md with mtime 40 days ago so
+        // classifyGhost returns definite-ghost (elapsed > 30d).
+        const memoryPath = path.join(tmpHome, '.claude', 'CLAUDE.md');
+        await writeFile(memoryPath, '# old memory\n', 'utf8');
+        const oldTime = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
+        await utimes(memoryPath, oldTime, oldTime);
 
-      // Ghost MCP in ~/.claude.json (global scope, nested schema).
-      await writeFile(
-        path.join(tmpHome, '.claude.json'),
-        JSON.stringify({
-          mcpServers: {
-            'ghost-mcp': { command: 'npx', args: ['ghost'] },
-          },
-        }),
-        'utf8',
-      );
+        // Dry-run to produce the checkpoint for gate 1.
+        const dry = await runDryRunFirst(tmpHome);
+        expect(dry.code, `dry-run stderr: ${dry.stderr}`).toBe(0);
 
-      // Old memory file: ~/.claude/CLAUDE.md with mtime 40 days ago so
-      // classifyGhost returns definite-ghost (elapsed > 30d).
-      const memoryPath = path.join(tmpHome, '.claude', 'CLAUDE.md');
-      await writeFile(memoryPath, '# old memory\n', 'utf8');
-      const oldTime = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
-      await utimes(memoryPath, oldTime, oldTime);
+        // Bust with --json so we can inspect the envelope shape.
+        const bust = await runBustCommand(tmpHome, [
+          '--dangerously-bust-ghosts',
+          '--yes-proceed-busting',
+          '--json',
+        ]);
+        expect(bust.code, `bust stderr: ${bust.stderr}`).toBe(0);
 
-      // Dry-run to produce the checkpoint for gate 1.
-      const dry = await runDryRunFirst(tmpHome);
-      expect(dry.code, `dry-run stderr: ${dry.stderr}`).toBe(0);
-
-      // Bust with --json so we can inspect the envelope shape.
-      const bust = await runBustCommand(tmpHome, [
-        '--dangerously-bust-ghosts',
-        '--yes-proceed-busting',
-        '--json',
-      ]);
-      expect(bust.code, `bust stderr: ${bust.stderr}`).toBe(0);
-
-      const parsed = JSON.parse(bust.stdout) as Record<string, unknown>;
-      const bustResult = parsed.bust as {
-        status: string;
-        manifestPath: string;
-        counts: {
-          archive: { completed: number; failed: number };
-          disable: { completed: number; failed: number };
-          flag: { completed: number; failed: number; refreshed: number; skipped: number };
+        const parsed = JSON.parse(bust.stdout) as Record<string, unknown>;
+        const bustResult = parsed.bust as {
+          status: string;
+          manifestPath: string;
+          counts: {
+            archive: { completed: number; failed: number };
+            disable: { completed: number; failed: number };
+            flag: { completed: number; failed: number; refreshed: number; skipped: number };
+          };
         };
-      };
-      expect(bustResult.status).toBe('success');
-      expect(bustResult.counts.archive.completed).toBe(1);
-      expect(bustResult.counts.disable.completed).toBe(1);
-      expect(bustResult.counts.flag.completed).toBe(1);
+        expect(bustResult.status).toBe('success');
+        expect(bustResult.counts.archive.completed).toBe(1);
+        expect(bustResult.counts.disable.completed).toBe(1);
+        expect(bustResult.counts.flag.completed).toBe(1);
 
-      // ── Disk side effects ────────────────────────────────
+        // ── Disk side effects ────────────────────────────────
 
-      // Ghost agent moved to ccaudit/archived/agents/.
-      const archivedPath = path.join(
-        tmpHome,
-        '.claude',
-        'ccaudit',
-        'archived',
-        'agents',
-        'ghost-agent.md',
-      );
-      expect(existsSync(archivedPath)).toBe(true);
-      expect(existsSync(path.join(tmpHome, '.claude', 'agents', 'ghost-agent.md'))).toBe(false);
+        // Ghost agent moved to ccaudit/archived/agents/.
+        const archivedPath = path.join(
+          tmpHome,
+          '.claude',
+          'ccaudit',
+          'archived',
+          'agents',
+          'ghost-agent.md',
+        );
+        expect(existsSync(archivedPath)).toBe(true);
+        expect(existsSync(path.join(tmpHome, '.claude', 'agents', 'ghost-agent.md'))).toBe(false);
 
-      // ~/.claude.json has mcpServers cleared and ccaudit-disabled:ghost-mcp at root.
-      const updatedConfig = JSON.parse(
-        await readFile(path.join(tmpHome, '.claude.json'), 'utf8'),
-      ) as Record<string, unknown>;
-      const updatedMcpServers = (updatedConfig.mcpServers ?? {}) as Record<string, unknown>;
-      expect(updatedMcpServers['ghost-mcp']).toBeUndefined();
-      expect(updatedConfig['ccaudit-disabled:ghost-mcp']).toEqual({
-        command: 'npx',
-        args: ['ghost'],
+        // ~/.claude.json has mcpServers cleared and ccaudit-disabled:ghost-mcp at root.
+        const updatedConfig = JSON.parse(
+          await readFile(path.join(tmpHome, '.claude.json'), 'utf8'),
+        ) as Record<string, unknown>;
+        const updatedMcpServers = (updatedConfig.mcpServers ?? {}) as Record<string, unknown>;
+        expect(updatedMcpServers['ghost-mcp']).toBeUndefined();
+        expect(updatedConfig['ccaudit-disabled:ghost-mcp']).toEqual({
+          command: 'npx',
+          args: ['ghost'],
+        });
+
+        // CLAUDE.md has frontmatter injected with the two ccaudit keys.
+        const updatedMemory = await readFile(memoryPath, 'utf8');
+        expect(updatedMemory).toMatch(/ccaudit-stale: true/);
+        expect(updatedMemory).toMatch(/ccaudit-flagged:/);
+
+        // ── Manifest shape ────────────────────────────────────
+
+        expect(existsSync(bustResult.manifestPath)).toBe(true);
+        const manifestContent = await readFile(bustResult.manifestPath, 'utf8');
+        const lines = manifestContent.split('\n').filter(Boolean);
+        const records = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+        expect(records[0]!.record_type).toBe('header');
+        expect(records[records.length - 1]!.record_type).toBe('footer');
+        const ops = records.filter((r) => r.record_type !== 'header' && r.record_type !== 'footer');
+        expect(ops).toHaveLength(3);
+        // D-13 execution order: archive (agents) -> disable (mcp) -> flag (memory).
+        expect(ops[0]!.op_type).toBe('archive');
+        expect(ops[1]!.op_type).toBe('disable');
+        expect(ops[2]!.op_type).toBe('flag');
       });
-
-      // CLAUDE.md has frontmatter injected with the two ccaudit keys.
-      const updatedMemory = await readFile(memoryPath, 'utf8');
-      expect(updatedMemory).toMatch(/ccaudit-stale: true/);
-      expect(updatedMemory).toMatch(/ccaudit-flagged:/);
-
-      // ── Manifest shape ────────────────────────────────────
-
-      expect(existsSync(bustResult.manifestPath)).toBe(true);
-      const manifestContent = await readFile(bustResult.manifestPath, 'utf8');
-      const lines = manifestContent.split('\n').filter(Boolean);
-      const records = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
-      expect(records[0]!.record_type).toBe('header');
-      expect(records[records.length - 1]!.record_type).toBe('footer');
-      const ops = records.filter((r) => r.record_type !== 'header' && r.record_type !== 'footer');
-      expect(ops).toHaveLength(3);
-      // D-13 execution order: archive (agents) -> disable (mcp) -> flag (memory).
-      expect(ops[0]!.op_type).toBe('archive');
-      expect(ops[1]!.op_type).toBe('disable');
-      expect(ops[2]!.op_type).toBe('flag');
     });
-  });
 
-  // ── Issue 1 revision: .mcp.json flat-schema disable ─────────
-  describe('.mcp.json flat-schema disable (Issue 1 revision)', () => {
-    it('project .mcp.json ghost MCP -> key moves to top level of THAT file, no projects wrapper', async () => {
-      // Build the base fixture, but overwrite the session file below so the
-      // project path seeded into `projectPaths` matches the real tmpdir
-      // project directory (that's how scanMcpServers route #3 discovers
-      // `<projDir>/.mcp.json`).
-      await buildBaseFixture(tmpHome);
+    // ── Issue 1 revision: .mcp.json flat-schema disable ─────────
+    describe('.mcp.json flat-schema disable (Issue 1 revision)', () => {
+      it('project .mcp.json ghost MCP -> key moves to top level of THAT file, no projects wrapper', async () => {
+        // Build the base fixture, but overwrite the session file below so the
+        // project path seeded into `projectPaths` matches the real tmpdir
+        // project directory (that's how scanMcpServers route #3 discovers
+        // `<projDir>/.mcp.json`).
+        await buildBaseFixture(tmpHome);
 
-      const projDir = path.join(tmpHome, 'my-project');
-      await mkdir(projDir, { recursive: true });
-      const mcpJsonPath = path.join(projDir, '.mcp.json');
-      const originalValue = { command: 'npx', args: ['ghost-mcp-server'] };
-      await writeFile(
-        mcpJsonPath,
-        JSON.stringify({
-          mcpServers: {
-            'mcp-json-ghost': originalValue,
-          },
-        }),
-        'utf8',
-      );
+        const projDir = path.join(tmpHome, 'my-project');
+        await mkdir(projDir, { recursive: true });
+        const mcpJsonPath = path.join(projDir, '.mcp.json');
+        const originalValue = { command: 'npx', args: ['ghost-mcp-server'] };
+        await writeFile(
+          mcpJsonPath,
+          JSON.stringify({
+            mcpServers: {
+              'mcp-json-ghost': originalValue,
+            },
+          }),
+          'utf8',
+        );
 
-      // Overwrite the session file so its cwd points to the real projDir.
-      // scanAll -> scanMcpServers receives `projectPaths = [projDir]` from
-      // this cwd, then route #3 walks `<projDir>/.mcp.json` and discovers
-      // the ghost server with scope: 'project', path: <mcpJsonPath>.
-      const sessionDir = path.join(tmpHome, '.claude', 'projects', 'fake-project');
-      const sessionLine = JSON.stringify({
-        type: 'system',
-        subtype: 'init',
-        cwd: projDir,
-        timestamp: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-        sessionId: 'fixture-session',
+        // Overwrite the session file so its cwd points to the real projDir.
+        // scanAll -> scanMcpServers receives `projectPaths = [projDir]` from
+        // this cwd, then route #3 walks `<projDir>/.mcp.json` and discovers
+        // the ghost server with scope: 'project', path: <mcpJsonPath>.
+        const sessionDir = path.join(tmpHome, '.claude', 'projects', 'fake-project');
+        const sessionLine = JSON.stringify({
+          type: 'system',
+          subtype: 'init',
+          cwd: projDir,
+          timestamp: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+          sessionId: 'fixture-session',
+        });
+        await writeFile(path.join(sessionDir, 'session-1.jsonl'), sessionLine + '\n', 'utf8');
+
+        // Dry-run to produce checkpoint.
+        const dry = await runDryRunFirst(tmpHome);
+        expect(dry.code, `dry-run stderr: ${dry.stderr}`).toBe(0);
+
+        // Sanity: the dry-run's plan.disable should contain our mcp-json-ghost.
+        const dryParsed = JSON.parse(dry.stdout) as {
+          changePlan: { disable: Array<Record<string, unknown>> };
+        };
+        const disableItems = dryParsed.changePlan.disable;
+        const found = disableItems.find((i) => i.name === 'mcp-json-ghost');
+        expect(found, 'scanner must discover .mcp.json ghost').toBeTruthy();
+        expect(found!.path).toBe(mcpJsonPath);
+        expect(found!.projectPath).toBe(projDir);
+
+        // Bust.
+        const bust = await runBustCommand(tmpHome, [
+          '--dangerously-bust-ghosts',
+          '--yes-proceed-busting',
+          '--json',
+        ]);
+        expect(bust.code, `bust stderr: ${bust.stderr}`).toBe(0);
+        const parsed = JSON.parse(bust.stdout) as Record<string, unknown>;
+        const bustResult = parsed.bust as { status: string; manifestPath: string };
+        expect(['success', 'partial-success']).toContain(bustResult.status);
+
+        // ── Assert .mcp.json mutation: FLAT schema at document root ──
+        const mcpAfter = JSON.parse(await readFile(mcpJsonPath, 'utf8')) as Record<string, unknown>;
+        const afterMcpServers = (mcpAfter.mcpServers ?? {}) as Record<string, unknown>;
+        // The ghost server is removed from mcpServers.
+        expect(afterMcpServers['mcp-json-ghost']).toBeUndefined();
+        // The disabled key lives at TOP LEVEL of the .mcp.json document
+        // (first-time rename -- no collision suffix expected).
+        expect(mcpAfter['ccaudit-disabled:mcp-json-ghost']).toEqual(originalValue);
+        // CRITICAL: no `projects` wrapper was synthesized -- .mcp.json stays flat.
+        expect(mcpAfter.projects).toBeUndefined();
+
+        // ── Assert the manifest records the disable op against the .mcp.json path ──
+        expect(existsSync(bustResult.manifestPath)).toBe(true);
+        const manifestContent = await readFile(bustResult.manifestPath, 'utf8');
+        const lines = manifestContent.split('\n').filter(Boolean);
+        const ops = lines
+          .map((l) => JSON.parse(l) as Record<string, unknown>)
+          .filter((r) => r.record_type !== 'header' && r.record_type !== 'footer');
+        const disableOps = ops.filter((o) => o.op_type === 'disable');
+        expect(disableOps.length).toBeGreaterThanOrEqual(1);
+        const ourOp = disableOps.find((o) => (o.config_path as string) === mcpJsonPath);
+        expect(ourOp).toBeTruthy();
+        expect(ourOp!.original_key).toBe('mcpServers.mcp-json-ghost');
+        expect(ourOp!.new_key).toBe('ccaudit-disabled:mcp-json-ghost');
+        expect(ourOp!.original_value).toEqual(originalValue);
+        expect(ourOp!.scope).toBe('project');
+        expect(ourOp!.project_path).toBe(projDir);
       });
-      await writeFile(path.join(sessionDir, 'session-1.jsonl'), sessionLine + '\n', 'utf8');
-
-      // Dry-run to produce checkpoint.
-      const dry = await runDryRunFirst(tmpHome);
-      expect(dry.code, `dry-run stderr: ${dry.stderr}`).toBe(0);
-
-      // Sanity: the dry-run's plan.disable should contain our mcp-json-ghost.
-      const dryParsed = JSON.parse(dry.stdout) as {
-        changePlan: { disable: Array<Record<string, unknown>> };
-      };
-      const disableItems = dryParsed.changePlan.disable;
-      const found = disableItems.find((i) => i.name === 'mcp-json-ghost');
-      expect(found, 'scanner must discover .mcp.json ghost').toBeTruthy();
-      expect(found!.path).toBe(mcpJsonPath);
-      expect(found!.projectPath).toBe(projDir);
-
-      // Bust.
-      const bust = await runBustCommand(tmpHome, [
-        '--dangerously-bust-ghosts',
-        '--yes-proceed-busting',
-        '--json',
-      ]);
-      expect(bust.code, `bust stderr: ${bust.stderr}`).toBe(0);
-      const parsed = JSON.parse(bust.stdout) as Record<string, unknown>;
-      const bustResult = parsed.bust as { status: string; manifestPath: string };
-      expect(['success', 'partial-success']).toContain(bustResult.status);
-
-      // ── Assert .mcp.json mutation: FLAT schema at document root ──
-      const mcpAfter = JSON.parse(await readFile(mcpJsonPath, 'utf8')) as Record<string, unknown>;
-      const afterMcpServers = (mcpAfter.mcpServers ?? {}) as Record<string, unknown>;
-      // The ghost server is removed from mcpServers.
-      expect(afterMcpServers['mcp-json-ghost']).toBeUndefined();
-      // The disabled key lives at TOP LEVEL of the .mcp.json document
-      // (first-time rename -- no collision suffix expected).
-      expect(mcpAfter['ccaudit-disabled:mcp-json-ghost']).toEqual(originalValue);
-      // CRITICAL: no `projects` wrapper was synthesized -- .mcp.json stays flat.
-      expect(mcpAfter.projects).toBeUndefined();
-
-      // ── Assert the manifest records the disable op against the .mcp.json path ──
-      expect(existsSync(bustResult.manifestPath)).toBe(true);
-      const manifestContent = await readFile(bustResult.manifestPath, 'utf8');
-      const lines = manifestContent.split('\n').filter(Boolean);
-      const ops = lines
-        .map((l) => JSON.parse(l) as Record<string, unknown>)
-        .filter((r) => r.record_type !== 'header' && r.record_type !== 'footer');
-      const disableOps = ops.filter((o) => o.op_type === 'disable');
-      expect(disableOps.length).toBeGreaterThanOrEqual(1);
-      const ourOp = disableOps.find((o) => (o.config_path as string) === mcpJsonPath);
-      expect(ourOp).toBeTruthy();
-      expect(ourOp!.original_key).toBe('mcpServers.mcp-json-ghost');
-      expect(ourOp!.new_key).toBe('ccaudit-disabled:mcp-json-ghost');
-      expect(ourOp!.original_value).toEqual(originalValue);
-      expect(ourOp!.scope).toBe('project');
-      expect(ourOp!.project_path).toBe(projDir);
     });
-  });
-});
+  },
+);

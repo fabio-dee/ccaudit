@@ -80,5 +80,94 @@ if (import.meta.vitest) {
       expect(Array.isArray(result)).toBe(true);
       expect(result).toHaveLength(0);
     });
+
+    it('should filter files by mtime when sinceMs is provided', async () => {
+      const { mkdtemp, writeFile, rm, mkdir, utimes } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+
+      const tmp = await mkdtemp(join(tmpdir(), 'discover-'));
+      const projDir = join(tmp, 'projects', 'test-project');
+      await mkdir(projDir, { recursive: true });
+
+      // Write two session files
+      const recentFile = join(projDir, 'recent.jsonl');
+      const oldFile = join(projDir, 'old.jsonl');
+      await writeFile(recentFile, '{}', 'utf8');
+      await writeFile(oldFile, '{}', 'utf8');
+
+      // Set the old file's mtime to 10 days ago
+      const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+      await utimes(oldFile, tenDaysAgo, tenDaysAgo);
+
+      try {
+        const result = await discoverSessionFiles({
+          claudePaths: { xdg: tmp, legacy: join(tmp, 'nonexistent') },
+          sinceMs: 7 * 24 * 60 * 60 * 1000, // 7 days
+        });
+        expect(result).toHaveLength(1);
+        expect(result[0]).toContain('recent.jsonl');
+      } finally {
+        await rm(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it('should silently skip files that fail stat', async () => {
+      const { mkdtemp, writeFile, rm, mkdir, symlink } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+
+      const tmp = await mkdtemp(join(tmpdir(), 'discover-enoent-'));
+      const projDir = join(tmp, 'projects', 'test-project');
+      await mkdir(projDir, { recursive: true });
+
+      // Create a broken symlink (stat will fail with ENOENT) and a real file
+      const brokenLink = join(projDir, 'broken.jsonl');
+      await symlink('/nonexistent/path/that/does/not/exist.jsonl', brokenLink);
+      const goodFile = join(projDir, 'good.jsonl');
+      await writeFile(goodFile, '{}', 'utf8');
+
+      try {
+        const result = await discoverSessionFiles({
+          claudePaths: { xdg: tmp, legacy: join(tmp, 'nonexistent') },
+          sinceMs: 365 * 24 * 60 * 60 * 1000, // 1 year window
+        });
+        // Broken symlink should be silently skipped, only good.jsonl returned
+        expect(result).toHaveLength(1);
+        expect(result[0]).toContain('good.jsonl');
+      } finally {
+        await rm(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it('should return all files when sinceMs is Infinity', async () => {
+      const { mkdtemp, writeFile, rm, mkdir, utimes } = await import('node:fs/promises');
+      const { tmpdir } = await import('node:os');
+      const { join } = await import('node:path');
+
+      const tmp = await mkdtemp(join(tmpdir(), 'discover-inf-'));
+      const projDir = join(tmp, 'projects', 'test-project');
+      await mkdir(projDir, { recursive: true });
+
+      const file1 = join(projDir, 'file1.jsonl');
+      const file2 = join(projDir, 'file2.jsonl');
+      await writeFile(file1, '{}', 'utf8');
+      await writeFile(file2, '{}', 'utf8');
+
+      // Make file2 very old — normally would be filtered out
+      const longAgo = new Date('2020-01-01T00:00:00Z');
+      await utimes(file2, longAgo, longAgo);
+
+      try {
+        const result = await discoverSessionFiles({
+          claudePaths: { xdg: tmp, legacy: join(tmp, 'nonexistent') },
+          sinceMs: Infinity,
+        });
+        // Infinity should bypass the sinceMs filter entirely
+        expect(result).toHaveLength(2);
+      } finally {
+        await rm(tmp, { recursive: true, force: true });
+      }
+    });
   });
 }

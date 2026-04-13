@@ -9,6 +9,7 @@ import { scanAgents } from './scan-agents.ts';
 import { scanSkills, resolveSkillName } from './scan-skills.ts';
 import { scanMcpServers, readClaudeConfig } from './scan-mcp.ts';
 import { scanMemoryFiles } from './scan-memory.ts';
+import { annotateFrameworks } from './annotate.ts';
 
 /**
  * Match inventory items against the invocation ledger and classify ghost tier.
@@ -157,8 +158,17 @@ export async function scanAll(
     scanMemoryFiles(claudePaths, projectPaths),
   ]);
 
+  // Phase 2 (v1.3.0): Annotate agent and skill items with their `framework`
+  // field BEFORE concat with mcp/memory items. Subset-annotate is the locked
+  // D-10 decision: it makes the DETECT-09 scope visible at the call site
+  // (mcp + memory bypass annotation entirely) and gives the knownItems
+  // threshold the correct semantic (only counts agents/skills toward gstack
+  // detection). Memory and mcp items pass through with no `framework` key,
+  // preserving byte-identical v1.2.1 JSON output for those categories.
+  const annotated = annotateFrameworks([...agentItems, ...skillItems]);
+
   // Flatten all items
-  const allItems: InventoryItem[] = [...agentItems, ...skillItems, ...mcpItems, ...memoryItems];
+  const allItems: InventoryItem[] = [...annotated, ...mcpItems, ...memoryItems];
 
   // Classify all items against invocation ledger
   const results = await matchInventory(allItems, invocations, options?.claudeConfigPath);

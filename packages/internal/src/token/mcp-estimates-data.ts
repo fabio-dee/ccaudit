@@ -38,6 +38,14 @@ const validatedData = parsed.output;
 /** Claude context window size from bundled data (200,000 tokens). */
 export const CONTEXT_WINDOW_SIZE: number = validatedData.contextWindowSize;
 
+/**
+ * Default token estimate for MCP servers not in the bundled data.
+ * Based on median of known servers (~3,750 tokens), rounded down to 2,000
+ * as a conservative floor. Prevents zero-counting of unknown servers in
+ * overhead calculations and health scores.
+ */
+export const DEFAULT_UNKNOWN_MCP_TOKENS = 2_000;
+
 // Build lookup map from validated entries
 const estimatesMap = new Map<string, McpTokenEntry>();
 for (const entry of validatedData.entries) {
@@ -111,6 +119,12 @@ if (import.meta.vitest) {
   describe('CONTEXT_WINDOW_SIZE', () => {
     it('should equal 200000', () => {
       expect(CONTEXT_WINDOW_SIZE).toBe(200000);
+    });
+  });
+
+  describe('DEFAULT_UNKNOWN_MCP_TOKENS', () => {
+    it('DEFAULT_UNKNOWN_MCP_TOKENS equals 2000', () => {
+      expect(DEFAULT_UNKNOWN_MCP_TOKENS).toBe(2000);
     });
   });
 }

@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","cwd":"/fake/project","timestamp":"2024-04-01T12:00:00.000Z","sessionId":"phase5-fixture"}
+{"type":"assistant","timestamp":"2024-04-01T12:00:01.000Z","sessionId":"phase5-fixture","message":{"role":"assistant","content":[{"type":"tool_use","id":"t-gsd-planner","name":"Task","input":{"subagent_type":"gsd-planner","prompt":"plan phase 5"}}]}}
+{"type":"assistant","timestamp":"2024-04-01T12:00:02.000Z","sessionId":"phase5-fixture","message":{"role":"assistant","content":[{"type":"tool_use","id":"t-gsd-executor","name":"Task","input":{"subagent_type":"gsd-executor","prompt":"execute plan"}}]}}

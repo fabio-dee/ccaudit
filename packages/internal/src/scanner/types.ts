@@ -18,6 +18,8 @@ export interface InventoryItem {
   projectPath: string | null;
   /** Optional file modification time in ms (used by memory scanner) */
   mtimeMs?: number;
+  /** Framework group identity. null when item is not part of any detected framework. */
+  framework?: string | null;
 }
 
 /**
@@ -114,6 +116,28 @@ if (import.meta.vitest) {
       };
       expect(item.category).toBe('memory');
       expect(item.mtimeMs).toBe(1712000000000);
+    });
+
+    it('should accept an item with optional framework field set (SCAN-01)', () => {
+      const grouped: InventoryItem = {
+        name: 'gsd-planner',
+        path: '/home/user/.claude/agents/gsd-planner.md',
+        scope: 'global',
+        category: 'agent',
+        projectPath: null,
+        framework: 'gsd',
+      };
+      expect(grouped.framework).toBe('gsd');
+
+      const ungrouped: InventoryItem = {
+        name: 'custom-agent',
+        path: '/home/user/.claude/agents/custom.md',
+        scope: 'global',
+        category: 'agent',
+        projectPath: null,
+        framework: null,
+      };
+      expect(ungrouped.framework).toBeNull();
     });
   });
 
