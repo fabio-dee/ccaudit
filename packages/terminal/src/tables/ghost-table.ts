@@ -663,6 +663,7 @@ function computeNaturalWidth(
   header: string,
   summaries: CategorySummary[],
   bottomLines: string[],
+  frameworkGhostsByCategory?: Partial<Record<ItemCategory, number>>,
 ): number {
   // Header row: "│ " + title + trailing_pad + " │" → 4 + visLen(title)
   let maxW = 4 + stripAnsi(header.split('\n')[0]!).length;
@@ -671,9 +672,12 @@ function computeNaturalWidth(
   // col4 content needs padding of 2 (1 space each side)
   for (const s of summaries) {
     const isMemory = s.category === 'memory';
-    const col4Text = isMemory
+    const baseCol4Text = isMemory
       ? 'Stale:  ' + String(s.ghost).padStart(3) + ' ' + formatTokenShort(s.tokenCost)
       : 'Ghost:  ' + String(s.ghost).padStart(3) + ' ' + formatTokenShort(s.tokenCost);
+    const fwInCat = frameworkGhostsByCategory?.[s.category as ItemCategory] ?? 0;
+    const col4Text =
+      fwInCat > 0 ? `${baseCol4Text} (${fwInCat} in frameworks above)` : baseCol4Text;
     maxW = Math.max(maxW, 46 + stripAnsi(col4Text).length + 2);
   }
 
@@ -697,7 +701,7 @@ export function renderGhostOutputBox(
 ): string {
   const tw = Math.min(
     termWidth ?? getTerminalWidth(),
-    computeNaturalWidth(header, summaries, bottomLines),
+    computeNaturalWidth(header, summaries, bottomLines, frameworkGhostsByCategory),
   );
   const innerWidth = tw - 2; // chars between outer │ and │
   const contentWidth = innerWidth - 2; // prose line content (1 pad each side)
