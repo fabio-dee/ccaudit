@@ -118,16 +118,24 @@ export function applyFrameworkProtection(
 
   // Step 5 — forcePartial override: items pass through, warnings still emitted.
   if (opts.forcePartial) {
-    const warnings = buildWarnings(protectedFrameworks, enriched);
+    const warnings = buildWarnings(protectedFrameworks);
     return { filtered: enriched, protectedItems: [], warnings };
   }
 
   // Step 6 — partition enriched into filtered vs. protectedItems.
+  // Membership is read from FrameworkGroup.members (the actual grouping
+  // result), not r.item.framework. Heuristic Tier-2 groups assemble
+  // members whose scanner-level item.framework is still null; keying off
+  // item.framework would leak them past protection.
+  const protectedPaths = new Set<string>();
+  for (const fw of protectedFrameworks.values()) {
+    for (const m of fw.members) protectedPaths.add(m.path);
+  }
+
   const filtered: TokenCostResult[] = [];
   const protectedItems: TokenCostResult[] = [];
   for (const r of enriched) {
-    const fwId = r.item.framework ?? null;
-    if (fwId !== null && protectedFrameworks.has(fwId) && r.tier !== 'used') {
+    if (protectedPaths.has(r.item.path) && r.tier !== 'used') {
       protectedItems.push(r);
     } else {
       filtered.push(r);
@@ -135,7 +143,7 @@ export function applyFrameworkProtection(
   }
 
   // Step 7 — sorted warnings.
-  const warnings = buildWarnings(protectedFrameworks, enriched);
+  const warnings = buildWarnings(protectedFrameworks);
   return { filtered, protectedItems, warnings };
 }
 
@@ -146,19 +154,17 @@ export function applyFrameworkProtection(
  */
 function buildWarnings(
   protectedFrameworks: Map<string, FrameworkGroup>,
-  enriched: TokenCostResult[],
 ): ProtectedFrameworkWarning[] {
   const entries: ProtectedFrameworkWarning[] = [];
   for (const fw of protectedFrameworks.values()) {
-    const protectedGhostMembers = enriched.filter(
-      (r) => (r.item.framework ?? null) === fw.id && r.tier !== 'used',
-    ).length;
     entries.push({
       frameworkId: fw.id,
       displayName: fw.displayName,
       status: fw.status,
       activeMembers: fw.totals.used,
-      protectedGhostMembers,
+      // Count from FrameworkGroup.totals so heuristic groups — which lack a
+      // scanner-assigned item.framework — are counted correctly.
+      protectedGhostMembers: fw.totals.likelyGhost + fw.totals.definiteGhost,
     });
   }
   // Stable sort: case-insensitive ASC by frameworkId.
@@ -395,6 +401,48 @@ if (import.meta.vitest) {
       expect(result.filtered).toBe(enriched);
       expect(result.protectedItems).toEqual([]);
       expect(result.warnings).toEqual([]);
+    });
+  });
+
+  describe('applyFrameworkProtection — heuristic (Tier-2) group membership', () => {
+    // Regression: protection must follow FrameworkGroup.members, not
+    // item.framework. Heuristic clusters are formed by groupByFramework
+    // over items whose scanner-level item.framework is still null.
+    it('protects ghost members of a partially-used heuristic cluster', () => {
+      const enriched = [
+        // Heuristic "foo" cluster: 1 used + 2 ghost, all with framework: null.
+        makeResult({ name: 'foo-alpha', category: 'agent', tier: 'used', framework: null }),
+        makeResult({
+          name: 'foo-beta',
+          category: 'agent',
+          tier: 'definite-ghost',
+          framework: null,
+        }),
+        makeResult({
+          name: 'foo-gamma',
+          category: 'agent',
+          tier: 'definite-ghost',
+          framework: null,
+        }),
+      ];
+      const result = applyFrameworkProtection(enriched, {
+        forcePartial: false,
+        groupFrameworks: true,
+      });
+      // The 1 used member flows through; the 2 ghost members are protected.
+      expect(result.filtered).toHaveLength(1);
+      expect(result.filtered[0]?.item.name).toBe('foo-alpha');
+      expect(result.protectedItems).toHaveLength(2);
+      expect(result.protectedItems.map((r) => r.item.name).sort()).toEqual([
+        'foo-beta',
+        'foo-gamma',
+      ]);
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings[0]).toMatchObject({
+        status: 'partially-used',
+        activeMembers: 1,
+        protectedGhostMembers: 2,
+      });
     });
   });
 
