@@ -51,7 +51,7 @@ Or phrase the request naturally:
 clean up my marketing skills
 archive any agent I haven't used in 90 days
 remove all GSD-related ghost skills
-find unused Python agents and delete them
+find unused Python agents and archive them
 what ghost skills do I have about SEO?
 ```
 
