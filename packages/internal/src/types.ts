@@ -48,9 +48,13 @@ export interface GhostItem {
   urgencyScore: number;
   /** Days since last use, pre-computed integer (null if never used) */
   daysSinceLastUse: number | null;
-  /** Framework group identity. null when item is not part of any detected framework. */
+  /** Framework group identity. null when explicitly ungrouped; undefined when not annotated. */
   framework?: string | null;
-  /** Token cost estimate. null when estimation was not possible (e.g., unknown MCP server). */
+  /**
+   * Token cost estimate. Always non-null for agents and MCP servers (unknown MCPs
+   * fall back to DEFAULT_UNKNOWN_MCP_TOKENS). May be null for memory / skill
+   * items when file-size estimation fails (e.g., unreadable file).
+   */
   tokenEstimate?: TokenEstimate | null;
 }
 
