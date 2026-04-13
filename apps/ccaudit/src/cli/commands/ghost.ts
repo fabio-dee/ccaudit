@@ -208,6 +208,7 @@ export const ghostCommand = define({
         path: r.item.path,
         tokens: r.tokenEstimate?.tokens ?? 0,
         framework: r.item.framework ?? null,
+        tier: r.tier,
       }));
 
     // Step 3.6: Dry-run branch (Phase 7, D-01 through D-20)
@@ -343,7 +344,7 @@ export const ghostCommand = define({
                 r.projectPath ?? '',
                 r.path,
                 String(p.tokens),
-                'definite-ghost',
+                p.tier,
               ];
             })
           : [];
@@ -394,7 +395,7 @@ export const ghostCommand = define({
                 r.projectPath ?? '',
                 r.path,
                 String(p.tokens),
-                'definite-ghost',
+                p.tier,
               ]),
             );
           }

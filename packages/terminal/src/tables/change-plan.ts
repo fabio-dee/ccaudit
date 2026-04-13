@@ -1,6 +1,6 @@
 import { homedir as osHomedir } from 'node:os';
 import { colorize } from '../color.ts';
-import type { ChangePlan } from '@ccaudit/internal';
+import type { ChangePlan, GhostTier } from '@ccaudit/internal';
 import type { ProtectedFrameworkWarning } from '@ccaudit/internal';
 
 /**
@@ -18,6 +18,9 @@ export interface ProtectedItem {
   tokens: number;
   /** Framework id from the inventory item — used to group the PROTECTED section. */
   framework: string | null;
+  /** Ghost tier from the classification pass. Preserved so CSV/TSV dry-run
+   *  rows serialize the real tier instead of a hard-coded fallback. */
+  tier: GhostTier;
 }
 
 /**
@@ -472,6 +475,7 @@ if (import.meta.vitest) {
         path: '/tmp/gsd-ghost.md',
         tokens: 200,
         framework: 'gsd',
+        tier: 'definite-ghost',
         ...over,
       };
     }
@@ -619,6 +623,7 @@ if (import.meta.vitest) {
         path: '/tmp/gsd-ghost.md',
         tokens: 200,
         framework: 'gsd',
+        tier: 'definite-ghost',
         ...over,
       };
     }
