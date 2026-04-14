@@ -794,31 +794,28 @@ export function renderHooksAdvisory(
   hookTokens: number,
   hookItems: TokenCostResult[],
   verbose: boolean,
+  termWidth?: number,
 ): string {
   if (hookCount === 0) return '';
 
   const tokenLabel = formatTokenShort(hookTokens);
-  const tw = getTerminalWidth();
+  const tw = termWidth ?? getTerminalWidth();
 
   const lines: string[] = [];
 
-  // Section heading (outside the box)
+  // Section heading (outside the box) -- clamped to terminal width
+  const headingFull =
+    colorize.bold('\u{1FA9D} Hooks') + colorize.dim(' (advisory \u2014 not included in total)');
   lines.push(
-    colorize.bold('\u{1FA9D} Hooks') + colorize.dim(' (advisory \u2014 not included in total)'),
+    stripAnsi(headingFull).length <= tw
+      ? headingFull
+      : truncateAnsi(headingFull, tw - 1) + '\u2026',
   );
   lines.push('');
 
   // Summary box
   const summaryText = `Hooks  \u2502 Defined: ${hookCount}   \u2502 Dormant: ${dormantCount}  \u2502 ${tokenLabel} (upper-bound)`;
-  const summaryVisLen = stripAnsi(summaryText).length;
-  const boxInner = Math.max(summaryVisLen + 2, 40);
-  const boxInnerClamped = Math.min(boxInner, tw - 2);
-  const topBorder = '\u250C' + '\u2500'.repeat(boxInnerClamped) + '\u2510';
-  const bottomBorder = '\u2514' + '\u2500'.repeat(boxInnerClamped) + '\u2518';
-  const rightPad = ' '.repeat(Math.max(0, boxInnerClamped - summaryVisLen - 1));
-  lines.push(topBorder);
-  lines.push('\u2502 ' + summaryText + rightPad + '\u2502');
-  lines.push(bottomBorder);
+  lines.push(wrapInBox(summaryText, 1, tw));
 
   // Per-hook rows in verbose mode
   if (verbose && hookItems.length > 0) {
@@ -864,13 +861,16 @@ export function renderHooksAdvisory(
 
   lines.push('');
 
-  // Explanatory prose
+  // Explanatory prose, word-wrapped to terminal width
   const tokenLabelPlain = formatTokenShort(hookTokens);
-  lines.push(colorize.dim('Hooks inject context only when they fire. ccaudit cannot observe'));
-  lines.push(colorize.dim('firing events reliably, so dormant hooks are upper-bound estimates.'));
-  lines.push(
-    colorize.dim(`Pass --include-hooks to include ${tokenLabelPlain} in the total above.`),
-  );
+  for (const paragraph of [
+    'Hooks inject context only when they fire. ccaudit cannot observe firing events reliably, so dormant hooks are upper-bound estimates.',
+    `Pass --include-hooks to include ${tokenLabelPlain} in the total above.`,
+  ]) {
+    for (const wrapped of wordWrap(paragraph, Math.max(20, tw))) {
+      lines.push(colorize.dim(wrapped));
+    }
+  }
 
   return lines.join('\n');
 }
@@ -1712,6 +1712,74 @@ if (import.meta.vitest) {
       ];
       const out = renderGhostOutputBox('Test header', summaries, [], null, 120, { agent: 81 });
       expect(out).toContain('81 in frameworks above');
+    });
+  });
+
+  describe('renderHooksAdvisory width safety', () => {
+    function makeHookItem(name: string, tokens: number): TokenCostResult {
+      return {
+        item: {
+          name,
+          path: `/test/${name}`,
+          scope: 'global',
+          category: 'hook',
+          projectPath: null,
+          hookEvent: 'PreToolUse',
+        },
+        tier: 'dormant',
+        lastUsed: null,
+        invocationCount: 0,
+        tokenEstimate: { tokens, confidence: 'estimated', source: 'test' },
+      };
+    }
+
+    it('returns empty string when hookCount is 0', () => {
+      expect(renderHooksAdvisory(0, 0, 0, [], false)).toBe('');
+    });
+
+    it('no line exceeds a narrow terminal width of 40', () => {
+      const output = renderHooksAdvisory(3, 2, 5000, [makeHookItem('my-hook', 5000)], false, 40);
+      for (const line of output.split('\n')) {
+        // eslint-disable-next-line no-control-regex
+        const visible = line.replace(/\x1b\[[0-9;]*m/g, '');
+        expect(visible.length).toBeLessThanOrEqual(40);
+      }
+    });
+
+    it('no line exceeds a standard terminal width of 80', () => {
+      const output = renderHooksAdvisory(
+        5,
+        3,
+        12000,
+        [makeHookItem('hook-alpha', 12000)],
+        false,
+        80,
+      );
+      for (const line of output.split('\n')) {
+        // eslint-disable-next-line no-control-regex
+        const visible = line.replace(/\x1b\[[0-9;]*m/g, '');
+        expect(visible.length).toBeLessThanOrEqual(80);
+      }
+    });
+
+    it('contains hook count, dormant count, and token label', () => {
+      const output = renderHooksAdvisory(4, 2, 8000, [], false, 80);
+      expect(output).toContain('Defined: 4');
+      expect(output).toContain('Dormant: 2');
+      expect(output).toContain('~8.0k');
+    });
+
+    it('contains explanatory prose about firing events', () => {
+      const output = renderHooksAdvisory(1, 1, 1000, [], false, 80);
+      expect(output).toContain('Hooks inject context only when they fire');
+      expect(output).toContain('--include-hooks');
+    });
+
+    it('contains Unicode box borders in summary box', () => {
+      const output = renderHooksAdvisory(2, 1, 3000, [], false, 80);
+      expect(output).toContain('\u250C'); // top-left corner
+      expect(output).toContain('\u2514'); // bottom-left corner
+      expect(output).toContain('\u2502'); // vertical bar
     });
   });
 }

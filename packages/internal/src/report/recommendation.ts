@@ -38,5 +38,9 @@ if (import.meta.vitest) {
     it('maps used to keep', () => {
       expect(classifyRecommendation('used')).toBe('keep');
     });
+
+    it('maps dormant to monitor', () => {
+      expect(classifyRecommendation('dormant')).toBe('monitor');
+    });
   });
 }

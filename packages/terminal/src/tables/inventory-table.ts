@@ -130,10 +130,19 @@ export function renderInventoryTable(
     const actionStr = formatRecommendation(recommendation);
 
     // T43: indent import-chain rows by 2×importDepth spaces in the Name column.
-    // The indent is prepended before wrapping so column-width accounting stays correct.
-    const nameIndent = ' '.repeat(2 * (r.item.importDepth ?? 0));
-    const displayName = nameIndent + r.item.name;
-    const c0Lines = wrapCell(displayName, nameW);
+    // The indent is injected after wrapCell so wordWrap does not strip leading
+    // spaces. We wrap the bare name in a reduced effective cell width, then
+    // manually prepend the indent into each wrapped line, preserving cell width.
+    const indentLen = 2 * (r.item.importDepth ?? 0);
+    const nameIndent = ' '.repeat(indentLen);
+    const rawC0Lines = wrapCell(r.item.name, nameW - indentLen);
+    const c0Lines = rawC0Lines.map((line) => {
+      // Each wrapCell line is: ' ' + content + rightPad (total = nameW - indentLen).
+      // Re-pad to full nameW by prepending the indent and trimming the trailing
+      // spaces by the same amount (the right-pad in wrapCell already accounts for
+      // nameW - indentLen, so the combined string is exactly nameW chars).
+      return nameIndent + line;
+    });
     const c1Lines = wrapCell(r.item.category, catW);
     const c2Lines = wrapCell(r.item.scope, scopeW);
 
@@ -402,6 +411,82 @@ if (import.meta.vitest) {
       // Both should NOT contain the Framework header since fwMap is missing
       expect(outVerbose).not.toContain('Framework');
       expect(outPlain).not.toContain('Framework');
+    });
+  });
+
+  describe('renderInventoryTable importDepth indentation (T43)', () => {
+    it('depth-0 row has no leading spaces before the name', () => {
+      const result = makeResult('root-file', 'definite-ghost', 1000);
+      const output = renderInventoryTable([result]);
+      // The Name cell must start with " root-file" (1 left-pad space, no indent)
+      // and must NOT start with "   root-file" (3+ spaces = indent+pad)
+      expect(output).toContain(' root-file');
+      expect(output).not.toContain('   root-file');
+    });
+
+    it('depth-1 row prepends 2 spaces before the name (2 * importDepth)', () => {
+      const result: TokenCostResult = {
+        item: {
+          name: 'child-file',
+          path: '/test/child-file',
+          scope: 'global',
+          category: 'memory',
+          projectPath: null,
+          importDepth: 1,
+        },
+        tier: 'definite-ghost',
+        lastUsed: null,
+        invocationCount: 0,
+        tokenEstimate: { tokens: 500, confidence: 'estimated', source: 'test' },
+      };
+      const output = renderInventoryTable([result]);
+      // Cell layout: 1 left-pad + 2-space indent + name
+      expect(output).toContain('   child-file');
+    });
+
+    it('depth-2 row prepends 4 spaces before the name (2 * importDepth)', () => {
+      // Name must fit within nameW(15) - indentLen(4) - 2 padding = 9 visible chars.
+      const result: TokenCostResult = {
+        item: {
+          name: 'gc-file',
+          path: '/test/gc-file',
+          scope: 'global',
+          category: 'memory',
+          projectPath: null,
+          importDepth: 2,
+        },
+        tier: 'likely-ghost',
+        lastUsed: null,
+        invocationCount: 0,
+        tokenEstimate: null,
+      };
+      const output = renderInventoryTable([result]);
+      // Cell layout: nameIndent(4) + wrapCell left-pad(1) + name = 5 leading spaces
+      expect(output).toContain('     gc-file');
+    });
+
+    it('depth-1 indent does not appear in the depth-0 row of the same table', () => {
+      const root = makeResult('root-doc', 'definite-ghost', 2000);
+      // Name must fit within nameW(15) - indentLen(2) - 2 padding = 11 visible chars.
+      const child: TokenCostResult = {
+        item: {
+          name: 'imp-doc',
+          path: '/test/imp-doc',
+          scope: 'global',
+          category: 'memory',
+          projectPath: null,
+          importDepth: 1,
+        },
+        tier: 'definite-ghost',
+        lastUsed: null,
+        invocationCount: 0,
+        tokenEstimate: null,
+      };
+      const output = renderInventoryTable([root, child]);
+      // root row: wrapCell left-pad(1) only, no indent
+      expect(output).toContain(' root-doc');
+      // child row: nameIndent(2) + wrapCell left-pad(1) = 3 leading spaces
+      expect(output).toContain('   imp-doc');
     });
   });
 }

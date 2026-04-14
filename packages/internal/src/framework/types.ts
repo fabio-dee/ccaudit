@@ -164,6 +164,12 @@ if (import.meta.vitest) {
       const result = v.safeParse(frameworkSchema, bad);
       expect(result.success).toBe(false);
     });
+
+    it('accepts an entry with the hook category', () => {
+      const hookEntry = { ...VALID_ENTRY, id: 'hooks-fw', categories: ['hook'] };
+      const result = v.safeParse(frameworkSchema, hookEntry);
+      expect(result.success).toBe(true);
+    });
   });
 
   describe('registrySchema', () => {

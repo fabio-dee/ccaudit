@@ -365,6 +365,123 @@ if (import.meta.vitest) {
       expect(results[0].tier).toBe('definite-ghost');
       expect(results[0].lastUsed).toBeNull();
     });
+
+    it('returns tier=used for command with matching invocation', async () => {
+      const ts = new Date(Date.now() - 1 * 86_400_000).toISOString();
+      const items: InventoryItem[] = [makeItem({ name: 'gsd:update', category: 'command' })];
+      const invocations: InvocationRecord[] = [
+        makeRecord({ kind: 'command', name: 'gsd:update', timestamp: ts }),
+      ];
+
+      const results = await matchInventory(items, invocations);
+      expect(results).toHaveLength(1);
+      expect(results[0].tier).toBe('used');
+      expect(results[0].invocationCount).toBe(1);
+      expect(results[0].lastUsed).toBeInstanceOf(Date);
+      expect(results[0].lastUsed!.toISOString()).toBe(ts);
+    });
+
+    it('returns tier=definite-ghost for command with no matching invocation', async () => {
+      const items: InventoryItem[] = [makeItem({ name: 'ghost-cmd', category: 'command' })];
+
+      const results = await matchInventory(items, []);
+      expect(results).toHaveLength(1);
+      expect(results[0].tier).toBe('definite-ghost');
+      expect(results[0].invocationCount).toBe(0);
+      expect(results[0].lastUsed).toBeNull();
+    });
+
+    it('attributes hook invocation via hookEvent:* key', async () => {
+      const ts = new Date(Date.now() - 1 * 86_400_000).toISOString();
+      const items: InventoryItem[] = [
+        makeItem({ name: 'on-start', category: 'hook', hookEvent: 'SessionStart' }),
+      ];
+      // Hooks are stored in the map with the event-level key 'SessionStart:*'
+      const invocations: InvocationRecord[] = [
+        makeRecord({ kind: 'hook', name: 'SessionStart:*', timestamp: ts }),
+      ];
+
+      const results = await matchInventory(items, invocations);
+      expect(results).toHaveLength(1);
+      expect(results[0].tier).toBe('used');
+      expect(results[0].invocationCount).toBe(1);
+      expect(results[0].lastUsed).toBeInstanceOf(Date);
+    });
+
+    it('returns tier=definite-ghost for hook with hookEvent but no matching invocation', async () => {
+      const items: InventoryItem[] = [
+        makeItem({ name: 'ghost-hook', category: 'hook', hookEvent: 'PreToolUse' }),
+      ];
+
+      const results = await matchInventory(items, []);
+      expect(results).toHaveLength(1);
+      expect(results[0].tier).toBe('definite-ghost');
+      expect(results[0].invocationCount).toBe(0);
+    });
+
+    it('returns tier=definite-ghost for hook with no hookEvent (no matching possible)', async () => {
+      const items: InventoryItem[] = [
+        makeItem({ name: 'no-event-hook', category: 'hook' }), // hookEvent absent
+      ];
+
+      const results = await matchInventory(items, []);
+      expect(results).toHaveLength(1);
+      expect(results[0].tier).toBe('definite-ghost');
+      expect(results[0].invocationCount).toBe(0);
+    });
+
+    it('overrides tier to dormant for inject-capable hook with zero fires', async () => {
+      const items: InventoryItem[] = [
+        makeItem({
+          name: 'inject-hook',
+          category: 'hook',
+          hookEvent: 'SessionStart',
+          injectCapable: true,
+        }),
+      ];
+
+      const results = await matchInventory(items, []); // no invocations => count=0
+      expect(results).toHaveLength(1);
+      expect(results[0].tier).toBe('dormant');
+      expect(results[0].invocationCount).toBe(0);
+    });
+
+    it('does NOT override tier to dormant for non-inject-capable hook with zero fires', async () => {
+      const items: InventoryItem[] = [
+        makeItem({
+          name: 'plain-hook',
+          category: 'hook',
+          hookEvent: 'SessionStart',
+          injectCapable: false,
+        }),
+      ];
+
+      const results = await matchInventory(items, []);
+      expect(results).toHaveLength(1);
+      // Non-inject hook with no fires stays at natural classifyGhost tier
+      expect(results[0].tier).not.toBe('dormant');
+      expect(results[0].invocationCount).toBe(0);
+    });
+
+    it('does NOT override tier to dormant for inject-capable hook that HAS fires', async () => {
+      const ts = new Date(Date.now() - 1 * 86_400_000).toISOString();
+      const items: InventoryItem[] = [
+        makeItem({
+          name: 'active-inject-hook',
+          category: 'hook',
+          hookEvent: 'SessionStart',
+          injectCapable: true,
+        }),
+      ];
+      const invocations: InvocationRecord[] = [
+        makeRecord({ kind: 'hook', name: 'SessionStart:*', timestamp: ts }),
+      ];
+
+      const results = await matchInventory(items, invocations);
+      expect(results).toHaveLength(1);
+      expect(results[0].tier).not.toBe('dormant');
+      expect(results[0].invocationCount).toBe(1);
+    });
   });
 
   describe('groupByProject', () => {

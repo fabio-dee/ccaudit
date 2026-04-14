@@ -1064,6 +1064,89 @@ if (import.meta.vitest) {
       expect(warnings[0]).toMatch(/Partial bust detected/);
       expect(result.status).toBe('success');
     });
+
+    it('Test 7b: corrupt older manifest is skipped with a warning; valid newer manifest still restores (regression)', async () => {
+      // Regression for the skip-corrupt-older-manifest branch (lines 737-742).
+      // Scenario: two manifests, newest has a valid header, older is truncated/corrupt.
+      // Expected: onWarning fires once for the corrupt older manifest; restore succeeds.
+      const newerEntry: ManifestEntry = {
+        path: '/fake/.claude/ccaudit/manifests/bust-2026-04-10T10-00-00Z.jsonl',
+        mtime: new Date('2026-04-10T10:00:00Z'),
+      };
+      const olderEntry: ManifestEntry = {
+        path: '/fake/.claude/ccaudit/manifests/bust-2026-04-01T08-00-00Z.jsonl',
+        mtime: new Date('2026-04-01T08:00:00Z'),
+      };
+
+      const warnings: string[] = [];
+
+      const deps = makeFakeDeps({
+        discoverManifests: async () => [newerEntry, olderEntry],
+        readManifest: async (p) => {
+          if (p === newerEntry.path) {
+            return { header: fakeHeader, ops: [], footer: fakeFooter, truncated: false };
+          }
+          // Older manifest is corrupt: no header record.
+          return { header: null, ops: [], footer: null, truncated: true };
+        },
+        processDetector: {
+          runCommand: async () => '',
+          getParentPid: async () => null,
+          platform: 'linux',
+        },
+        onWarning: (msg) => {
+          warnings.push(msg);
+        },
+      });
+
+      const result = await executeRestore({ kind: 'full' }, deps);
+
+      // The corrupt older manifest must have triggered exactly one warning.
+      expect(warnings.length).toBe(1);
+      expect(warnings[0]).toMatch(/Skipping corrupt manifest/);
+      expect(warnings[0]).toMatch(path.basename(olderEntry.path));
+
+      // Restore must still succeed (the newer manifest is intact).
+      expect(result.status).toBe('success');
+    });
+
+    it('Test 7c: corrupt newest manifest hard-fails even when older manifests are valid (regression)', async () => {
+      // Counterpart regression: a corrupt *newest* manifest must produce
+      // manifest-corrupt, not silently fall back to older ones.
+      const newerEntry: ManifestEntry = {
+        path: '/fake/.claude/ccaudit/manifests/bust-2026-04-10T10-00-00Z.jsonl',
+        mtime: new Date('2026-04-10T10:00:00Z'),
+      };
+      const olderEntry: ManifestEntry = {
+        path: '/fake/.claude/ccaudit/manifests/bust-2026-04-01T08-00-00Z.jsonl',
+        mtime: new Date('2026-04-01T08:00:00Z'),
+      };
+
+      const deps = makeFakeDeps({
+        discoverManifests: async () => [newerEntry, olderEntry],
+        readManifest: async (p) => {
+          if (p === newerEntry.path) {
+            // Newest manifest is corrupt.
+            return { header: null, ops: [], footer: null, truncated: true };
+          }
+          // Older manifest is perfectly valid.
+          return { header: fakeHeader, ops: [], footer: fakeFooter, truncated: false };
+        },
+        processDetector: {
+          runCommand: async () => '',
+          getParentPid: async () => null,
+          platform: 'linux',
+        },
+      });
+
+      const result = await executeRestore({ kind: 'full' }, deps);
+
+      // Hard failure on corrupt newest -- must not silently continue.
+      expect(result.status).toBe('manifest-corrupt');
+      if (result.status === 'manifest-corrupt') {
+        expect(result.path).toBe(newerEntry.path);
+      }
+    });
   });
 
   describe('findManifestForName', () => {

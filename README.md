@@ -293,7 +293,7 @@ npx ccaudit-cli restore --list    # list all archived items across busts
 
 Full-mode `restore` now walks **every** manifest in `~/.claude/ccaudit/manifests/` (not just the newest), with deduplication. Items archived by older busts are recovered too. Output now reports `moved` and `already-at-source` separately so idempotent re-runs don't inflate the success count.
 
-```
+```text
 159 agents/skills restored to their original locations (324 were already at source)
 ```
 
@@ -314,7 +314,7 @@ those items are included in the manifest and are fully restorable with
 An "orphan" is a file sitting in `~/.claude/ccaudit/archived/` that is not referenced by any manifest. This happens when:
 
 - a manifest was lost or truncated (e.g., a bust crashed mid-write)
-- the bust pre-dated v1.5.0's multi-manifest restore fix and the manifest no longer exists
+- the bust pre-dated v1.4.0's multi-manifest restore fix and the manifest no longer exists
 - files were moved into `archived/` manually
 
 ```bash
@@ -335,7 +335,7 @@ Every ccaudit invocation is appended to `~/.claude/ccaudit/history.jsonl` (mode 
 Schema version: `history_version: 1`. Future readers must refuse files with a higher version number.
 
 ```jsonl
-{"record_type":"header","history_version":1,"ccaudit_version":"1.5.0","created_at":"2026-04-13T08:00:00.000Z","host_os":"darwin","node_version":"v22.0.0"}
+{"record_type":"header","history_version":1,"ccaudit_version":"1.4.0","created_at":"2026-04-13T08:00:00.000Z","host_os":"darwin","node_version":"v22.0.0"}
 {"record_type":"entry","ts":"2026-04-13T08:19:58.000Z","argv":["--dry-run"],"command":"dry-run","exit_code":0,"duration_ms":412,"cwd":"/home/user/project","privacy_redacted":false,"result":{"planned_archive":146,"planned_disable":4,"planned_flag":6,"checkpoint_hash":"abc123"},"errors":[]}
 ```
 
@@ -347,7 +347,7 @@ Privacy: `--privacy` redacts `cwd` and any path-shaped strings in `result`.
 
 Rotation: if `history.jsonl` exceeds 10 MB, a one-time advisory is printed to stderr suggesting manual archival:
 
-```
+```bash
 ℹ️  ccaudit history.jsonl is >10 MB; archive it with: mv ~/.claude/ccaudit/history.jsonl{,.$(date +%Y%m%d).bak}
 ```
 

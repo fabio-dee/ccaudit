@@ -172,7 +172,7 @@ Opt-out: `CCAUDIT_NO_HISTORY=1` (checked before any filesystem work).
 {
   "record_type": "header",
   "history_version": 1,
-  "ccaudit_version": "1.5.0",
+  "ccaudit_version": "1.4.0",
   "created_at": "2026-04-13T08:00:00.000Z",
   "host_os": "darwin",
   "node_version": "v22.0.0"
@@ -355,7 +355,7 @@ ccaudit ghost --json | jq '[.items[].category] | unique'
       "tokenEstimate": {
         "tokens": 39,
         "confidence": "estimated",
-        "source": "command:lazy (desc=93 chars)"
+        "source": "command:frontmatter (desc=93 chars)"
       },
       "recommendation": "archive",
       "urgencyScore": 70,

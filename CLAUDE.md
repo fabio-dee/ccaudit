@@ -12,7 +12,7 @@ TypeScript / Node ≥20 / pnpm 10 monorepo. CLI built on `gunshi`. JSON validati
 
 ## Monorepo layout
 
-```
+```text
 apps/ccaudit/        CLI entry, subcommand wrappers, integration tests, dist/ bundle
 packages/internal/   Domain code: scanner, remediation, framework, token, history, report
 packages/terminal/   Terminal renderers (tables, panels, color)
@@ -41,7 +41,7 @@ CI is tag-triggered only. Pre-push hook runs format + lint (not tests). Run `pnp
 
 ## Safety invariants
 
-These are user-visible behaviors that must not regress. Each was hard-won; the fix history is in the [v1.5 changelog entry](./CHANGELOG.md).
+These are user-visible behaviors that must not regress. Each was hard-won; the fix history is in the [v1.4.0 changelog entry](./CHANGELOG.md).
 
 - **Nothing is deleted.** Agents and skills are _moved_ to `~/.claude/ccaudit/archived/`. MCP servers are _key-renamed_ in-place (`name` → `ccaudit-disabled:name`). Memory files get a _frontmatter flag_, never destructive rewrites.
 - **Bust is gated by a dry-run checkpoint.** `--dangerously-bust-ghosts` requires a matching `--dry-run` checkpoint whose SHA-256 inventory hash equals the current scan. Hash mismatch aborts the bust.

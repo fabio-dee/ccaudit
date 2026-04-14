@@ -33,6 +33,17 @@ export class HistoryWriter {
    * write a header before the first entry.
    */
   async open(): Promise<number> {
+    // Guard against double-open: return the current file size without
+    // opening a second handle (which would leak the original descriptor).
+    if (this.fd) {
+      try {
+        const s = await this.fd.stat();
+        return s.size;
+      } catch {
+        return 0;
+      }
+    }
+
     await mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o700 });
     this.fd = await open(this.filePath, 'a', 0o600);
     try {
@@ -192,6 +203,29 @@ if (import.meta.vitest) {
       expect(records[0].record_type).toBe('header');
       expect(records[1].command).toBe('ghost');
       expect(records[2].command).toBe('restore');
+    });
+
+    it('open() is idempotent (second call returns size, no fd leak)', async () => {
+      const dir = await makeTmp();
+      const filePath = path.join(dir, 'test.jsonl');
+      const writer = new HistoryWriter(filePath);
+      const s1 = await writer.open();
+      expect(s1).toBe(0); // fresh file
+      // Second open must return the same size without leaking a second handle.
+      const s2 = await writer.open();
+      expect(s2).toBe(0);
+      // Write after double-open must still work (only one handle in use).
+      await writer.append({
+        record_type: 'header',
+        history_version: 1,
+        ccaudit_version: '1.0.0',
+        created_at: new Date().toISOString(),
+        host_os: 'darwin',
+        node_version: 'v22.0.0',
+      });
+      await writer.close();
+      const raw = await readFile(filePath, 'utf8');
+      expect(raw.trim().length).toBeGreaterThan(0);
     });
 
     it('close() is idempotent (safe to call multiple times)', async () => {

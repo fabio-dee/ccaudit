@@ -748,12 +748,17 @@ describe.skipIf(process.platform === 'win32')('ccaudit restore (subprocess integ
     await mkdir(archivedDir, { recursive: true });
 
     // ── Helper: build one manifest + archive files for N agents ───
+    // sourceSubdir: subdirectory under tmpHome for source paths (default: '.claude/agents')
     async function seedManifest(
       timestamp: string,
       agentNames: string[],
+      sourceSubdir = '.claude/agents',
     ): Promise<{ sources: string[]; archives: string[] }> {
       const sources: string[] = [];
       const archives: string[] = [];
+
+      // Convert filename-safe slug (colons replaced by dashes) to a proper ISO string
+      const isoTimestamp = timestamp.replace(/(\d{2})-(\d{2})-(\d{2})$/, '$1:$2:$3') + 'Z';
 
       const lines: string[] = [];
       lines.push(
@@ -762,7 +767,7 @@ describe.skipIf(process.platform === 'win32')('ccaudit restore (subprocess integ
           manifest_version: 1,
           ccaudit_version: '1.2.0',
           checkpoint_ghost_hash: `hash-${timestamp}`,
-          checkpoint_timestamp: `${timestamp}.000Z`,
+          checkpoint_timestamp: new Date(isoTimestamp).toISOString(),
           since_window: '30d',
           os: process.platform,
           node_version: process.version,
@@ -771,7 +776,7 @@ describe.skipIf(process.platform === 'win32')('ccaudit restore (subprocess integ
       );
 
       for (const name of agentNames) {
-        const sourcePath = path.join(tmpHome, '.claude', 'agents', `${name}.md`);
+        const sourcePath = path.join(tmpHome, sourceSubdir, `${name}.md`);
         const archivePath = path.join(archivedDir, `${name}.md`);
         const content = `# ${name}\nA ghost agent from ${timestamp}.\n`;
         const sha256 = createHash('sha256').update(content).digest('hex');
@@ -785,7 +790,7 @@ describe.skipIf(process.platform === 'win32')('ccaudit restore (subprocess integ
           JSON.stringify({
             op_id: `op-${name}`,
             op_type: 'archive',
-            timestamp: `${timestamp}.001Z`,
+            timestamp: new Date(new Date(isoTimestamp).getTime() + 1).toISOString(),
             status: 'completed',
             category: 'agent',
             scope: 'global',
@@ -819,24 +824,33 @@ describe.skipIf(process.platform === 'win32')('ccaudit restore (subprocess integ
 
       // Set mtime to the parsed timestamp so discoverManifests sorts correctly
       // regardless of how fast the test writes both files.
-      const parsedDate = new Date(timestamp.replace(/(\d{2})-(\d{2})-(\d{2})$/, '$1:$2:$3') + 'Z');
+      const parsedDate = new Date(isoTimestamp);
       await utimes(manifestPath, parsedDate, parsedDate);
 
       return { sources, archives };
     }
 
-    // Manifest A (older, mtime = 2026-04-01): 3 agents
+    // Manifest A (older, mtime = 2026-04-01): 3 agents in default source dir
     const { sources: sources1, archives: archives1 } = await seedManifest('2026-04-01T10-00-00', [
       'ghost-alpha',
       'ghost-beta',
       'ghost-gamma',
     ]);
 
-    // Manifest B (newer, mtime = 2026-04-05): 2 agents
-    const { sources: sources2, archives: archives2 } = await seedManifest('2026-04-05T18-30-00', [
-      'ghost-delta',
-      'ghost-epsilon',
-    ]);
+    // Manifest B (newer, mtime = 2026-04-05): 3 agents.
+    // ghost-alpha is intentionally included again with a different source dir so its
+    // archive_path matches Manifest A's ghost-alpha entry. This exercises the
+    // dedupe-by-archive_path / newer-wins branch: only Manifest B's record should be
+    // used for ghost-alpha, and Manifest A's stale source path must NOT be restored.
+    const { sources: sources2, archives: archives2 } = await seedManifest(
+      '2026-04-05T18-30-00',
+      ['ghost-delta', 'ghost-epsilon', 'ghost-alpha'],
+      // ghost-alpha's source lives in a different subdir so we can assert which record won
+      '.claude/agents/project',
+    );
+    // sources2[2] is the newer ghost-alpha source; sources1[0] is the stale one.
+    const newerAlphaSource = sources2[2]!;
+    const stalerAlphaSource = sources1[0]!;
 
     // Confirm 2 manifests exist before restore
     const manifestsBefore = await readdir(manifestsDir);
@@ -845,8 +859,9 @@ describe.skipIf(process.platform === 'win32')('ccaudit restore (subprocess integ
     ).length;
     expect(manifestCount, 'should have 2 manifests seeded').toBe(2);
 
-    // Confirm all 5 archive files exist
-    for (const archivePath of [...archives1, ...archives2]) {
+    // Confirm all 5 unique archive files exist (ghost-alpha archive was overwritten by B)
+    const uniqueArchives = [...new Set([...archives1, ...archives2])];
+    for (const archivePath of uniqueArchives) {
       expect(existsSync(archivePath), `archive ${path.basename(archivePath)} should exist`).toBe(
         true,
       );
@@ -861,23 +876,36 @@ describe.skipIf(process.platform === 'win32')('ccaudit restore (subprocess integ
       'success',
     );
 
-    // All 5 agents must be back at source paths
-    for (const sourcePath of [...sources1, ...sources2]) {
+    // Newer ghost-alpha source (from Manifest B) must be restored
+    expect(
+      existsSync(newerAlphaSource),
+      'ghost-alpha newer source (Manifest B) must be restored',
+    ).toBe(true);
+
+    // Stale ghost-alpha source (from Manifest A) must NOT be restored -- dedupe dropped it
+    expect(
+      existsSync(stalerAlphaSource),
+      'ghost-alpha stale source (Manifest A) must not be restored',
+    ).toBe(false);
+
+    // ghost-beta, ghost-gamma (A) and ghost-delta, ghost-epsilon (B) must all be restored
+    for (const sourcePath of [...sources1.slice(1), ...sources2.slice(0, 2)]) {
       expect(
         existsSync(sourcePath),
         `${path.basename(sourcePath)} must be restored to source`,
       ).toBe(true);
     }
 
-    // All archive files should be gone
-    for (const archivePath of [...archives1, ...archives2]) {
+    // All unique archive files should be gone
+    for (const archivePath of uniqueArchives) {
       expect(
         existsSync(archivePath),
         `${path.basename(archivePath)} archive should be removed`,
       ).toBe(false);
     }
 
-    // Counts: 5 moved, 0 already-at-source
+    // Counts: 5 moved (dedupe collapsed 6 records to 5 unique archive_paths),
+    // 0 already-at-source, 0 failed
     const counts = restoreParsed.counts as {
       unarchived: { moved: number; alreadyAtSource: number; failed: number };
     };

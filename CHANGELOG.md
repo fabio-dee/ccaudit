@@ -67,8 +67,8 @@ Evidence for the new formulas is drawn from:
 
 Hooks are excluded from the default grand total. The rationale: a pessimistic
 upper-bound of 2,500 tokens per inject-capable hook dominates the total and masks
-the signal from agents, skills, and memory — which are the categories where the
-bust pipeline can actually take action.
+the signal from agents, skills, and memory (the categories where the
+bust pipeline can actually take action), so they are advisory unless you pass the flag.
 
 Pass `--include-hooks` to see the pessimistic total. The advisory upper-bound is
 always shown in the summary regardless.

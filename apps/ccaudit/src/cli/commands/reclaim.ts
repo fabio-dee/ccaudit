@@ -88,6 +88,20 @@ export const reclaimCommand = define({
     // Phase 6: history instrumentation.
     const _historyStartMs = Date.now();
     const _argv = process.argv.slice(2);
+    const safeRecordHistory = async (
+      entry: Omit<Parameters<typeof recordHistory>[0], 'privacy'>,
+    ): Promise<void> => {
+      if (process.env.CCAUDIT_NO_HISTORY === '1') return;
+      try {
+        await recordHistory({ ...entry, privacy: false });
+      } catch (err) {
+        process.stderr.write(
+          `[ccaudit] warning: failed to record history: ${
+            err instanceof Error ? err.message : String(err)
+          }\n`,
+        );
+      }
+    };
 
     const dryRun = ctx.values['dry-run'] === true;
 
@@ -108,14 +122,13 @@ export const reclaimCommand = define({
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`ccaudit reclaim failed: ${message}\n`);
-      await recordHistory({
+      await safeRecordHistory({
         homeDir,
         command: 'reclaim',
         argv: _argv,
         exitCode: 2,
         durationMs: Date.now() - _historyStartMs,
         cwd: process.cwd(),
-        privacy: false,
         result: null,
         errors: [message],
         ccauditVersion: CCAUDIT_VERSION,
@@ -127,14 +140,13 @@ export const reclaimCommand = define({
 
     // Phase 6: record reclaim history entry.
     const exitCode = result.failed.length > 0 ? 1 : 0;
-    await recordHistory({
+    await safeRecordHistory({
       homeDir,
       command: 'reclaim',
       argv: _argv,
       exitCode,
       durationMs: Date.now() - _historyStartMs,
       cwd: process.cwd(),
-      privacy: false,
       result: {
         orphans_detected: result.orphans.length,
         reclaimed: result.reclaimed,
