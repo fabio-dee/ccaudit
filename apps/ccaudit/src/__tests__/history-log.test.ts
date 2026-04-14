@@ -92,9 +92,15 @@ async function runWithFakePs(
   extraEnv: Record<string, string> = {},
 ): Promise<Awaited<ReturnType<typeof runCcauditCli>>> {
   const binDir = path.join(tmpHome, 'bin');
+  // On Windows, process detection uses `tasklist` (from System32). Overriding
+  // PATH to the fake-ps binDir alone would strip System32 and break bust.
+  // Inherit the parent PATH on Windows; the fake ps shim is a Unix-only
+  // workaround for environments where `ps` may not be present or deterministic.
+  const envPath =
+    process.platform === 'win32' ? (process.env.PATH ?? process.env.Path ?? '') : binDir;
   return runCcauditCli(tmpHome, argv, {
     env: {
-      PATH: binDir,
+      PATH: envPath,
       ...extraEnv,
     },
   });

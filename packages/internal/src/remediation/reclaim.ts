@@ -382,7 +382,9 @@ if (import.meta.vitest) {
       const result = await reclaim({ dryRun: false, deps });
       expect(result.orphans).toHaveLength(1);
       expect(result.reclaimed).toBe(1);
-      expect(result.orphans[0]?.inferredSource).toBe(`${home}/.claude/agents/foo.md`);
+      expect(result.orphans[0]?.inferredSource).toBe(
+        path.join(home, '.claude', 'agents', 'foo.md'),
+      );
     });
 
     it('symlinks are skipped with a warning (never followed)', async () => {
