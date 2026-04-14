@@ -1,8 +1,12 @@
 import { createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
 import * as v from 'valibot';
-import { anyLineSchema, assistantLineSchema } from '../schemas/session-line.ts';
-import { extractInvocations } from './extract-invocations.ts';
+import { anyLineSchema, assistantLineSchema, userLineSchema } from '../schemas/session-line.ts';
+import {
+  extractInvocations,
+  extractCommandInvocations,
+  extractHookInvocations,
+} from './extract-invocations.ts';
 import type { InvocationRecord, ParsedSessionResult, SessionMeta } from './types.ts';
 
 const MAX_LINE_SIZE = 10 * 1024 * 1024; // 10MB safety limit
@@ -56,21 +60,41 @@ export async function parseSession(
       }
     }
 
-    // Only deeply parse assistant messages for tool_use extraction
-    const result = v.safeParse(assistantLineSchema, json);
-    if (!result.success) continue;
+    // Deeply parse assistant messages for tool_use extraction
+    const assistantResult = v.safeParse(assistantLineSchema, json);
+    if (assistantResult.success) {
+      const assistantLine = assistantResult.output;
 
-    const assistantLine = result.output;
+      // Time window filter (PARS-07)
+      if (sinceMs !== Infinity) {
+        const ts = Date.parse(assistantLine.timestamp);
+        if (!Number.isFinite(ts) || ts < cutoff) continue; // Outside --since window or invalid timestamp
+      }
 
-    // Time window filter (PARS-07)
-    if (assistantLine.timestamp) {
-      const ts = new Date(assistantLine.timestamp).getTime();
-      if (ts < cutoff) continue; // Outside --since window
+      // Extract invocations from content blocks (PARS-03, PARS-04, PARS-05)
+      const records = extractInvocations(assistantLine);
+      invocations.push(...records);
+      continue;
     }
 
-    // Extract invocations from content blocks (PARS-03, PARS-04, PARS-05)
-    const records = extractInvocations(assistantLine);
-    invocations.push(...records);
+    // Also parse user messages for <command-name> tag extraction (Phase 3)
+    const userResult = v.safeParse(userLineSchema, json);
+    if (userResult.success) {
+      const userLine = userResult.output;
+
+      // Time window filter for user lines (use timestamp if present)
+      if (sinceMs !== Infinity) {
+        const ts = userLine.timestamp ? Date.parse(userLine.timestamp) : Number.NaN;
+        if (!Number.isFinite(ts) || ts < cutoff) continue;
+      }
+
+      const commandRecords = extractCommandInvocations(userLine);
+      invocations.push(...commandRecords);
+
+      // Phase 4: also extract hook firing signals from tool_result [hook EventName] markers
+      const hookRecords = extractHookInvocations(userLine);
+      invocations.push(...hookRecords);
+    }
   }
 
   const meta: SessionMeta = {

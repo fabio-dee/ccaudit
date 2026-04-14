@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readCheckpoint } from '@ccaudit/internal';
+import { makeTmpHome, cleanupTmpHome, runCcauditCli, readJsonl } from './_test-helpers.js';
 
 // ── Resolve dist path ──────────────────────────────────────────
 
@@ -355,4 +356,57 @@ describe('ccaudit --dry-run (integration, DRYR-01/02/03)', () => {
     const checkpoint = JSON.parse(body) as { ghost_hash: string };
     expect(checkpoint.ghost_hash).toMatch(/^sha256:[a-f0-9]{64}$/);
   });
+});
+
+// ── Phase 0 smoke test: _test-helpers.ts exports ──────────────────
+
+describe('_test-helpers (Phase 0 smoke test)', () => {
+  it('makeTmpHome returns an absolute path that exists on disk', async () => {
+    const p = await makeTmpHome();
+    try {
+      expect(path.isAbsolute(p)).toBe(true);
+      const s = await stat(p);
+      expect(s.isDirectory()).toBe(true);
+    } finally {
+      await cleanupTmpHome(p);
+    }
+  });
+
+  it('cleanupTmpHome removes the directory', async () => {
+    const p = await makeTmpHome();
+    await cleanupTmpHome(p);
+    expect(existsSync(p)).toBe(false);
+  });
+
+  it('readJsonl parses a seeded JSONL file into an array of objects', async () => {
+    const p = await makeTmpHome();
+    try {
+      const jsonlPath = path.join(p, 'test.jsonl');
+      await writeFile(
+        jsonlPath,
+        [JSON.stringify({ a: 1 }), JSON.stringify({ b: 'two' })].join('\n') + '\n',
+        'utf8',
+      );
+      const rows = await readJsonl(jsonlPath);
+      expect(rows).toHaveLength(2);
+      expect((rows[0] as Record<string, unknown>).a).toBe(1);
+      expect((rows[1] as Record<string, unknown>).b).toBe('two');
+    } finally {
+      await cleanupTmpHome(p);
+    }
+  });
+
+  it('runCcauditCli returns { stdout, stderr, exitCode, durationMs } with exitCode 0', async () => {
+    const p = await makeTmpHome();
+    try {
+      const result = await runCcauditCli(p, ['--help']);
+      expect(typeof result.stdout).toBe('string');
+      expect(typeof result.stderr).toBe('string');
+      expect(typeof result.exitCode).toBe('number');
+      expect(typeof result.durationMs).toBe('number');
+      expect(result.exitCode).toBe(0);
+    } finally {
+      await cleanupTmpHome(p);
+    }
+  }, 30_000);
 });

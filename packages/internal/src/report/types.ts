@@ -16,10 +16,16 @@ export interface HealthScore {
   score: number;
   /** Human-readable grade label */
   grade: HealthGrade;
-  /** Penalty points from ghost count */
+  /** Penalty points from ghost count (per-category weighted, capped at 60) */
   ghostPenalty: number;
-  /** Penalty points from ghost token overhead */
+  /** Penalty points from ghost token overhead (capped at 20) */
   tokenPenalty: number;
+  /**
+   * Portion of ghostPenalty attributable to dormant hooks.
+   * Useful for surfacing "N dormant hooks costing M context tokens upper-bound".
+   * Additive field: always present, 0 when no dormant hooks exist.
+   */
+  dormantPenalty: number;
 }
 
 /**

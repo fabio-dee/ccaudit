@@ -22,6 +22,18 @@ export interface Checkpoint {
     tokens: number;
   };
   total_overhead: number; // total ghost token overhead before bust
+  /**
+   * MCP regime resolved at dry-run time.
+   * Pinned so bust uses the same regime value, eliminating Before/After drift.
+   * Optional for backward compat — old checkpoints without this field default to 'unknown'.
+   */
+  mcp_regime?: 'eager' | 'deferred' | 'unknown';
+  /**
+   * Claude Code version detected at dry-run time (null if undetectable).
+   * Stored alongside mcp_regime so the provenance is fully reproducible.
+   * Optional for backward compat — old checkpoints without this field default to null.
+   */
+  cc_version?: string | null;
 }
 
 // -- Internal canonical hash record types (not exported) ---------

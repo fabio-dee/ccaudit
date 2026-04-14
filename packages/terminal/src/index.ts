@@ -20,6 +20,7 @@ export {
   renderShareableBlock,
   renderBoxed,
   renderGhostOutputBox,
+  renderHooksAdvisory,
   renderFrameworksSection,
 } from './tables/index.ts';
 export type { ShareableBlockParams } from './tables/index.ts';

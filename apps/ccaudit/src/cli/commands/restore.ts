@@ -10,8 +10,11 @@
 // Exit ladder: 0 (success/no-op/list), 1 (failures), 3 (running-process), 4 (detection-failed).
 
 import { readFile, rename, mkdir, stat, readdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { define } from 'gunshi';
+import { recordHistory } from '@ccaudit/internal';
+import { CCAUDIT_VERSION } from '../../_version.ts';
 import {
   executeRestore,
   discoverManifests,
@@ -123,6 +126,25 @@ export const restoreCommand = define({
   async run(ctx) {
     initColor();
     const outMode = resolveOutputMode(ctx.values);
+    // Phase 6: history instrumentation.
+    const _historyStartMs = Date.now();
+    const _argv = process.argv.slice(2);
+    const _homeDir = process.env.HOME ?? process.env.USERPROFILE ?? homedir();
+    const _privacy = outMode.privacy;
+    const safeRecordHistory = async (
+      entry: Omit<Parameters<typeof recordHistory>[0], 'privacy'>,
+    ): Promise<void> => {
+      if (process.env.CCAUDIT_NO_HISTORY === '1') return;
+      try {
+        await recordHistory({ ...entry, privacy: _privacy });
+      } catch (err) {
+        process.stderr.write(
+          `[ccaudit] warning: failed to record history: ${
+            err instanceof Error ? err.message : String(err)
+          }\n`,
+        );
+      }
+    };
 
     // Parse invocation mode:
     //   positional arg → single restore by name
@@ -160,6 +182,17 @@ export const restoreCommand = define({
       } else {
         process.stderr.write(`ccaudit restore failed: ${message}\n`);
       }
+      await safeRecordHistory({
+        homeDir: _homeDir,
+        command: 'restore',
+        argv: _argv,
+        exitCode: 2,
+        durationMs: Date.now() - _historyStartMs,
+        cwd: process.cwd(),
+        result: null,
+        errors: [message],
+        ccauditVersion: CCAUDIT_VERSION,
+      });
       process.exit(2);
     }
 
@@ -180,6 +213,27 @@ export const restoreCommand = define({
       process.stdout.write(renderRestoreRendered(result, warnings, outMode.verbose ?? false));
     }
 
+    // Phase 6: build restore history result shape.
+    const _historyResult =
+      result.status === 'success' || result.status === 'partial-success'
+        ? {
+            moved: result.counts.unarchived.moved,
+            already_at_source: result.counts.unarchived.alreadyAtSource,
+            failed: result.counts.unarchived.failed,
+            manifests_consumed: result.manifestPaths ?? [result.manifestPath],
+          }
+        : { status: result.status };
+    await safeRecordHistory({
+      homeDir: _homeDir,
+      command: 'restore',
+      argv: _argv,
+      exitCode,
+      durationMs: Date.now() - _historyStartMs,
+      cwd: process.cwd(),
+      result: _historyResult,
+      errors: [],
+      ccauditVersion: CCAUDIT_VERSION,
+    });
     process.exit(exitCode);
   },
 });
@@ -365,8 +419,13 @@ function renderRestoreRendered(
   lines.push('');
 
   const c = result.counts;
+  const alreadyAtSourceNote =
+    c.unarchived.alreadyAtSource > 0
+      ? ` (${c.unarchived.alreadyAtSource} were already at source)`
+      : '';
+  const failedNote = c.unarchived.failed > 0 ? ` (${c.unarchived.failed} failed)` : '';
   lines.push(
-    `${c.unarchived.completed} agents/skills restored to their original locations${c.unarchived.failed > 0 ? ` (${c.unarchived.failed} failed)` : ''}`,
+    `${c.unarchived.moved} agents/skills restored to their original locations${alreadyAtSourceNote}${failedNote}`,
   );
   lines.push(
     `${c.reenabled.completed} MCP servers re-enabled in configuration${c.reenabled.failed > 0 ? ` (${c.reenabled.failed} failed)` : ''}`,
@@ -455,7 +514,7 @@ function renderOpLine(op: ManifestOp): string {
 function renderRestoreQuiet(result: RestoreResult): string {
   if (result.status === 'success' || result.status === 'partial-success') {
     const c = result.counts;
-    return `restore\t${result.status}\t${c.unarchived.completed}\t${c.reenabled.completed}\t${c.stripped.completed}\n`;
+    return `restore\t${result.status}\t${c.unarchived.moved}\t${c.unarchived.alreadyAtSource}\t${c.reenabled.completed}\t${c.stripped.completed}\n`;
   }
   return `restore\t${result.status}\n`;
 }
@@ -483,13 +542,14 @@ function renderRestoreCsv(result: RestoreResult): string {
 
   // Summary rows per category (not per-op — v1.2 limitation)
   const c = result.counts;
-  const uTotal = c.unarchived.completed + c.unarchived.failed;
+  const uOk = c.unarchived.moved + c.unarchived.alreadyAtSource;
+  const uTotal = uOk + c.unarchived.failed;
   const rTotal = c.reenabled.completed + c.reenabled.failed;
   const sTotal = c.stripped.completed + c.stripped.failed;
 
   return (
     header +
-    `restore,agents_skills,,all,,,${c.unarchived.completed}/${uTotal} ok,\n` +
+    `restore,agents_skills,,all,,,${uOk}/${uTotal} ok,\n` +
     `restore,mcp,,all,,,${c.reenabled.completed}/${rTotal} ok,\n` +
     `restore,memory,,all,,,${c.stripped.completed}/${sTotal} ok,\n`
   );
@@ -504,11 +564,12 @@ if (import.meta.vitest) {
         {
           status: 'success',
           counts: {
-            unarchived: { completed: 1, failed: 0 },
+            unarchived: { moved: 1, alreadyAtSource: 0, failed: 0 },
             reenabled: { completed: 0, failed: 0 },
             stripped: { completed: 0, failed: 0 },
           },
           manifestPath: '/p',
+          manifestPaths: ['/p'],
           duration_ms: 10,
         },
         0,
@@ -520,12 +581,13 @@ if (import.meta.vitest) {
         {
           status: 'partial-success',
           counts: {
-            unarchived: { completed: 0, failed: 1 },
+            unarchived: { moved: 0, alreadyAtSource: 0, failed: 1 },
             reenabled: { completed: 0, failed: 0 },
             stripped: { completed: 0, failed: 0 },
           },
           failed: 1,
           manifestPath: '/p',
+          manifestPaths: ['/p'],
           duration_ms: 5,
         },
         1,
@@ -545,18 +607,19 @@ if (import.meta.vitest) {
   });
 
   describe('renderRestoreQuiet', () => {
-    it('success: emits tab-separated status + counts', () => {
+    it('success: emits tab-separated status + moved + alreadyAtSource + reenabled + stripped', () => {
       const result: RestoreResult = {
         status: 'success',
         counts: {
-          unarchived: { completed: 2, failed: 0 },
+          unarchived: { moved: 2, alreadyAtSource: 1, failed: 0 },
           reenabled: { completed: 1, failed: 0 },
           stripped: { completed: 3, failed: 0 },
         },
         manifestPath: '/m',
+        manifestPaths: ['/m'],
         duration_ms: 50,
       };
-      expect(renderRestoreQuiet(result)).toBe('restore\tsuccess\t2\t1\t3\n');
+      expect(renderRestoreQuiet(result)).toBe('restore\tsuccess\t2\t1\t1\t3\n');
     });
 
     it('no-manifests: emits status only', () => {
@@ -575,11 +638,12 @@ if (import.meta.vitest) {
       const result: RestoreResult = {
         status: 'success',
         counts: {
-          unarchived: { completed: 1, failed: 0 },
+          unarchived: { moved: 1, alreadyAtSource: 0, failed: 0 },
           reenabled: { completed: 1, failed: 0 },
           stripped: { completed: 1, failed: 0 },
         },
         manifestPath: '/m',
+        manifestPaths: ['/m'],
         duration_ms: 10,
       };
       const rows = renderRestoreCsv(result).trim().split('\n');

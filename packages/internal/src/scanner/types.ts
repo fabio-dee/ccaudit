@@ -20,6 +20,14 @@ export interface InventoryItem {
   mtimeMs?: number;
   /** Framework group identity. null when item is not part of any detected framework. */
   framework?: string | null;
+  /** Hook event name for hook-category items (e.g. 'PreToolUse') */
+  hookEvent?: string;
+  /** Whether the hook fires on inject-capable events (up to 2500 tok overhead) */
+  injectCapable?: boolean;
+  /** Depth of @-import chain for memory-category items */
+  importDepth?: number;
+  /** Root path from which @-imports were resolved */
+  importRoot?: string;
 }
 
 /**

@@ -9,6 +9,8 @@ import { scanAgents } from './scan-agents.ts';
 import { scanSkills, resolveSkillName } from './scan-skills.ts';
 import { scanMcpServers, readClaudeConfig } from './scan-mcp.ts';
 import { scanMemoryFiles } from './scan-memory.ts';
+import { scanCommands } from './scan-commands.ts';
+import { scanHooks } from './scan-hooks.ts';
 import { annotateFrameworks } from './annotate.ts';
 
 /**
@@ -24,7 +26,7 @@ export async function matchInventory(
   invocations: InvocationRecord[],
   claudeConfigPath?: string,
 ): Promise<ScanResult[]> {
-  const { agents, skills, mcpServers } = buildInvocationMaps(invocations);
+  const { agents, skills, mcpServers, commands, hooks } = buildInvocationMaps(invocations);
   const config = await readClaudeConfig(claudeConfigPath);
   const skillUsage = config.skillUsage ?? {};
 
@@ -79,6 +81,28 @@ export async function matchInventory(
         count = summary.count;
         lastUsedDate = new Date(summary.lastTimestamp);
       }
+    } else if (item.category === 'command') {
+      const summary = commands.get(item.name);
+      if (summary) {
+        lastUsedMs = new Date(summary.lastTimestamp).getTime();
+        count = summary.count;
+        lastUsedDate = new Date(summary.lastTimestamp);
+      }
+    } else if (item.category === 'hook') {
+      // Hook matching: firing signals are event-level (SessionStart:*) but configured
+      // hooks are granular (SessionStart:*:abc123). We use optimistic attribution:
+      // any configured hook whose hookEvent matches a fired event inherits that
+      // event's lastUsed timestamp and invocationCount. This may overcount firings
+      // when multiple hooks share the same event, but is the best available signal.
+      if (item.hookEvent) {
+        const eventKey = `${item.hookEvent}:*`;
+        const summary = hooks.get(eventKey);
+        if (summary) {
+          lastUsedMs = new Date(summary.lastTimestamp).getTime();
+          count = summary.count;
+          lastUsedDate = new Date(summary.lastTimestamp);
+        }
+      }
     } else if (item.category === 'memory') {
       // Memory files use mtimeMs directly (no invocation matching)
       lastUsedMs = item.mtimeMs ?? null;
@@ -86,7 +110,19 @@ export async function matchInventory(
       lastUsedDate = lastUsedMs !== null ? new Date(lastUsedMs) : null;
     }
 
-    const tier = classifyGhost(lastUsedMs);
+    let tier = classifyGhost(lastUsedMs);
+
+    // Task 34: Dormant tier override for inject-capable hooks with zero fires.
+    // 'dormant' takes precedence over 'definite-ghost'/'likely-ghost' for hooks only.
+    // Non-inject-capable hooks with zero fires stay at their natural tier — they
+    // don't cost context tokens, so "ghost" semantics don't apply in the same way.
+    if (
+      item.category === 'hook' &&
+      item.injectCapable === true &&
+      (count === 0 || lastUsedDate === null)
+    ) {
+      tier = 'dormant';
+    }
 
     // For non-memory items, compute lastUsedDate from lastUsedMs if not already set
     if (lastUsedDate === null && lastUsedMs !== null) {
@@ -129,6 +165,8 @@ export async function scanAll(
     claudePaths?: ClaudePaths;
     projectPaths?: string[];
     claudeConfigPath?: string;
+    /** Override global settings.json paths for scanHooks (used in tests to avoid real ~/.claude) */
+    globalHookSettingsPaths?: string[];
   },
 ): Promise<{
   results: ScanResult[];
@@ -150,13 +188,16 @@ export async function scanAll(
   const home = homedir();
   const projectPaths = rawProjectPaths.filter((p) => p !== home);
 
-  // Run all four scanners in parallel
-  const [agentItems, skillItems, mcpItems, memoryItems] = await Promise.all([
-    scanAgents(claudePaths, projectPaths),
-    scanSkills(claudePaths, projectPaths),
-    scanMcpServers(options?.claudeConfigPath, projectPaths),
-    scanMemoryFiles(claudePaths, projectPaths),
-  ]);
+  // Run all six scanners in parallel
+  const [agentItems, skillItems, mcpItems, memoryItems, commandItems, hookItems] =
+    await Promise.all([
+      scanAgents(claudePaths, projectPaths),
+      scanSkills(claudePaths, projectPaths),
+      scanMcpServers(options?.claudeConfigPath, projectPaths),
+      scanMemoryFiles(claudePaths, projectPaths),
+      scanCommands(claudePaths, projectPaths),
+      scanHooks(projectPaths, undefined, options?.globalHookSettingsPaths),
+    ]);
 
   // Phase 2 (v1.3.0): Annotate agent and skill items with their `framework`
   // field BEFORE concat with mcp/memory items. Subset-annotate is the locked
@@ -167,8 +208,14 @@ export async function scanAll(
   // preserving byte-identical v1.2.1 JSON output for those categories.
   const annotated = annotateFrameworks([...agentItems, ...skillItems]);
 
-  // Flatten all items
-  const allItems: InventoryItem[] = [...annotated, ...mcpItems, ...memoryItems];
+  // Flatten all items (hooks and commands bypass framework annotation -- no framework grouping for v1.4.0)
+  const allItems: InventoryItem[] = [
+    ...annotated,
+    ...commandItems,
+    ...mcpItems,
+    ...memoryItems,
+    ...hookItems,
+  ];
 
   // Classify all items against invocation ledger
   const results = await matchInventory(allItems, invocations, options?.claudeConfigPath);
@@ -317,6 +364,123 @@ if (import.meta.vitest) {
       expect(results).toHaveLength(1);
       expect(results[0].tier).toBe('definite-ghost');
       expect(results[0].lastUsed).toBeNull();
+    });
+
+    it('returns tier=used for command with matching invocation', async () => {
+      const ts = new Date(Date.now() - 1 * 86_400_000).toISOString();
+      const items: InventoryItem[] = [makeItem({ name: 'gsd:update', category: 'command' })];
+      const invocations: InvocationRecord[] = [
+        makeRecord({ kind: 'command', name: 'gsd:update', timestamp: ts }),
+      ];
+
+      const results = await matchInventory(items, invocations);
+      expect(results).toHaveLength(1);
+      expect(results[0].tier).toBe('used');
+      expect(results[0].invocationCount).toBe(1);
+      expect(results[0].lastUsed).toBeInstanceOf(Date);
+      expect(results[0].lastUsed!.toISOString()).toBe(ts);
+    });
+
+    it('returns tier=definite-ghost for command with no matching invocation', async () => {
+      const items: InventoryItem[] = [makeItem({ name: 'ghost-cmd', category: 'command' })];
+
+      const results = await matchInventory(items, []);
+      expect(results).toHaveLength(1);
+      expect(results[0].tier).toBe('definite-ghost');
+      expect(results[0].invocationCount).toBe(0);
+      expect(results[0].lastUsed).toBeNull();
+    });
+
+    it('attributes hook invocation via hookEvent:* key', async () => {
+      const ts = new Date(Date.now() - 1 * 86_400_000).toISOString();
+      const items: InventoryItem[] = [
+        makeItem({ name: 'on-start', category: 'hook', hookEvent: 'SessionStart' }),
+      ];
+      // Hooks are stored in the map with the event-level key 'SessionStart:*'
+      const invocations: InvocationRecord[] = [
+        makeRecord({ kind: 'hook', name: 'SessionStart:*', timestamp: ts }),
+      ];
+
+      const results = await matchInventory(items, invocations);
+      expect(results).toHaveLength(1);
+      expect(results[0].tier).toBe('used');
+      expect(results[0].invocationCount).toBe(1);
+      expect(results[0].lastUsed).toBeInstanceOf(Date);
+    });
+
+    it('returns tier=definite-ghost for hook with hookEvent but no matching invocation', async () => {
+      const items: InventoryItem[] = [
+        makeItem({ name: 'ghost-hook', category: 'hook', hookEvent: 'PreToolUse' }),
+      ];
+
+      const results = await matchInventory(items, []);
+      expect(results).toHaveLength(1);
+      expect(results[0].tier).toBe('definite-ghost');
+      expect(results[0].invocationCount).toBe(0);
+    });
+
+    it('returns tier=definite-ghost for hook with no hookEvent (no matching possible)', async () => {
+      const items: InventoryItem[] = [
+        makeItem({ name: 'no-event-hook', category: 'hook' }), // hookEvent absent
+      ];
+
+      const results = await matchInventory(items, []);
+      expect(results).toHaveLength(1);
+      expect(results[0].tier).toBe('definite-ghost');
+      expect(results[0].invocationCount).toBe(0);
+    });
+
+    it('overrides tier to dormant for inject-capable hook with zero fires', async () => {
+      const items: InventoryItem[] = [
+        makeItem({
+          name: 'inject-hook',
+          category: 'hook',
+          hookEvent: 'SessionStart',
+          injectCapable: true,
+        }),
+      ];
+
+      const results = await matchInventory(items, []); // no invocations => count=0
+      expect(results).toHaveLength(1);
+      expect(results[0].tier).toBe('dormant');
+      expect(results[0].invocationCount).toBe(0);
+    });
+
+    it('does NOT override tier to dormant for non-inject-capable hook with zero fires', async () => {
+      const items: InventoryItem[] = [
+        makeItem({
+          name: 'plain-hook',
+          category: 'hook',
+          hookEvent: 'SessionStart',
+          injectCapable: false,
+        }),
+      ];
+
+      const results = await matchInventory(items, []);
+      expect(results).toHaveLength(1);
+      // Non-inject hook with no fires stays at natural classifyGhost tier
+      expect(results[0].tier).not.toBe('dormant');
+      expect(results[0].invocationCount).toBe(0);
+    });
+
+    it('does NOT override tier to dormant for inject-capable hook that HAS fires', async () => {
+      const ts = new Date(Date.now() - 1 * 86_400_000).toISOString();
+      const items: InventoryItem[] = [
+        makeItem({
+          name: 'active-inject-hook',
+          category: 'hook',
+          hookEvent: 'SessionStart',
+          injectCapable: true,
+        }),
+      ];
+      const invocations: InvocationRecord[] = [
+        makeRecord({ kind: 'hook', name: 'SessionStart:*', timestamp: ts }),
+      ];
+
+      const results = await matchInventory(items, invocations);
+      expect(results).toHaveLength(1);
+      expect(results[0].tier).not.toBe('dormant');
+      expect(results[0].invocationCount).toBe(1);
     });
   });
 

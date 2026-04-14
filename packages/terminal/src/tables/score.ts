@@ -74,6 +74,7 @@ if (import.meta.vitest) {
         grade: 'Healthy',
         ghostPenalty: 15,
         tokenPenalty: 0,
+        dormantPenalty: 0,
       });
       expect(result).toContain('Health grade: A+ (Healthy)');
     });
@@ -84,6 +85,7 @@ if (import.meta.vitest) {
         grade: 'Poor',
         ghostPenalty: 48,
         tokenPenalty: 10,
+        dormantPenalty: 0,
       });
       expect(result).toContain('Health grade: D (Poor)');
     });
@@ -94,6 +96,7 @@ if (import.meta.vitest) {
         grade: 'Fair',
         ghostPenalty: 30,
         tokenPenalty: 10,
+        dormantPenalty: 0,
       });
       expect(result).toContain('Health grade: B (Fair)');
     });
@@ -104,6 +107,7 @@ if (import.meta.vitest) {
         grade: 'Critical',
         ghostPenalty: 80,
         tokenPenalty: 10,
+        dormantPenalty: 0,
       });
       expect(result).toContain('Health grade: F (Critical)');
     });
@@ -114,6 +118,7 @@ if (import.meta.vitest) {
         grade: 'Healthy',
         ghostPenalty: 0,
         tokenPenalty: 0,
+        dormantPenalty: 0,
       });
       expect(result).not.toContain('/100');
     });

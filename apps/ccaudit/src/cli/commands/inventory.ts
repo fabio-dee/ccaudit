@@ -10,8 +10,17 @@ import {
   classifyRecommendation,
   groupByFramework,
   toGhostItems,
+  detectClaudeCodeVersion,
+  resolveMcpRegime,
+  regimeFlatOverhead,
+  CONTEXT_WINDOW_SIZE,
 } from '@ccaudit/internal';
-import type { InvocationRecord, FrameworkGroup, GroupedInventory } from '@ccaudit/internal';
+import type {
+  InvocationRecord,
+  FrameworkGroup,
+  GroupedInventory,
+  McpRegime,
+} from '@ccaudit/internal';
 import {
   renderHeader,
   humanizeSinceWindow,
@@ -48,6 +57,12 @@ export const inventoryCommand = define({
       description: 'Show scan details',
       default: false,
     },
+    regime: {
+      type: 'string',
+      description:
+        'MCP token regime: eager (full schemas), deferred (ToolSearch, cc >=2.1.7), or auto (detect). Default: auto.',
+      default: 'auto',
+    },
   },
   async run(ctx) {
     const sinceStr = ctx.values.since ?? '7d';
@@ -58,6 +73,31 @@ export const inventoryCommand = define({
       console.error((e as Error).message);
       process.exitCode = 1;
       return;
+    }
+
+    // Validate and resolve --regime flag
+    const regimeRaw = ctx.values.regime ?? 'auto';
+    if (regimeRaw !== 'eager' && regimeRaw !== 'deferred' && regimeRaw !== 'auto') {
+      console.error(
+        `error: invalid --regime value "${regimeRaw}". Must be one of: eager, deferred, auto`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    const regimeFlag = regimeRaw as McpRegime | 'auto';
+
+    // Detect Claude Code version once (only needed when regime is 'auto').
+    // Degrade gracefully on detection failure: null triggers the unknown-version path.
+    let detectedCcVersion: string | null = null;
+    if (regimeFlag === 'auto') {
+      try {
+        detectedCcVersion = await detectClaudeCodeVersion();
+      } catch (err) {
+        console.error(
+          `[ccaudit] warning: version detection failed (${(err as Error).message ?? err}); defaulting to unknown-version regime`,
+        );
+        detectedCcVersion = null;
+      }
     }
 
     // Initialize color detection from process.argv (--no-color) and env (NO_COLOR)
@@ -90,7 +130,10 @@ export const inventoryCommand = define({
     if (mode.verbose) console.error('[ccaudit] Scanning inventory...');
 
     const { results } = await scanAll(allInvocations, { projectPaths: [...projectPaths] });
-    const enriched = await enrichScanResults(results);
+    const enriched = await enrichScanResults(results, {
+      regime: regimeFlag,
+      ccVersion: detectedCcVersion,
+    });
     const healthScore = calculateHealthScore(enriched);
 
     // Determine exit code: 1 if ghosts found (per D-01)
@@ -137,6 +180,23 @@ export const inventoryCommand = define({
     const resolveFramework = (r: (typeof enriched)[number]): string | null =>
       fwMap?.get(r.item.path) ?? r.item.framework ?? null;
 
+    // Resolve final regime for JSON envelope meta (matches ghost.ts logic)
+    let resolvedRegime: McpRegime;
+    if (regimeFlag === 'auto') {
+      const eagerMcpTotal = enriched
+        .filter((r) => r.item.category === 'mcp-server')
+        .reduce((sum, r) => sum + (r.tokenEstimate?.tokens ?? 0), 0);
+      resolvedRegime = resolveMcpRegime({
+        totalMcpToolTokens: eagerMcpTotal,
+        contextWindow: CONTEXT_WINDOW_SIZE,
+        ccVersion: detectedCcVersion,
+        override: null,
+      }).regime;
+    } else {
+      resolvedRegime = regimeFlag;
+    }
+    const toolSearchOverhead = regimeFlatOverhead(resolvedRegime);
+
     // Output routing (in order of precedence)
     if (mode.json) {
       const frameworksProjection =
@@ -151,39 +211,52 @@ export const inventoryCommand = define({
             }))
           : undefined;
 
-      const envelope = buildJsonEnvelope('inventory', sinceStr, exitCode, {
-        window: sinceStr,
-        files: files.length,
-        projects: projectPaths.size,
-        total: enriched.length,
-        healthScore: {
-          score: healthScore.score,
-          grade: healthScore.grade,
-          ghostPenalty: healthScore.ghostPenalty,
-          tokenPenalty: healthScore.tokenPenalty,
+      const envelope = buildJsonEnvelope(
+        'inventory',
+        sinceStr,
+        exitCode,
+        {
+          window: sinceStr,
+          files: files.length,
+          projects: projectPaths.size,
+          total: enriched.length,
+          healthScore: {
+            score: healthScore.score,
+            grade: healthScore.grade,
+            ghostPenalty: healthScore.ghostPenalty,
+            tokenPenalty: healthScore.tokenPenalty,
+          },
+          ...(frameworksProjection !== undefined ? { frameworks: frameworksProjection } : {}),
+          items: enriched.map((r) => ({
+            name: r.item.name,
+            category: r.item.category,
+            scope: r.item.scope,
+            tier: r.tier,
+            lastUsed: r.lastUsed?.toISOString() ?? null,
+            invocations: r.invocationCount,
+            path: r.item.path,
+            projectPath: r.item.projectPath,
+            tokenEstimate: r.tokenEstimate
+              ? {
+                  tokens: r.tokenEstimate.tokens,
+                  confidence: r.tokenEstimate.confidence,
+                  source: r.tokenEstimate.source,
+                }
+              : null,
+            recommendation: classifyRecommendation(r.tier),
+            ...(mode.groupFrameworks ? { framework: resolveFramework(r) } : {}),
+            ...calculateUrgencyScore(r.lastUsed, r.tokenEstimate),
+            // Phase 5: import-chain additive fields (only emitted for import rows)
+            ...(r.item.importDepth !== undefined
+              ? {
+                  importDepth: r.item.importDepth,
+                  importRoot: r.item.importRoot,
+                }
+              : {}),
+          })),
         },
-        ...(frameworksProjection !== undefined ? { frameworks: frameworksProjection } : {}),
-        items: enriched.map((r) => ({
-          name: r.item.name,
-          category: r.item.category,
-          scope: r.item.scope,
-          tier: r.tier,
-          lastUsed: r.lastUsed?.toISOString() ?? null,
-          invocations: r.invocationCount,
-          path: r.item.path,
-          projectPath: r.item.projectPath,
-          tokenEstimate: r.tokenEstimate
-            ? {
-                tokens: r.tokenEstimate.tokens,
-                confidence: r.tokenEstimate.confidence,
-                source: r.tokenEstimate.source,
-              }
-            : null,
-          recommendation: classifyRecommendation(r.tier),
-          ...(mode.groupFrameworks ? { framework: resolveFramework(r) } : {}),
-          ...calculateUrgencyScore(r.lastUsed, r.tokenEstimate),
-        })),
-      });
+        { mcpRegime: resolvedRegime, toolSearchOverhead },
+      );
       const indent = mode.quiet ? 0 : 2;
       console.log(JSON.stringify(envelope, null, indent));
     } else if (mode.csv) {

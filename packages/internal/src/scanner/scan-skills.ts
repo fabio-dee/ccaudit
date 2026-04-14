@@ -1,23 +1,19 @@
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { InventoryItem } from './types.ts';
 import type { ClaudePaths } from '../types.ts';
+import { parseFrontmatter } from '../token/frontmatter.ts';
 
 /**
  * Extract the registered skill name from SKILL.md frontmatter.
+ * Delegates to parseFrontmatter() for robust YAML parsing.
  * Returns the `name:` field value, or the directory name as fallback.
  */
 export async function resolveSkillName(skillDir: string): Promise<string> {
   const skillMdPath = path.join(skillDir, 'SKILL.md');
-  try {
-    const content = await readFile(skillMdPath, 'utf-8');
-    // Simple YAML frontmatter extraction (no yaml parser needed)
-    const nameMatch = content.match(/^name:\s*(.+)$/m);
-    if (nameMatch) {
-      return nameMatch[1].trim();
-    }
-  } catch {
-    // SKILL.md doesn't exist or can't be read
+  const fm = await parseFrontmatter(skillMdPath);
+  if (fm?.name) {
+    return fm.name;
   }
   return path.basename(skillDir);
 }
@@ -52,8 +48,9 @@ export async function scanSkills(
         const skillPath = path.join(skillsDir, entry.name);
         try {
           const s = await stat(skillPath);
+          const name = await resolveSkillName(skillPath);
           items.push({
-            name: entry.name,
+            name,
             path: skillPath,
             scope: 'global',
             category: 'skill',
@@ -84,8 +81,9 @@ export async function scanSkills(
         const skillPath = path.join(skillsDir, entry.name);
         try {
           const s = await stat(skillPath);
+          const name = await resolveSkillName(skillPath);
           items.push({
-            name: entry.name,
+            name,
             path: skillPath,
             scope: 'project',
             category: 'skill',
@@ -147,7 +145,7 @@ if (import.meta.vitest) {
     it('should trim whitespace from name field value', async () => {
       const skillDir = path.join(tmpDir, 'trim-test');
       await mkdir(skillDir, { recursive: true });
-      await writeFile(path.join(skillDir, 'SKILL.md'), 'name:   spaced-name   \n');
+      await writeFile(path.join(skillDir, 'SKILL.md'), '---\nname:   spaced-name   \n---\n');
       const name = await resolveSkillName(skillDir);
       expect(name).toBe('spaced-name');
     });
@@ -300,6 +298,48 @@ if (import.meta.vitest) {
       expect(global?.scope).toBe('global');
       expect(local?.scope).toBe('project');
       expect(local?.projectPath).toBe(projPath);
+    });
+
+    it('should use frontmatter name when it differs from folder basename (global)', async () => {
+      // Regression: scanSkills must call resolveSkillName, not use entry.name directly.
+      const skillsDir = path.join(tmpDir, 'legacy', 'skills');
+      const folderName = 'folder-basename';
+      const frontmatterName = 'declared-name-in-frontmatter';
+      const skillDir = path.join(skillsDir, folderName);
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        path.join(skillDir, 'SKILL.md'),
+        `---\nname: ${frontmatterName}\ndescription: Regression test\n---\n# Skill`,
+      );
+
+      const result = await scanSkills(
+        { legacy: path.join(tmpDir, 'legacy'), xdg: path.join(tmpDir, 'xdg') },
+        [],
+      );
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe(frontmatterName);
+      expect(result[0].path).toContain(folderName);
+    });
+
+    it('should use frontmatter name when it differs from folder basename (project-local)', async () => {
+      const projPath = path.join(tmpDir, 'my-project');
+      const skillsDir = path.join(projPath, '.claude', 'skills');
+      const folderName = 'proj-folder';
+      const frontmatterName = 'proj-declared-name';
+      const skillDir = path.join(skillsDir, folderName);
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        path.join(skillDir, 'SKILL.md'),
+        `---\nname: ${frontmatterName}\ndescription: Regression test\n---\n# Skill`,
+      );
+
+      const result = await scanSkills(
+        { legacy: path.join(tmpDir, 'legacy'), xdg: path.join(tmpDir, 'xdg') },
+        [projPath],
+      );
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe(frontmatterName);
+      expect(result[0].scope).toBe('project');
     });
   });
 }

@@ -1,7 +1,9 @@
 /**
  * Kind of invocation detected in JSONL tool_use blocks.
+ * 'command' is emitted by extractCommandInvocations from user-line <command-name> markers.
+ * 'hook' is emitted by extractHookInvocations from tool-result [hook EventName] markers.
  */
-export type InvocationKind = 'agent' | 'skill' | 'mcp';
+export type InvocationKind = 'agent' | 'skill' | 'mcp' | 'command' | 'hook';
 
 /**
  * A single invocation record extracted from a JSONL assistant message.
@@ -88,6 +90,32 @@ if (import.meta.vitest) {
       expect(record.kind).toBe('mcp');
       expect(record.tool).toBe('sequentialthinking');
       expect(record.isSidechain).toBe(true);
+    });
+
+    it('should accept a valid command invocation', () => {
+      const record: InvocationRecord = {
+        kind: 'command',
+        name: 'my-namespace:my-command',
+        sessionId: 'sess-004',
+        timestamp: '2026-03-28T00:00:00.000Z',
+        projectPath: '/tmp/project',
+        isSidechain: false,
+      };
+      expect(record.kind).toBe('command');
+      expect(record.tool).toBeUndefined();
+    });
+
+    it('should accept a valid hook invocation', () => {
+      const record: InvocationRecord = {
+        kind: 'hook',
+        name: 'PostToolUse:*',
+        sessionId: 'sess-005',
+        timestamp: '2026-03-28T00:10:00.000Z',
+        projectPath: '/tmp/project',
+        isSidechain: false,
+      };
+      expect(record.kind).toBe('hook');
+      expect(record.tool).toBeUndefined();
     });
   });
 

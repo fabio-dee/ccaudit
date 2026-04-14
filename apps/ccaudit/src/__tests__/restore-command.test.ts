@@ -33,7 +33,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -627,13 +627,15 @@ describe.skipIf(process.platform === 'win32')('ccaudit restore (subprocess integ
       status: string;
       manifestPath: string;
       counts: {
-        archive: { completed: number; failed: number };
+        archive: { agents: number; skills: number; failed: number };
         disable: { completed: number; failed: number };
         flag: { completed: number; failed: number; refreshed: number; skipped: number };
       };
     };
     expect(bustResult.status).toBe('success');
-    expect(bustResult.counts.archive.completed).toBe(1);
+    // The fixture archives 1 agent — agents counter carries the count (Bug #1 fix).
+    expect(bustResult.counts.archive.agents).toBe(1);
+    expect(bustResult.counts.archive.skills).toBe(0);
     expect(bustResult.counts.disable.completed).toBe(1);
     expect(bustResult.counts.flag.completed).toBe(1);
 
@@ -724,4 +726,307 @@ describe.skipIf(process.platform === 'win32')('ccaudit restore (subprocess integ
       );
     },
   );
+
+  // ── Phase 3: Case 14 — multi-manifest restore (all 5 agents across 2 manifests) ──
+  //
+  // Regression for: full-mode restore reads only the newest manifest (entries[0]).
+  // After two busts, the old manifest's items were unreachable orphans.
+  // With findManifestsForRestore (plural), all manifests are walked newest-first
+  // and all 5 agents are restored.
+  //
+  // Implementation: seed two JSONL manifests with distinct timestamps (1-second
+  // apart) directly, without running real busts. This avoids the timestamp-
+  // collision problem (resolveManifestPath strips milliseconds, so two busts
+  // within the same second produce one file). The manifests faithfully mimic
+  // what a real bust produces.
+
+  it('Case 14: full restore walks ALL manifests — items from older manifest are restored', async () => {
+    tmpHome = await setupEmptyHome();
+
+    const manifestsDir = path.join(tmpHome, '.claude', 'ccaudit', 'manifests');
+    const archivedDir = path.join(tmpHome, '.claude', 'ccaudit', 'archived', 'agents');
+    await mkdir(archivedDir, { recursive: true });
+
+    // ── Helper: build one manifest + archive files for N agents ───
+    // sourceSubdir: subdirectory under tmpHome for source paths (default: '.claude/agents')
+    async function seedManifest(
+      timestamp: string,
+      agentNames: string[],
+      sourceSubdir = '.claude/agents',
+    ): Promise<{ sources: string[]; archives: string[] }> {
+      const sources: string[] = [];
+      const archives: string[] = [];
+
+      // Convert filename-safe slug (colons replaced by dashes) to a proper ISO string
+      const isoTimestamp = timestamp.replace(/(\d{2})-(\d{2})-(\d{2})$/, '$1:$2:$3') + 'Z';
+
+      const lines: string[] = [];
+      lines.push(
+        JSON.stringify({
+          record_type: 'header',
+          manifest_version: 1,
+          ccaudit_version: '1.2.0',
+          checkpoint_ghost_hash: `hash-${timestamp}`,
+          checkpoint_timestamp: new Date(isoTimestamp).toISOString(),
+          since_window: '30d',
+          os: process.platform,
+          node_version: process.version,
+          planned_ops: { archive: agentNames.length, disable: 0, flag: 0 },
+        }),
+      );
+
+      for (const name of agentNames) {
+        const sourcePath = path.join(tmpHome, sourceSubdir, `${name}.md`);
+        const archivePath = path.join(archivedDir, `${name}.md`);
+        const content = `# ${name}\nA ghost agent from ${timestamp}.\n`;
+        const sha256 = createHash('sha256').update(content).digest('hex');
+
+        // Write archive file (simulating completed bust)
+        await writeFile(archivePath, content, 'utf8');
+        sources.push(sourcePath);
+        archives.push(archivePath);
+
+        lines.push(
+          JSON.stringify({
+            op_id: `op-${name}`,
+            op_type: 'archive',
+            timestamp: new Date(new Date(isoTimestamp).getTime() + 1).toISOString(),
+            status: 'completed',
+            category: 'agent',
+            scope: 'global',
+            source_path: sourcePath,
+            archive_path: archivePath,
+            content_sha256: sha256,
+          }),
+        );
+      }
+
+      lines.push(
+        JSON.stringify({
+          record_type: 'footer',
+          status: 'completed',
+          actual_ops: {
+            archive: { completed: agentNames.length, failed: 0 },
+            disable: { completed: 0, failed: 0 },
+            flag: { completed: 0, failed: 0, refreshed: 0, skipped: 0 },
+          },
+          duration_ms: 100,
+          exit_code: 0,
+        }),
+      );
+
+      // Format: bust-<ISO-with-colons-as-dashes>Z.jsonl
+      // timestampSuffixForFilename replaces ':' with '-' and keeps T and Z.
+      // Input timestamps are already in that form (colons are '-', T is kept).
+      const stamp = `${timestamp}Z`;
+      const manifestPath = path.join(manifestsDir, `bust-${stamp}.jsonl`);
+      await writeFile(manifestPath, lines.join('\n') + '\n', 'utf8');
+
+      // Set mtime to the parsed timestamp so discoverManifests sorts correctly
+      // regardless of how fast the test writes both files.
+      const parsedDate = new Date(isoTimestamp);
+      await utimes(manifestPath, parsedDate, parsedDate);
+
+      return { sources, archives };
+    }
+
+    // Manifest A (older, mtime = 2026-04-01): 3 agents in default source dir
+    const { sources: sources1, archives: archives1 } = await seedManifest('2026-04-01T10-00-00', [
+      'ghost-alpha',
+      'ghost-beta',
+      'ghost-gamma',
+    ]);
+
+    // Manifest B (newer, mtime = 2026-04-05): 3 agents.
+    // ghost-alpha is intentionally included again with a different source dir so its
+    // archive_path matches Manifest A's ghost-alpha entry. This exercises the
+    // dedupe-by-archive_path / newer-wins branch: only Manifest B's record should be
+    // used for ghost-alpha, and Manifest A's stale source path must NOT be restored.
+    const { sources: sources2, archives: archives2 } = await seedManifest(
+      '2026-04-05T18-30-00',
+      ['ghost-delta', 'ghost-epsilon', 'ghost-alpha'],
+      // ghost-alpha's source lives in a different subdir so we can assert which record won
+      '.claude/agents/project',
+    );
+    // sources2[2] is the newer ghost-alpha source; sources1[0] is the stale one.
+    const newerAlphaSource = sources2[2]!;
+    const stalerAlphaSource = sources1[0]!;
+
+    // Confirm 2 manifests exist before restore
+    const manifestsBefore = await readdir(manifestsDir);
+    const manifestCount = manifestsBefore.filter(
+      (f) => f.startsWith('bust-') && f.endsWith('.jsonl'),
+    ).length;
+    expect(manifestCount, 'should have 2 manifests seeded').toBe(2);
+
+    // Confirm all 5 unique archive files exist (ghost-alpha archive was overwritten by B)
+    const uniqueArchives = [...new Set([...archives1, ...archives2])];
+    for (const archivePath of uniqueArchives) {
+      expect(existsSync(archivePath), `archive ${path.basename(archivePath)} should exist`).toBe(
+        true,
+      );
+    }
+
+    // ── Restore: should recover all 5 agents ─────────────────────
+    const restore = await runRestore(tmpHome, ['--json']);
+    expect(restore.exitCode, `restore stderr: ${restore.stderr}`).toBe(0);
+
+    const restoreParsed = JSON.parse(restore.stdout) as Record<string, unknown>;
+    expect(restoreParsed.status, `restore status unexpected, stdout: ${restore.stdout}`).toBe(
+      'success',
+    );
+
+    // Newer ghost-alpha source (from Manifest B) must be restored
+    expect(
+      existsSync(newerAlphaSource),
+      'ghost-alpha newer source (Manifest B) must be restored',
+    ).toBe(true);
+
+    // Stale ghost-alpha source (from Manifest A) must NOT be restored -- dedupe dropped it
+    expect(
+      existsSync(stalerAlphaSource),
+      'ghost-alpha stale source (Manifest A) must not be restored',
+    ).toBe(false);
+
+    // ghost-beta, ghost-gamma (A) and ghost-delta, ghost-epsilon (B) must all be restored
+    for (const sourcePath of [...sources1.slice(1), ...sources2.slice(0, 2)]) {
+      expect(
+        existsSync(sourcePath),
+        `${path.basename(sourcePath)} must be restored to source`,
+      ).toBe(true);
+    }
+
+    // All unique archive files should be gone
+    for (const archivePath of uniqueArchives) {
+      expect(
+        existsSync(archivePath),
+        `${path.basename(archivePath)} archive should be removed`,
+      ).toBe(false);
+    }
+
+    // Counts: 5 moved (dedupe collapsed 6 records to 5 unique archive_paths),
+    // 0 already-at-source, 0 failed
+    const counts = restoreParsed.counts as {
+      unarchived: { moved: number; alreadyAtSource: number; failed: number };
+    };
+    expect(counts.unarchived.moved, 'moved count should be 5').toBe(5);
+    expect(counts.unarchived.alreadyAtSource, 'already-at-source count should be 0').toBe(0);
+    expect(counts.unarchived.failed, 'failed count should be 0').toBe(0);
+  }, 30_000);
+
+  // ── Phase 3: Case 15 — false-positive "already at source" not counted as restored ──
+  //
+  // Regression for: the old 'already at original location' branch returned
+  // 'completed' and inflated the restored count. After the fix it returns
+  // 'already-at-source' and is reported separately.
+
+  it('Case 15: already-at-source items are not counted as restored', async () => {
+    // Build a fixture with 2 archived agents via the manifest builder (bypasses real bust)
+    const tmpH = await setupEmptyHome();
+    tmpHome = tmpH;
+
+    const archivedDir = path.join(tmpH, '.claude', 'ccaudit', 'archived', 'agents');
+    await mkdir(archivedDir, { recursive: true });
+
+    const agentNames = ['alpha-agent', 'beta-agent'];
+    const agentSources: string[] = [];
+    const agentArchives: string[] = [];
+
+    const manifestLines: string[] = [];
+    manifestLines.push(
+      JSON.stringify({
+        record_type: 'header',
+        manifest_version: 1,
+        ccaudit_version: '1.2.0',
+        checkpoint_ghost_hash: 'fake-hash-case15',
+        checkpoint_timestamp: '2026-04-10T10:00:00.000Z',
+        since_window: '30d',
+        os: process.platform,
+        node_version: process.version,
+        planned_ops: { archive: 2, disable: 0, flag: 0 },
+      }),
+    );
+
+    for (const name of agentNames) {
+      const sourcePath = path.join(tmpH, '.claude', 'agents', `${name}.md`);
+      const archivePath = path.join(archivedDir, `${name}.md`);
+      const content = `# ${name}\nAgent content.\n`;
+      const sha256 = createHash('sha256').update(content).digest('hex');
+
+      // Write the archive file (as if bust happened)
+      await writeFile(archivePath, content, 'utf8');
+
+      agentSources.push(sourcePath);
+      agentArchives.push(archivePath);
+
+      manifestLines.push(
+        JSON.stringify({
+          op_id: `test-op-${name}`,
+          op_type: 'archive',
+          timestamp: '2026-04-10T10:00:01.000Z',
+          status: 'completed',
+          category: 'agent',
+          scope: 'global',
+          source_path: sourcePath,
+          archive_path: archivePath,
+          content_sha256: sha256,
+        }),
+      );
+    }
+
+    manifestLines.push(
+      JSON.stringify({
+        record_type: 'footer',
+        status: 'completed',
+        actual_ops: {
+          archive: { completed: 2, failed: 0 },
+          disable: { completed: 0, failed: 0 },
+          flag: { completed: 0, failed: 0, refreshed: 0, skipped: 0 },
+        },
+        duration_ms: 200,
+        exit_code: 0,
+      }),
+    );
+
+    const manifestPath = path.join(
+      tmpH,
+      '.claude',
+      'ccaudit',
+      'manifests',
+      'bust-2026-04-10T10-00-00Z.jsonl',
+    );
+    await writeFile(manifestPath, manifestLines.join('\n') + '\n', 'utf8');
+
+    // Simulate "manual restore": copy the archives back to source paths
+    // (the archive files remain too — this is the "both exist" collision case)
+    // Actually for the "already-at-source" case we want: source exists, archive MISSING
+    // (i.e., files were restored externally without manifest knowledge)
+    // So: write source file AND delete (never write) archive — that's "already-at-source"
+    for (let i = 0; i < agentNames.length; i++) {
+      // Write the source file (manual restore simulation)
+      await writeFile(agentSources[i]!, `# ${agentNames[i]}\nAgent content.\n`, 'utf8');
+      // Remove the archive (simulating a prior restore consumed it)
+      await rm(agentArchives[i]!, { force: true });
+    }
+
+    // ── Run restore ───────────────────────────────────────────────
+    const result = await runRestore(tmpH, ['--json']);
+    expect(result.exitCode, `restore stderr: ${result.stderr}`).toBe(0);
+
+    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+    expect(parsed.status).toBe('success');
+
+    // The key assertion: moved = 0, alreadyAtSource = 2
+    const counts = parsed.counts as {
+      unarchived: { moved: number; alreadyAtSource: number; failed: number };
+    };
+    expect(counts.unarchived.moved, 'moved should be 0 (nothing actually moved)').toBe(0);
+    expect(counts.unarchived.alreadyAtSource, 'already-at-source should be 2').toBe(2);
+    expect(counts.unarchived.failed, 'failed should be 0').toBe(0);
+
+    // The rendered output must mention "already at source" separately
+    const rendered = await runRestore(tmpH, []);
+    const combined = rendered.stdout + rendered.stderr;
+    expect(combined).toMatch(/already.at.source|already at source/i);
+  }, 60_000);
 });

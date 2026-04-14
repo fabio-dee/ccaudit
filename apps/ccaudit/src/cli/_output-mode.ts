@@ -72,9 +72,11 @@ export function buildJsonEnvelope<T extends Record<string, unknown>>(
   since: string,
   exitCode: number,
   data: T,
+  extraMeta?: Record<string, unknown>,
 ): Record<string, unknown> {
   return {
     meta: {
+      ...extraMeta,
       command,
       version: CCAUDIT_VERSION,
       since,
@@ -179,6 +181,55 @@ if (import.meta.vitest) {
       expect(typeof meta.timestamp).toBe('string');
       // ISO 8601 format check: YYYY-MM-DDTHH:mm:ss
       expect(meta.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    });
+
+    it('extraMeta fields merge into meta (not top-level)', () => {
+      const envelope = buildJsonEnvelope(
+        'ghost',
+        '7d',
+        0,
+        { items: [1] },
+        {
+          mcpRegime: 'deferred',
+          toolSearchOverhead: 1700,
+        },
+      );
+      const meta = envelope.meta as Record<string, unknown>;
+      expect(meta.mcpRegime).toBe('deferred');
+      expect(meta.toolSearchOverhead).toBe(1700);
+      expect(envelope.mcpRegime).toBeUndefined();
+      expect(envelope.toolSearchOverhead).toBeUndefined();
+      expect(envelope.items).toEqual([1]);
+    });
+
+    it('omitted extraMeta leaves meta unchanged', () => {
+      const envelope = buildJsonEnvelope('ghost', '7d', 0, {});
+      const meta = envelope.meta as Record<string, unknown>;
+      expect(Object.keys(meta).sort()).toEqual([
+        'command',
+        'exitCode',
+        'since',
+        'timestamp',
+        'version',
+      ]);
+    });
+
+    it('extraMeta cannot override canonical meta fields', () => {
+      const envelope = buildJsonEnvelope(
+        'ghost',
+        '7d',
+        0,
+        {},
+        {
+          command: 'evil',
+          version: '0.0.0',
+          exitCode: 99,
+        },
+      );
+      const meta = envelope.meta as Record<string, unknown>;
+      expect(meta.command).toBe('ghost');
+      expect(meta.version).not.toBe('0.0.0');
+      expect(meta.exitCode).toBe(0);
     });
   });
 }

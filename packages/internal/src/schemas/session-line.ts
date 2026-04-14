@@ -2,6 +2,35 @@ import * as v from 'valibot';
 import { contentBlockSchema } from './tool-use.ts';
 
 /**
+ * Minimal text-block schema for user message content arrays.
+ * Only captures the fields needed for <command-name> extraction.
+ */
+const userTextBlockSchema = v.object({
+  type: v.string(),
+  text: v.optional(v.string()),
+});
+
+/**
+ * User message schema — the type we parse for <command-name> tag extraction.
+ * Content may be a plain string or an array of text blocks; both are handled.
+ *
+ * Note: user lines typically lack sessionId/timestamp/cwd; all are optional.
+ */
+export const userLineSchema = v.object({
+  type: v.literal('user'),
+  sessionId: v.optional(v.string()),
+  timestamp: v.optional(v.string()),
+  cwd: v.optional(v.string()),
+  isSidechain: v.optional(v.boolean()),
+  message: v.object({
+    role: v.literal('user'),
+    content: v.union([v.array(userTextBlockSchema), v.string()]),
+  }),
+});
+
+export type UserLine = v.InferOutput<typeof userLineSchema>;
+
+/**
  * Lightweight schema: extracts type + cwd + timestamp + sessionId from ANY line.
  * Used for quick filtering before deep parsing.
  */
@@ -36,6 +65,57 @@ export type AssistantLine = v.InferOutput<typeof assistantLineSchema>;
 
 if (import.meta.vitest) {
   const { describe, it, expect } = import.meta.vitest;
+
+  describe('userLineSchema', () => {
+    it('should accept a user message with string content', () => {
+      const result = v.safeParse(userLineSchema, {
+        type: 'user',
+        message: { role: 'user', content: '<command-name>/gsd-new-project</command-name>\n...' },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(typeof result.output.message.content).toBe('string');
+      }
+    });
+
+    it('should accept a user message with array content blocks', () => {
+      const result = v.safeParse(userLineSchema, {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: '<command-name>/gsd:update</command-name>' }],
+        },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(Array.isArray(result.output.message.content)).toBe(true);
+      }
+    });
+
+    it('should accept user line with optional sessionId/timestamp/cwd', () => {
+      const result = v.safeParse(userLineSchema, {
+        type: 'user',
+        sessionId: 'sess-001',
+        timestamp: '2026-04-01T00:00:00Z',
+        cwd: '/tmp',
+        message: { role: 'user', content: 'hello' },
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('should reject assistant message (wrong type literal)', () => {
+      const result = v.safeParse(userLineSchema, {
+        type: 'assistant',
+        message: { role: 'user', content: 'hello' },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('should reject line missing message field', () => {
+      const result = v.safeParse(userLineSchema, { type: 'user' });
+      expect(result.success).toBe(false);
+    });
+  });
 
   describe('anyLineSchema', () => {
     it('should accept a full line with all fields', () => {

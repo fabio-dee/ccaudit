@@ -102,8 +102,10 @@ function knownItemsMatch(
  *     on a collection of items, not a single item.
  *   Tier 3 (ungrouped): return null.
  *
- * Scope limit (DETECT-09): only `category === 'agent' || category === 'skill'`
- * items are eligible. Memory files and MCP servers always return null in v1.3.0.
+ * Scope limit (DETECT-09): `category === 'agent' | 'skill' | 'command'`
+ * items are eligible. Memory files and MCP servers always return null.
+ * (v1.3.0: agent+skill only. v1.4.0 Phase 3 extended scope to include commands,
+ * matching `categories: [..., 'command']` declared in the framework registry.)
  *
  * Purity (DETECT-08): zero I/O, zero async, zero filesystem access. All
  * operations are in-memory string matching on inputs.
@@ -119,8 +121,13 @@ export function detectFramework(
   allItems: DetectableItem[],
   registry: Framework[] = KNOWN_FRAMEWORKS,
 ): DetectResult | null {
-  // DETECT-09: scope limit
-  if (item.category !== 'agent' && item.category !== 'skill') return null;
+  // DETECT-09: scope limit. Phase 3 widened to include 'command' — registry
+  // entries for gsd/superclaude/ralph-loop/agent-council/greg-strategy/ideabrowser
+  // already declare `categories: [..., 'command']`, so framework attribution
+  // works transparently for slash commands. Memory and MCP still excluded
+  // (frameworks don't target those categories).
+  if (item.category !== 'agent' && item.category !== 'skill' && item.category !== 'command')
+    return null;
 
   // Tier 1: curated list, first-match-wins (D-04). Iterate registry in
   // declaration order. Each entry tries prefix → folder → knownItems.
@@ -403,6 +410,20 @@ if (import.meta.vitest) {
     it('returns null for memory category even if name matches gsd-', () => {
       const item = makeItem({ name: 'gsd-notes', category: 'memory' });
       expect(detectFramework(item, [item])).toBeNull();
+    });
+
+    it('Phase 3: returns framework for command category (e.g. sc:analyze → superclaude)', () => {
+      const item = makeItem({ name: 'sc:analyze', category: 'command' });
+      const result = detectFramework(item, [item]);
+      expect(result).not.toBeNull();
+      expect(result?.id).toBe('superclaude');
+    });
+
+    it('Phase 3: returns framework for gsd command (e.g. gsd:plan-phase → gsd)', () => {
+      const item = makeItem({ name: 'gsd:plan-phase', category: 'command' });
+      const result = detectFramework(item, [item]);
+      expect(result).not.toBeNull();
+      expect(result?.id).toBe('gsd');
     });
   });
 

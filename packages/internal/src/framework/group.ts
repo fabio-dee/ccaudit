@@ -71,11 +71,13 @@ function buildHeuristicGroups(
   const buckets = new Map<string, GhostItem[]>();
 
   for (const item of ungrouped) {
-    // DETECT-09: heuristic clustering only applies to agents and skills.
-    // Memory/mcp-server items pass through (they'll end up in `ungrouped` below).
-    if (item.category !== 'agent' && item.category !== 'skill') continue;
+    // DETECT-09: heuristic clustering applies to agents, skills, and (Phase 3)
+    // commands. Memory/mcp-server items pass through (they'll end up in
+    // `ungrouped` below).
+    if (item.category !== 'agent' && item.category !== 'skill' && item.category !== 'command')
+      continue;
 
-    const prefix = item.name.split(/[-:_]/)[0]?.toLowerCase() ?? '';
+    const prefix = item.name.split(/[/:_-]/)[0]?.toLowerCase() ?? '';
     if (prefix.length < HEURISTIC_MIN_PREFIX_LENGTH) continue;
     if (stopPrefixes.has(prefix)) continue;
     if (domainStopFolders.has(prefix)) continue;
@@ -294,6 +296,19 @@ if (import.meta.vitest) {
       expect(result.frameworks).toHaveLength(1);
       expect(result.frameworks[0]?.id).toBe('widget');
       expect(result.frameworks[0]?.members).toHaveLength(3);
+    });
+
+    it('clusters slash-namespaced commands with the same prefix (DETECT-09 regression)', () => {
+      const items = [
+        makeItem({ name: 'foo/bar', category: 'command' }),
+        makeItem({ name: 'foo/baz', category: 'command' }),
+      ];
+      const result = groupByFramework(items);
+      expect(result.frameworks).toHaveLength(1);
+      expect(result.frameworks[0]?.id).toBe('foo');
+      expect(result.frameworks[0]?.source_type).toBe('heuristic');
+      expect(result.frameworks[0]?.members).toHaveLength(2);
+      expect(result.ungrouped).toHaveLength(0);
     });
   });
 

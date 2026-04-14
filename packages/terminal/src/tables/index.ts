@@ -10,6 +10,7 @@ export {
   renderProgressBar,
   renderBoxed,
   renderGhostOutputBox,
+  renderHooksAdvisory,
 } from './ghost-table.ts';
 export { renderInventoryTable } from './inventory-table.ts';
 export { renderMcpTable } from './mcp-table.ts';

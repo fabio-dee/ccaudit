@@ -84,9 +84,14 @@ export interface RestoreDeps {
 
 /**
  * Per-category op counters for the restore summary.
+ *
+ * unarchived.moved         — files actually renamed from archive → source
+ * unarchived.alreadyAtSource — files already at source (archive missing): no-op,
+ *                             NOT counted as a rename (Phase 3 fix)
+ * unarchived.failed        — files that could not be restored
  */
 export interface RestoreCounts {
-  unarchived: { completed: number; failed: number };
+  unarchived: { moved: number; alreadyAtSource: number; failed: number };
   reenabled: { completed: number; failed: number };
   stripped: { completed: number; failed: number };
 }
@@ -118,12 +123,19 @@ export interface ManifestListEntry {
  *   config-write-error    → 1
  */
 export type RestoreResult =
-  | { status: 'success'; counts: RestoreCounts; manifestPath: string; duration_ms: number }
+  | {
+      status: 'success';
+      counts: RestoreCounts;
+      manifestPath: string;
+      manifestPaths: string[];
+      duration_ms: number;
+    }
   | {
       status: 'partial-success';
       counts: RestoreCounts;
       failed: number;
       manifestPath: string;
+      manifestPaths: string[];
       duration_ms: number;
     }
   | { status: 'no-manifests' }
@@ -165,11 +177,16 @@ function assertWithinHomedir(p: string): string | undefined {
 }
 
 /**
- * Find the newest manifest entry from discoverManifests, or null if none.
+ * Return all manifest entries newest-first from discoverManifests.
+ *
+ * Phase 3 fix: previously this function returned only entries[0] (the newest),
+ * making every prior bust's archived items unreachable orphans. Now returns
+ * the full sorted list so executeRestore can walk all manifests.
+ *
+ * Returns [] when there are no manifests (no bust history).
  */
-export async function findManifestForRestore(deps: RestoreDeps): Promise<ManifestEntry | null> {
-  const entries = await deps.discoverManifests();
-  return entries[0] ?? null;
+export async function findManifestsForRestore(deps: RestoreDeps): Promise<ManifestEntry[]> {
+  return deps.discoverManifests();
 }
 
 /**
@@ -283,7 +300,7 @@ type ReEnableResult =
 export async function restoreArchiveOp(
   op: ArchiveOp,
   deps: RestoreDeps,
-): Promise<'completed' | 'failed'> {
+): Promise<'moved' | 'already-at-source' | 'failed'> {
   // Boundary check: both paths must stay within the user's home directory
   const sourceErr = assertWithinHomedir(op.source_path);
   if (sourceErr !== undefined) {
@@ -297,22 +314,26 @@ export async function restoreArchiveOp(
   }
 
   // Q1: check if source_path already exists.
-  // If the archive also doesn't exist, the file was never archived (bust failed
-  // silently) or was already restored — treat as completed so the user gets an
-  // accurate count instead of a wall of phantom failures.
-  // If BOTH source and archive exist, there is a genuine collision — warn and fail.
+  // If the archive also doesn't exist, the file was already restored externally
+  // or the bust never actually moved it — classify as 'already-at-source' so it
+  // is NOT counted as a successful rename operation. This prevents false-positive
+  // inflation of the restored count (Phase 3 fix).
+  // If BOTH source and archive exist, there is a genuine collision — warn and
+  // classify as 'already-at-source' (v1 policy: don't overwrite). Document
+  // the collision in the warning message so the user can act manually.
   if (await deps.pathExists(op.source_path)) {
     if (!(await deps.pathExists(op.archive_path))) {
       // Already in original location with no archive copy — nothing to do.
       deps.onWarning?.(
-        `ℹ️  ${path.basename(op.source_path)} already at original location (not in archive) — counting as restored`,
+        `ℹ️  ${path.basename(op.source_path)} already at source (no archive copy) — skipping`,
       );
-      return 'completed';
+      return 'already-at-source';
     }
+    // Both exist: collision. Treat as already-at-source (don't overwrite) per v1 policy.
     deps.onWarning?.(
       `⚠️  ${path.basename(op.source_path)} exists at both source and archive — skipping to avoid overwrite (restore manually if needed)`,
     );
-    return 'failed';
+    return 'already-at-source';
   }
 
   // D-13: SHA256 tamper detection on archive_path (warn, proceed)
@@ -341,7 +362,7 @@ export async function restoreArchiveOp(
   // Rename archive → source
   try {
     await deps.renameFile(op.archive_path, op.source_path);
-    return 'completed';
+    return 'moved';
   } catch (err) {
     deps.onWarning?.(`✗ ${path.basename(op.source_path)} — ${(err as Error).message}`);
     return 'failed';
@@ -547,9 +568,10 @@ async function executeOpsOnManifest(
   ops: ManifestOp[],
   deps: RestoreDeps,
   start: number,
+  allEntryPaths?: string[],
 ): Promise<RestoreResult> {
   const counts: RestoreCounts = {
-    unarchived: { completed: 0, failed: 0 },
+    unarchived: { moved: 0, alreadyAtSource: 0, failed: 0 },
     reenabled: { completed: 0, failed: 0 },
     stripped: { completed: 0, failed: 0 },
   };
@@ -592,7 +614,8 @@ async function executeOpsOnManifest(
   const skillOps = archiveOps.filter((o) => o.category === 'skill');
   for (const op of skillOps) {
     const outcome = await restoreArchiveOp(op, deps);
-    if (outcome === 'completed') counts.unarchived.completed++;
+    if (outcome === 'moved') counts.unarchived.moved++;
+    else if (outcome === 'already-at-source') counts.unarchived.alreadyAtSource++;
     else counts.unarchived.failed++;
   }
 
@@ -600,20 +623,23 @@ async function executeOpsOnManifest(
   const agentOps = archiveOps.filter((o) => o.category === 'agent');
   for (const op of agentOps) {
     const outcome = await restoreArchiveOp(op, deps);
-    if (outcome === 'completed') counts.unarchived.completed++;
+    if (outcome === 'moved') counts.unarchived.moved++;
+    else if (outcome === 'already-at-source') counts.unarchived.alreadyAtSource++;
     else counts.unarchived.failed++;
   }
 
   const totalFailed = counts.unarchived.failed + counts.reenabled.failed + counts.stripped.failed;
   const duration_ms = Date.now() - start;
+  const manifestPaths = allEntryPaths ?? [entry.path];
   if (totalFailed === 0) {
-    return { status: 'success', counts, manifestPath: entry.path, duration_ms };
+    return { status: 'success', counts, manifestPath: entry.path, manifestPaths, duration_ms };
   }
   return {
     status: 'partial-success',
     counts,
     failed: totalFailed,
     manifestPath: entry.path,
+    manifestPaths,
     duration_ms,
   };
 }
@@ -665,21 +691,84 @@ export async function executeRestore(mode: RestoreMode, deps: RestoreDeps): Prom
     };
   }
 
-  // Full restore: use the newest manifest
+  // Full restore: walk ALL manifests newest-first, deduplicate ops by archive_path.
+  //
+  // Phase 3 fix: the old code called findManifestForRestore() which returned only
+  // entries[0] (the newest manifest). Every prior bust's archived items became
+  // unreachable orphans. Now we collect ops from every manifest, deduplicate by
+  // archive_path (newer manifest wins), and execute the unified op list.
+  //
+  // Dedup rationale: two consecutive busts could theoretically archive the same
+  // source path (e.g. if the user manually restored between busts). In that case,
+  // the newer manifest's archive_path takes precedence.
+  //
+  // Already-restored detection: if source_path exists AND archive_path is missing,
+  // restoreArchiveOp classifies the op as 'already-at-source'. This handles the
+  // idempotency case where the user re-runs restore after a crash mid-way.
   if (mode.kind === 'full') {
-    const entry = await findManifestForRestore(deps);
-    if (entry === null) return { status: 'no-manifests' };
+    const allEntries = await findManifestsForRestore(deps);
+    if (allEntries.length === 0) return { status: 'no-manifests' };
 
-    const manifest = await deps.readManifest(entry.path);
-    if (manifest.header === null) {
-      return { status: 'manifest-corrupt', path: entry.path };
+    // Validate the newest manifest's header (D-07). If the newest is corrupt,
+    // refuse entirely rather than silently falling back to an older one.
+    const newestEntry = allEntries[0]!;
+    const newestManifest = await deps.readManifest(newestEntry.path);
+    if (newestManifest.header === null) {
+      return { status: 'manifest-corrupt', path: newestEntry.path };
     }
-    if (manifest.footer === null) {
+    if (newestManifest.footer === null) {
       deps.onWarning?.(
-        `Partial bust detected — ${path.basename(entry.path)} has no completion record. Restoring operations that were recorded.`,
+        `Partial bust detected — ${path.basename(newestEntry.path)} has no completion record. Restoring operations that were recorded.`,
       );
     }
-    return executeOpsOnManifest(entry, manifest.ops, deps, start);
+
+    // Collect ops from ALL manifests newest-first, deduplicating by archive_path.
+    // Ops from older manifests are silently skipped if the same archive_path was
+    // already seen in a newer manifest.
+    const seenArchivePaths = new Set<string>();
+    const collectedOps: ManifestOp[] = [];
+
+    for (const entry of allEntries) {
+      // Re-use the already-read newest manifest; read others fresh.
+      const manifest = entry === newestEntry ? newestManifest : await deps.readManifest(entry.path);
+
+      // Skip corrupt manifests in the middle of the list — only the newest
+      // triggers a hard failure (validated above).
+      if (manifest.header === null) {
+        deps.onWarning?.(
+          `⚠️  Skipping corrupt manifest ${path.basename(entry.path)} (no header record)`,
+        );
+        continue;
+      }
+
+      for (const op of manifest.ops) {
+        if (op.op_type === 'archive') {
+          if (seenArchivePaths.has(op.archive_path)) {
+            // Duplicate archive_path across manifests — newer already recorded, skip.
+            continue;
+          }
+          seenArchivePaths.add(op.archive_path);
+          collectedOps.push(op);
+        } else {
+          // Non-archive ops (disable, flag, refresh): include from all manifests.
+          // These are idempotent: re-enabling an already-enabled MCP is detected
+          // inside reEnableMcpTransactional; stripping already-absent frontmatter
+          // is a no-op in restoreFlagOp / restoreRefreshOp.
+          collectedOps.push(op);
+        }
+      }
+    }
+
+    // Execute all collected ops via the existing orchestrator.
+    // Pass newestEntry as the manifest reference for the result (manifestPath field).
+    // Pass allEntries paths so the result records every consumed manifest.
+    return executeOpsOnManifest(
+      newestEntry,
+      collectedOps,
+      deps,
+      start,
+      allEntries.map((e) => e.path),
+    );
   }
 
   // Single-item restore: search all manifests for the named item
@@ -800,7 +889,8 @@ if (import.meta.vitest) {
       const result = await executeRestore({ kind: 'full' }, deps);
       expect(result.status).toBe('success');
       if (result.status === 'success') {
-        expect(result.counts.unarchived.completed).toBe(0);
+        expect(result.counts.unarchived.moved).toBe(0);
+        expect(result.counts.unarchived.alreadyAtSource).toBe(0);
         expect(result.counts.reenabled.completed).toBe(0);
         expect(result.counts.stripped.completed).toBe(0);
       }
@@ -974,6 +1064,89 @@ if (import.meta.vitest) {
       expect(warnings[0]).toMatch(/Partial bust detected/);
       expect(result.status).toBe('success');
     });
+
+    it('Test 7b: corrupt older manifest is skipped with a warning; valid newer manifest still restores (regression)', async () => {
+      // Regression for the skip-corrupt-older-manifest branch (lines 737-742).
+      // Scenario: two manifests, newest has a valid header, older is truncated/corrupt.
+      // Expected: onWarning fires once for the corrupt older manifest; restore succeeds.
+      const newerEntry: ManifestEntry = {
+        path: '/fake/.claude/ccaudit/manifests/bust-2026-04-10T10-00-00Z.jsonl',
+        mtime: new Date('2026-04-10T10:00:00Z'),
+      };
+      const olderEntry: ManifestEntry = {
+        path: '/fake/.claude/ccaudit/manifests/bust-2026-04-01T08-00-00Z.jsonl',
+        mtime: new Date('2026-04-01T08:00:00Z'),
+      };
+
+      const warnings: string[] = [];
+
+      const deps = makeFakeDeps({
+        discoverManifests: async () => [newerEntry, olderEntry],
+        readManifest: async (p) => {
+          if (p === newerEntry.path) {
+            return { header: fakeHeader, ops: [], footer: fakeFooter, truncated: false };
+          }
+          // Older manifest is corrupt: no header record.
+          return { header: null, ops: [], footer: null, truncated: true };
+        },
+        processDetector: {
+          runCommand: async () => '',
+          getParentPid: async () => null,
+          platform: 'linux',
+        },
+        onWarning: (msg) => {
+          warnings.push(msg);
+        },
+      });
+
+      const result = await executeRestore({ kind: 'full' }, deps);
+
+      // The corrupt older manifest must have triggered exactly one warning.
+      expect(warnings.length).toBe(1);
+      expect(warnings[0]).toMatch(/Skipping corrupt manifest/);
+      expect(warnings[0]).toMatch(path.basename(olderEntry.path));
+
+      // Restore must still succeed (the newer manifest is intact).
+      expect(result.status).toBe('success');
+    });
+
+    it('Test 7c: corrupt newest manifest hard-fails even when older manifests are valid (regression)', async () => {
+      // Counterpart regression: a corrupt *newest* manifest must produce
+      // manifest-corrupt, not silently fall back to older ones.
+      const newerEntry: ManifestEntry = {
+        path: '/fake/.claude/ccaudit/manifests/bust-2026-04-10T10-00-00Z.jsonl',
+        mtime: new Date('2026-04-10T10:00:00Z'),
+      };
+      const olderEntry: ManifestEntry = {
+        path: '/fake/.claude/ccaudit/manifests/bust-2026-04-01T08-00-00Z.jsonl',
+        mtime: new Date('2026-04-01T08:00:00Z'),
+      };
+
+      const deps = makeFakeDeps({
+        discoverManifests: async () => [newerEntry, olderEntry],
+        readManifest: async (p) => {
+          if (p === newerEntry.path) {
+            // Newest manifest is corrupt.
+            return { header: null, ops: [], footer: null, truncated: true };
+          }
+          // Older manifest is perfectly valid.
+          return { header: fakeHeader, ops: [], footer: fakeFooter, truncated: false };
+        },
+        processDetector: {
+          runCommand: async () => '',
+          getParentPid: async () => null,
+          platform: 'linux',
+        },
+      });
+
+      const result = await executeRestore({ kind: 'full' }, deps);
+
+      // Hard failure on corrupt newest -- must not silently continue.
+      expect(result.status).toBe('manifest-corrupt');
+      if (result.status === 'manifest-corrupt') {
+        expect(result.path).toBe(newerEntry.path);
+      }
+    });
   });
 
   describe('findManifestForName', () => {
@@ -1085,7 +1258,7 @@ if (import.meta.vitest) {
   // -- Task 2 tests: executor functions ----------------------------
 
   describe('restoreArchiveOp', () => {
-    it('Test 1: archive file exists, source_path empty → rename succeeds, returns completed', async () => {
+    it('Test 1: archive file exists, source_path empty → rename succeeds, returns moved', async () => {
       const { mkdtemp, writeFile: wf, rm } = await import('node:fs/promises');
       const { homedir } = await import('node:os');
       const { join } = await import('node:path');
@@ -1141,7 +1314,7 @@ if (import.meta.vitest) {
         });
 
         const result = await restoreArchiveOp(op, deps);
-        expect(result).toBe('completed');
+        expect(result).toBe('moved');
         expect(warnings).toHaveLength(0);
       } finally {
         await rm(dir, { recursive: true, force: true });
@@ -1193,14 +1366,14 @@ if (import.meta.vitest) {
         });
 
         const result = await restoreArchiveOp(op, deps);
-        expect(result).toBe('completed');
+        expect(result).toBe('moved');
         expect(warnings.some((w) => w.includes('modified after archiving'))).toBe(true);
       } finally {
         await rm(dir, { recursive: true, force: true });
       }
     });
 
-    it('Test 3: source_path exists but archive does NOT exist → already-restored, returns completed', async () => {
+    it('Test 3: source_path exists but archive does NOT exist → already-at-source, returns already-at-source', async () => {
       const { mkdtemp, writeFile: wf, rm } = await import('node:fs/promises');
       const { homedir: _homedir } = await import('node:os');
       const { join } = await import('node:path');
@@ -1240,14 +1413,14 @@ if (import.meta.vitest) {
         });
 
         const result = await restoreArchiveOp(op, deps);
-        expect(result).toBe('completed');
-        expect(warnings.some((w) => w.includes('already at original location'))).toBe(true);
+        expect(result).toBe('already-at-source');
+        expect(warnings.some((w) => w.includes('already at source'))).toBe(true);
       } finally {
         await rm(dir, { recursive: true, force: true });
       }
     });
 
-    it('Test 3b: source_path AND archive_path both exist → genuine collision, returns failed', async () => {
+    it('Test 3b: source_path AND archive_path both exist → collision treated as already-at-source (v1 policy: no overwrite)', async () => {
       const { mkdtemp, writeFile: wf, mkdir, rm } = await import('node:fs/promises');
       const { homedir: _homedir } = await import('node:os');
       const { join } = await import('node:path');
@@ -1290,7 +1463,8 @@ if (import.meta.vitest) {
         });
 
         const result = await restoreArchiveOp(op, deps);
-        expect(result).toBe('failed');
+        // v1 policy: collision (both exist) → already-at-source, not failed; don't overwrite.
+        expect(result).toBe('already-at-source');
         expect(warnings.some((w) => w.includes('exists at both source and archive'))).toBe(true);
       } finally {
         await rm(dir, { recursive: true, force: true });
@@ -2017,7 +2191,8 @@ if (import.meta.vitest) {
       const result = await executeRestore({ kind: 'full' }, deps);
       expect(result.status).toBe('success');
       if (result.status === 'success') {
-        expect(result.counts.unarchived.completed).toBeGreaterThan(0);
+        expect(result.counts.unarchived.moved).toBeGreaterThan(0);
+        expect(result.counts.unarchived.alreadyAtSource).toBe(0);
         expect(result.counts.reenabled.completed).toBeGreaterThan(0);
         expect(result.counts.stripped.completed).toBeGreaterThan(0);
         expect(result.counts.unarchived.failed).toBe(0);
@@ -2059,6 +2234,195 @@ if (import.meta.vitest) {
       // Only the matched op should have been renamed
       expect(opLog).toHaveLength(1);
       expect(opLog[0]).toContain('target-agent');
+    });
+  });
+
+  // -- Phase 3: findManifestsForRestore (plural) + counter split ---------
+
+  describe('findManifestsForRestore (Phase 3)', () => {
+    it('P3-Test 1: returns [] when discoverManifests returns empty list', async () => {
+      const deps = makeFakeDeps({ discoverManifests: async () => [] });
+      const result = await findManifestsForRestore(deps);
+      expect(result).toEqual([]);
+    });
+
+    it('P3-Test 2: returns all entries newest-first from discoverManifests', async () => {
+      const entries: ManifestEntry[] = [
+        { path: '/fake/bust-2026-04-05T18-30-00Z.jsonl', mtime: new Date('2026-04-05T18:30:00Z') },
+        { path: '/fake/bust-2026-04-01T10-00-00Z.jsonl', mtime: new Date('2026-04-01T10:00:00Z') },
+      ];
+      // discoverManifests already returns newest-first; findManifestsForRestore passes through
+      const deps = makeFakeDeps({ discoverManifests: async () => entries });
+      const result = await findManifestsForRestore(deps);
+      expect(result).toHaveLength(2);
+      expect(result[0]!.path).toContain('2026-04-05');
+      expect(result[1]!.path).toContain('2026-04-01');
+    });
+
+    it('P3-Test 3: full restore with TWO manifests restores ops from BOTH (cross-manifest iteration)', async () => {
+      // Older manifest: 3 agent archive ops
+      const olderEntry: ManifestEntry = {
+        path: '/fake/bust-2026-04-01T10-00-00Z.jsonl',
+        mtime: new Date('2026-04-01T10:00:00Z'),
+      };
+      const newerEntry: ManifestEntry = {
+        path: '/fake/bust-2026-04-05T18-30-00Z.jsonl',
+        mtime: new Date('2026-04-05T18:30:00Z'),
+      };
+
+      // Build fake archive ops with distinct archive_paths to avoid dedup
+      const makeOp = (name: string): ArchiveOp => ({
+        op_id: `op-${name}`,
+        op_type: 'archive',
+        timestamp: '2026-04-01T10:00:01Z',
+        status: 'completed',
+        category: 'agent',
+        scope: 'global',
+        source_path: `${homedir()}/.claude/agents/${name}.md`,
+        archive_path: `${homedir()}/.claude/ccaudit/archived/agents/${name}.md`,
+        content_sha256: 'abc',
+      });
+
+      const olderOps: ManifestOp[] = [makeOp('alpha'), makeOp('beta'), makeOp('gamma')];
+      const newerOps: ManifestOp[] = [makeOp('delta'), makeOp('epsilon')];
+
+      const renamedPaths: string[] = [];
+      const deps = makeFakeDeps({
+        discoverManifests: async () => [newerEntry, olderEntry], // newest-first
+        readManifest: async (p) => {
+          if (p.includes('2026-04-05')) {
+            return { header: fakeHeader, ops: newerOps, footer: fakeFooter, truncated: false };
+          }
+          return { header: fakeHeader, ops: olderOps, footer: fakeFooter, truncated: false };
+        },
+        processDetector: {
+          runCommand: async () => '',
+          getParentPid: async () => null,
+          platform: 'linux' as const,
+        },
+        pathExists: async () => false,
+        readFileBytes: async () => Buffer.from('content'),
+        mkdirRecursive: async () => {},
+        renameFile: async (_from, to) => {
+          renamedPaths.push(path.basename(to));
+        },
+      });
+
+      const result = await executeRestore({ kind: 'full' }, deps);
+      expect(result.status).toBe('success');
+      // All 5 ops must have been executed (2 from newer + 3 from older)
+      expect(renamedPaths).toHaveLength(5);
+      expect(renamedPaths).toContain('alpha.md');
+      expect(renamedPaths).toContain('beta.md');
+      expect(renamedPaths).toContain('gamma.md');
+      expect(renamedPaths).toContain('delta.md');
+      expect(renamedPaths).toContain('epsilon.md');
+      // Counter: 5 moved, 0 already-at-source, 0 failed
+      if (result.status === 'success') {
+        expect(result.counts.unarchived.moved).toBe(5);
+        expect(result.counts.unarchived.alreadyAtSource).toBe(0);
+        expect(result.counts.unarchived.failed).toBe(0);
+      }
+    });
+
+    it('P3-Test 4: dedup by archive_path — newer manifest wins, older op skipped', async () => {
+      const olderEntry: ManifestEntry = {
+        path: '/fake/bust-2026-04-01T10-00-00Z.jsonl',
+        mtime: new Date('2026-04-01T10:00:00Z'),
+      };
+      const newerEntry: ManifestEntry = {
+        path: '/fake/bust-2026-04-05T18-30-00Z.jsonl',
+        mtime: new Date('2026-04-05T18:30:00Z'),
+      };
+
+      // Same archive_path in both manifests (duplicate bust of the same source)
+      const sharedArchivePath = `${homedir()}/.claude/ccaudit/archived/agents/shared-agent.md`;
+      const sharedSourcePath = `${homedir()}/.claude/agents/shared-agent.md`;
+      const sharedOp = (label: string): ArchiveOp => ({
+        op_id: `op-${label}`,
+        op_type: 'archive',
+        timestamp: '2026-04-01T10:00:01Z',
+        status: 'completed',
+        category: 'agent',
+        scope: 'global',
+        source_path: sharedSourcePath,
+        archive_path: sharedArchivePath,
+        content_sha256: 'abc',
+      });
+
+      const renames: string[] = [];
+      const deps = makeFakeDeps({
+        discoverManifests: async () => [newerEntry, olderEntry],
+        readManifest: async (p) => {
+          const ops: ManifestOp[] = p.includes('2026-04-05')
+            ? [sharedOp('newer')]
+            : [sharedOp('older')];
+          return { header: fakeHeader, ops, footer: fakeFooter, truncated: false };
+        },
+        processDetector: {
+          runCommand: async () => '',
+          getParentPid: async () => null,
+          platform: 'linux' as const,
+        },
+        pathExists: async () => false,
+        readFileBytes: async () => Buffer.from('content'),
+        mkdirRecursive: async () => {},
+        renameFile: async (_from, to) => {
+          renames.push(to);
+        },
+      });
+
+      const result = await executeRestore({ kind: 'full' }, deps);
+      expect(result.status).toBe('success');
+      // Only ONE rename despite two manifests having the same archive_path
+      expect(renames).toHaveLength(1);
+      if (result.status === 'success') {
+        expect(result.counts.unarchived.moved).toBe(1);
+      }
+    });
+
+    it('P3-Test 5: already-at-source ops counted separately, not as moved', async () => {
+      // One op where source exists and archive does NOT → already-at-source
+      const op: ArchiveOp = {
+        op_id: 'op-ats',
+        op_type: 'archive',
+        timestamp: '2026-04-05T18:30:01Z',
+        status: 'completed',
+        category: 'agent',
+        scope: 'global',
+        source_path: `${homedir()}/.claude/agents/existing-agent.md`,
+        archive_path: `${homedir()}/.claude/ccaudit/archived/agents/existing-agent-GONE.md`,
+        content_sha256: 'abc',
+      };
+
+      const deps = makeFakeDeps({
+        discoverManifests: async () => [fakeEntry],
+        readManifest: async () => ({
+          header: fakeHeader,
+          ops: [op],
+          footer: fakeFooter,
+          truncated: false,
+        }),
+        processDetector: {
+          runCommand: async () => '',
+          getParentPid: async () => null,
+          platform: 'linux' as const,
+        },
+        // source exists, archive does NOT
+        pathExists: async (p) => p === op.source_path,
+        readFileBytes: async () => Buffer.from('content'),
+        mkdirRecursive: async () => {},
+        renameFile: async () => {},
+      });
+
+      const result = await executeRestore({ kind: 'full' }, deps);
+      expect(result.status).toBe('success');
+      if (result.status === 'success') {
+        // The already-at-source op must NOT inflate the moved counter
+        expect(result.counts.unarchived.moved).toBe(0);
+        expect(result.counts.unarchived.alreadyAtSource).toBe(1);
+        expect(result.counts.unarchived.failed).toBe(0);
+      }
     });
   });
 }

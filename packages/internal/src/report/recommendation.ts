@@ -15,6 +15,11 @@ export function classifyRecommendation(tier: GhostTier): Recommendation {
       return 'monitor';
     case 'used':
       return 'keep';
+    case 'dormant':
+      // Hooks are advisory by default (not aggregated into grand total unless --include-hooks).
+      // 'monitor' is the correct recommendation: hooks cannot be safely "archived" via the
+      // bust pipeline because they live in claude config JSON, not as standalone files.
+      return 'monitor';
   }
 }
 
@@ -32,6 +37,10 @@ if (import.meta.vitest) {
 
     it('maps used to keep', () => {
       expect(classifyRecommendation('used')).toBe('keep');
+    });
+
+    it('maps dormant to monitor', () => {
+      expect(classifyRecommendation('dormant')).toBe('monitor');
     });
   });
 }
