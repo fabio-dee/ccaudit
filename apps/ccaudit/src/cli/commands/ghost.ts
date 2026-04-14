@@ -164,13 +164,11 @@ export const ghostCommand = define({
 
     const _recordGhostHistory = async (command: string): Promise<void> => {
       const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? homedir();
+      // TODO(v1.5): build a real redactionMap from projectSummaries for deep path redaction.
+      // For v1.4.0 the record.ts fallback redacts homeDir from cwd, which covers the stated guarantee.
       const redactionMap =
         ctx.values.privacy === true
-          ? (() => {
-              // We may not have projectSummaries in scope at all branches.
-              // Return an empty map; the record.ts fallback will still redact homeDir from cwd.
-              return undefined;
-            })()
+          ? undefined // fallback in record.ts replaces homeDir prefix
           : undefined;
       await recordHistory({
         homeDir,

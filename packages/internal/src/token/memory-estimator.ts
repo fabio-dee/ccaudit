@@ -39,6 +39,10 @@ export interface MemoryEstimateResult {
  * stripping/resolution logic with no semantic divergence.
  *
  * Returns null if the root file cannot be read.
+ *
+ * @param opts.cycleGuard - Accepted for API compatibility but not forwarded to
+ *   resolveMarkdownImports, which maintains its own internal cycle guard. Callers
+ *   that already hold a visited-path Set may pass it; it has no effect here.
  */
 export async function estimateMemoryTokens(
   rootPath: string,
@@ -46,9 +50,6 @@ export async function estimateMemoryTokens(
 ): Promise<MemoryEstimateResult | null> {
   const maxDepth = opts?.maxDepth ?? 5;
   const maxFiles = opts?.maxFiles ?? 50;
-  // cycleGuard from opts is accepted but not passed through to resolveMarkdownImports
-  // (resolveMarkdownImports maintains its own internal cycle guard). The parameter
-  // is retained for API compatibility with existing callers.
 
   const absRoot = resolve(rootPath);
 

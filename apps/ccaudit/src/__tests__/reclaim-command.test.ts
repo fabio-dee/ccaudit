@@ -27,7 +27,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { mkdtemp } from 'node:fs/promises';
 import path from 'node:path';
@@ -271,7 +271,6 @@ describe('ccaudit reclaim', () => {
       expect(existsSync(archivePath)).toBe(true);
 
       // SAFETY INVARIANT: source file must be UNCHANGED (NOT overwritten)
-      const { readFile } = await import('node:fs/promises');
       const sourceContent = await readFile(sourcePath, 'utf8');
       expect(sourceContent).toBe('original source version');
     });
@@ -303,7 +302,6 @@ describe('ccaudit reclaim', () => {
       expect(existsSync(path.join(tmpHome, '.claude', 'agents', 'orphan-b.md'))).toBe(true);
 
       // The source-exists one must remain untouched at live c
-      const { readFile } = await import('node:fs/promises');
       const content = await readFile(
         path.join(tmpHome, '.claude', 'agents', 'exists-c.md'),
         'utf8',

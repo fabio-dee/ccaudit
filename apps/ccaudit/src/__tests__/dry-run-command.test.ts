@@ -363,10 +363,13 @@ describe('ccaudit --dry-run (integration, DRYR-01/02/03)', () => {
 describe('_test-helpers (Phase 0 smoke test)', () => {
   it('makeTmpHome returns an absolute path that exists on disk', async () => {
     const p = await makeTmpHome();
-    expect(path.isAbsolute(p)).toBe(true);
-    const s = await stat(p);
-    expect(s.isDirectory()).toBe(true);
-    await cleanupTmpHome(p);
+    try {
+      expect(path.isAbsolute(p)).toBe(true);
+      const s = await stat(p);
+      expect(s.isDirectory()).toBe(true);
+    } finally {
+      await cleanupTmpHome(p);
+    }
   });
 
   it('cleanupTmpHome removes the directory', async () => {

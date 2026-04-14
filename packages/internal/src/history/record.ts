@@ -111,7 +111,7 @@ function redactCwdFallback(cwd: string, homeDir: string): string {
   }
   // Try replacing anywhere in the path (handles /private prefix symlink on macOS).
   if (cwd.includes(homeDir)) {
-    return cwd.replace(homeDir, '~');
+    return cwd.replaceAll(homeDir, '~');
   }
   return cwd;
 }

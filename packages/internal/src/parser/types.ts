@@ -91,6 +91,32 @@ if (import.meta.vitest) {
       expect(record.tool).toBe('sequentialthinking');
       expect(record.isSidechain).toBe(true);
     });
+
+    it('should accept a valid command invocation', () => {
+      const record: InvocationRecord = {
+        kind: 'command',
+        name: 'my-namespace:my-command',
+        sessionId: 'sess-004',
+        timestamp: '2026-03-28T00:00:00.000Z',
+        projectPath: '/tmp/project',
+        isSidechain: false,
+      };
+      expect(record.kind).toBe('command');
+      expect(record.tool).toBeUndefined();
+    });
+
+    it('should accept a valid hook invocation', () => {
+      const record: InvocationRecord = {
+        kind: 'hook',
+        name: 'PostToolUse:*',
+        sessionId: 'sess-005',
+        timestamp: '2026-03-28T00:10:00.000Z',
+        projectPath: '/tmp/project',
+        isSidechain: false,
+      };
+      expect(record.kind).toBe('hook');
+      expect(record.tool).toBeUndefined();
+    });
   });
 
   describe('SessionMeta', () => {

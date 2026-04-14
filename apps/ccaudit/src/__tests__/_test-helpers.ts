@@ -68,7 +68,13 @@ export function runCcauditCli(
     const timer = setTimeout(() => {
       killed = true;
       child.kill('SIGKILL');
-      reject(new Error(`runCcauditCli timed out after ${ms}ms`));
+      reject(
+        new Error(
+          `runCcauditCli timed out after ${ms}ms\n` +
+            `stdout:\n${stdout.slice(-1000)}\n` +
+            `stderr:\n${stderr.slice(-1000)}`,
+        ),
+      );
     }, ms);
 
     child.stdout.on('data', (c: Buffer) => {

@@ -110,11 +110,6 @@ async function walk(
     for (const importPath of extractImports(content)) {
       if (results.length >= opts.maxFiles) break;
       const resolvedPath = resolveImportPath(importPath, absPath);
-      try {
-        await stat(resolvedPath);
-      } catch {
-        continue; // Import target missing - skip silently
-      }
       await walk(resolvedPath, depth + 1, opts, results);
     }
   }
