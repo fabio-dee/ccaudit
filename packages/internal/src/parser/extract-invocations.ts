@@ -1,5 +1,128 @@
-import type { AssistantLine } from '../schemas/session-line.ts';
+import type { AssistantLine, UserLine } from '../schemas/session-line.ts';
 import type { InvocationRecord } from './types.ts';
+
+/**
+ * Regex matching [hook EventName] text markers in tool-result content.
+ *
+ * Real session format check (grepped ~/.claude/projects/ across 1473 JSONL files):
+ * Markers appear in assistant tool_use input text as plan content, and in user
+ * tool_result blocks as plan content. No actual hook-firing signal was found in
+ * the sampled corpus — all occurrences were documentation/plan text, not runtime
+ * output. The extractor is therefore effectively inert on real session data.
+ *
+ * Consequence: ALL inject-capable hooks will be classified as 'dormant' (zero
+ * observed fires). This is the correct conservative behaviour — the plan spec
+ * explicitly anticipates this outcome.
+ *
+ * If Claude Code starts embedding hook-firing markers in tool_result blocks in a
+ * future release, this extractor will begin attributing firings correctly without
+ * any code change.
+ */
+const HOOK_FIRE_PATTERN = /\[hook\s+(\w+)\]/g;
+
+/**
+ * Extract hook invocation records from a user message line.
+ *
+ * Scans all tool_result content blocks for [hook EventName] text markers.
+ * The name is set to `${event}:*` — the `:*` placeholder is intentional:
+ * we cannot recover the specific matcher from the firing signal, so we
+ * attribute to event-level. The matching pass in scan-all.ts will then
+ * credit all configured hooks for that event.
+ *
+ * @param line - A validated UserLine from the JSONL parser.
+ * @returns Array of InvocationRecord with kind='hook', empty if none found.
+ */
+export function extractHookInvocations(line: UserLine): InvocationRecord[] {
+  const records: InvocationRecord[] = [];
+  const meta = {
+    sessionId: line.sessionId ?? '',
+    timestamp: line.timestamp ?? new Date(0).toISOString(),
+    projectPath: line.cwd ?? '',
+    isSidechain: line.isSidechain ?? false,
+  };
+
+  const { content } = line.message;
+
+  // Collect all text strings from tool_result content blocks
+  const texts: string[] = [];
+  if (typeof content === 'string') {
+    texts.push(content);
+  } else {
+    for (const block of content) {
+      // Only scan tool_result blocks for hook firing markers
+      if (block.text) texts.push(block.text);
+    }
+  }
+
+  for (const text of texts) {
+    HOOK_FIRE_PATTERN.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = HOOK_FIRE_PATTERN.exec(text)) !== null) {
+      const event = m[1];
+      if (event) {
+        // Use event:* as name — matcher is not recoverable from the firing signal
+        records.push({ kind: 'hook', name: `${event}:*`, ...meta });
+      }
+    }
+  }
+
+  return records;
+}
+
+/**
+ * Extract command invocations from a user message line.
+ *
+ * Scans all text content for <command-name>...</command-name> tags.
+ * Emits one InvocationRecord per match with kind='command'.
+ *
+ * Real session format (from ~/.claude/projects/ spot-check):
+ *   <command-name>/gsd:update</command-name>
+ *   <command-name>/clear</command-name>
+ *
+ * Namespacing: the leading slash is stripped; ':' separators are preserved
+ * so 'gsd:update' matches scan-commands.ts namespace convention.
+ *
+ * @param line - A validated UserLine from the JSONL parser.
+ * @returns Array of InvocationRecord with kind='command', empty if none found.
+ */
+export function extractCommandInvocations(line: UserLine): InvocationRecord[] {
+  const records: InvocationRecord[] = [];
+  const meta = {
+    sessionId: line.sessionId ?? '',
+    timestamp: line.timestamp ?? new Date(0).toISOString(),
+    projectPath: line.cwd ?? '',
+    isSidechain: line.isSidechain ?? false,
+  };
+
+  const { content } = line.message;
+
+  // Collect all text strings to search
+  const texts: string[] = [];
+  if (typeof content === 'string') {
+    texts.push(content);
+  } else {
+    for (const block of content) {
+      if (block.text) texts.push(block.text);
+    }
+  }
+
+  // Regex: match <command-name>/optional-slash + name </command-name>
+  // Leading slash is optional; name may contain letters, digits, hyphens, colons
+  const tagPattern = /<command-name>\s*\/?([^\s<]+)\s*<\/command-name>/g;
+
+  for (const text of texts) {
+    let m: RegExpExecArray | null;
+    tagPattern.lastIndex = 0;
+    while ((m = tagPattern.exec(text)) !== null) {
+      const name = m[1];
+      if (name) {
+        records.push({ kind: 'command', name, ...meta });
+      }
+    }
+  }
+
+  return records;
+}
 
 /**
  * Parse an MCP tool name (e.g., 'mcp__Chrome__tab') into server and tool components.
@@ -413,6 +536,174 @@ if (import.meta.vitest) {
       };
       const results = extractInvocations(line);
       expect(results).toHaveLength(0);
+    });
+  });
+
+  describe('extractCommandInvocations', () => {
+    const baseUserLine: UserLine = {
+      type: 'user',
+      sessionId: 'sess-001',
+      timestamp: '2026-04-01T12:00:00.000Z',
+      cwd: '/Users/test/project',
+      isSidechain: false,
+      message: { role: 'user', content: '' },
+    };
+
+    it('<command-name>/gsd-new-project</command-name> → name gsd-new-project', () => {
+      const line: UserLine = {
+        ...baseUserLine,
+        message: {
+          role: 'user',
+          content: '<command-name>/gsd-new-project</command-name>\nsome text',
+        },
+      };
+      const results = extractCommandInvocations(line);
+      expect(results).toHaveLength(1);
+      expect(results[0].kind).toBe('command');
+      expect(results[0].name).toBe('gsd-new-project');
+      expect(results[0].sessionId).toBe('sess-001');
+      expect(results[0].projectPath).toBe('/Users/test/project');
+    });
+
+    it('<command-name>/git:commit</command-name> → name git:commit (colon namespace preserved)', () => {
+      const line: UserLine = {
+        ...baseUserLine,
+        message: { role: 'user', content: '<command-name>/git:commit</command-name>' },
+      };
+      const results = extractCommandInvocations(line);
+      expect(results).toHaveLength(1);
+      expect(results[0].name).toBe('git:commit');
+    });
+
+    it('<command-name>gsd-new-project</command-name> without leading slash → same name', () => {
+      const line: UserLine = {
+        ...baseUserLine,
+        message: { role: 'user', content: '<command-name>gsd-new-project</command-name>' },
+      };
+      const results = extractCommandInvocations(line);
+      expect(results).toHaveLength(1);
+      expect(results[0].name).toBe('gsd-new-project');
+    });
+
+    it('multiple command tags in same user line → all extracted', () => {
+      const line: UserLine = {
+        ...baseUserLine,
+        message: {
+          role: 'user',
+          content:
+            '<command-name>/gsd:update</command-name>\nsome text\n<command-name>/clear</command-name>',
+        },
+      };
+      const results = extractCommandInvocations(line);
+      expect(results).toHaveLength(2);
+      expect(results.map((r) => r.name)).toEqual(['gsd:update', 'clear']);
+    });
+
+    it('no <command-name> tag in content → empty array', () => {
+      const line: UserLine = {
+        ...baseUserLine,
+        message: { role: 'user', content: 'just a regular user message with no tags' },
+      };
+      const results = extractCommandInvocations(line);
+      expect(results).toHaveLength(0);
+    });
+
+    it('array content blocks → extracts from text blocks', () => {
+      const line: UserLine = {
+        ...baseUserLine,
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: '<command-name>/gsd:update</command-name>' }],
+        },
+      };
+      const results = extractCommandInvocations(line);
+      expect(results).toHaveLength(1);
+      expect(results[0].name).toBe('gsd:update');
+    });
+
+    it('array content with non-text block → skipped gracefully', () => {
+      const line: UserLine = {
+        ...baseUserLine,
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result' },
+            { type: 'text', text: '<command-name>/clear</command-name>' },
+          ],
+        },
+      };
+      const results = extractCommandInvocations(line);
+      expect(results).toHaveLength(1);
+      expect(results[0].name).toBe('clear');
+    });
+  });
+
+  describe('extractHookInvocations', () => {
+    const baseUserLine: UserLine = {
+      type: 'user',
+      sessionId: 'sess-001',
+      timestamp: '2026-04-01T12:00:00.000Z',
+      cwd: '/Users/test/project',
+      isSidechain: false,
+      message: { role: 'user', content: '' },
+    };
+
+    it('[hook SessionStart] in text content → one hook invocation with name SessionStart:*', () => {
+      const line: UserLine = {
+        ...baseUserLine,
+        message: { role: 'user', content: '[hook SessionStart] output: session initialized' },
+      };
+      const results = extractHookInvocations(line);
+      expect(results).toHaveLength(1);
+      expect(results[0].kind).toBe('hook');
+      expect(results[0].name).toBe('SessionStart:*');
+      expect(results[0].sessionId).toBe('sess-001');
+      expect(results[0].projectPath).toBe('/Users/test/project');
+    });
+
+    it('multiple [hook X] markers in same content → all extracted', () => {
+      const line: UserLine = {
+        ...baseUserLine,
+        message: {
+          role: 'user',
+          content: '[hook PreToolUse] pre-check\n[hook PostToolUse] post-check',
+        },
+      };
+      const results = extractHookInvocations(line);
+      expect(results).toHaveLength(2);
+      expect(results[0].name).toBe('PreToolUse:*');
+      expect(results[1].name).toBe('PostToolUse:*');
+    });
+
+    it('no [hook ...] markers → empty array', () => {
+      const line: UserLine = {
+        ...baseUserLine,
+        message: { role: 'user', content: 'just a regular message, no hook markers' },
+      };
+      const results = extractHookInvocations(line);
+      expect(results).toHaveLength(0);
+    });
+
+    it('array content blocks → extracts from text blocks', () => {
+      const line: UserLine = {
+        ...baseUserLine,
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: '[hook SessionStart] running startup hooks' }],
+        },
+      };
+      const results = extractHookInvocations(line);
+      expect(results).toHaveLength(1);
+      expect(results[0].name).toBe('SessionStart:*');
+    });
+
+    it('hook name uses event:* placeholder (matcher not recoverable from firing signal)', () => {
+      const line: UserLine = {
+        ...baseUserLine,
+        message: { role: 'user', content: '[hook PreToolUse] check before bash' },
+      };
+      const results = extractHookInvocations(line);
+      expect(results[0].name).toBe('PreToolUse:*');
     });
   });
 }

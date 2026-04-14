@@ -10,7 +10,7 @@ import type { ProtectedFrameworkWarning } from '@ccaudit/internal';
  * when calling the renderer.
  */
 export interface ProtectedItem {
-  category: 'agent' | 'skill' | 'mcp-server' | 'memory';
+  category: 'agent' | 'skill' | 'mcp-server' | 'memory' | 'command' | 'hook';
   scope: 'global' | 'project';
   name: string;
   projectPath: string | null;

@@ -19,8 +19,9 @@
 // Zero runtime deps -- uses only `node:fs/promises`. Line endings (LF vs CRLF)
 // are detected from the input and preserved on write.
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { writeFilePreservingMtime } from './fs-utils.ts';
 
 // -- Types --------------------------------------------------------
 
@@ -231,7 +232,7 @@ export async function patchFrontmatter(
     const body = lines.join(eol);
     const out = body === '' ? block + eol : block + eol + body;
     try {
-      await writeFile(filePath, out, 'utf8');
+      await writeFilePreservingMtime(filePath, out);
     } catch {
       return { status: 'skipped', reason: 'write-error' };
     }
@@ -303,7 +304,7 @@ export async function patchFrontmatter(
     // bodyLines index -> lines index: add 1 to skip the opening `---` fence.
     newLines[ccauditFlaggedIdx + 1] = `ccaudit-flagged: ${nowIso}`;
     try {
-      await writeFile(filePath, newLines.join(eol), 'utf8');
+      await writeFilePreservingMtime(filePath, newLines.join(eol));
     } catch {
       return { status: 'skipped', reason: 'write-error' };
     }
@@ -322,7 +323,7 @@ export async function patchFrontmatter(
   const newLines = [...lines];
   newLines.splice(closingIdx, 0, ...inject);
   try {
-    await writeFile(filePath, newLines.join(eol), 'utf8');
+    await writeFilePreservingMtime(filePath, newLines.join(eol));
   } catch {
     return { status: 'skipped', reason: 'write-error' };
   }
@@ -406,7 +407,7 @@ export async function removeFrontmatterKeys(
   }
 
   try {
-    await writeFile(filePath, rebuilt, 'utf8');
+    await writeFilePreservingMtime(filePath, rebuilt);
   } catch {
     return { status: 'skipped', reason: 'write-error' };
   }
@@ -464,7 +465,7 @@ export async function setFrontmatterValue(
     bom + '---' + LE + newBodyLines.join(LE) + LE + '---' + LE + parsed.trailingLines.join(LE);
 
   try {
-    await writeFile(filePath, rebuilt, 'utf8');
+    await writeFilePreservingMtime(filePath, rebuilt);
   } catch {
     return { status: 'skipped', reason: 'write-error' };
   }
@@ -782,6 +783,84 @@ if (import.meta.vitest) {
       if (result.status === 'skipped') {
         expect(result.reason).toBe('exotic-yaml');
       }
+    });
+  });
+
+  // -- mtime preservation tests (Bug #3) ---------------------------
+  // Each test ages a temp file to 60 days ago, invokes the function,
+  // and asserts mtime is unchanged (±100ms tolerance).
+
+  describe('mtime preservation: patchFrontmatter', () => {
+    let tmp: string;
+    beforeEach(async () => {
+      tmp = await mkdtemp(path.join(tmpdir(), 'mtime-patch-'));
+    });
+    afterEach(async () => {
+      await rm(tmp, { recursive: true, force: true });
+    });
+
+    it('patchFrontmatter preserves mtime after patching a file', async () => {
+      const { utimes, stat } = await import('node:fs/promises');
+      const filePath = path.join(tmp, 'mtime-test.md');
+      await wf(filePath, '# Heading\n', 'utf8');
+      const oldTime = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+      await utimes(filePath, oldTime, oldTime);
+      const { mtimeMs: beforeMs } = await stat(filePath);
+      await patchFrontmatter(filePath, NOW);
+      const { mtimeMs: afterMs } = await stat(filePath);
+      expect(Math.abs(afterMs - beforeMs)).toBeLessThan(100);
+    });
+  });
+
+  describe('mtime preservation: removeFrontmatterKeys', () => {
+    let tmp: string;
+    beforeEach(async () => {
+      tmp = await mkdtemp(path.join(tmpdir(), 'mtime-rm-'));
+    });
+    afterEach(async () => {
+      await rm(tmp, { recursive: true, force: true });
+    });
+
+    it('removeFrontmatterKeys preserves mtime after removing keys', async () => {
+      const { utimes, stat } = await import('node:fs/promises');
+      const filePath = path.join(tmp, 'mtime-rm.md');
+      await wf(
+        filePath,
+        '---\nccaudit-stale: true\nccaudit-flagged: 2026-04-05T18:30:00Z\n---\n# body\n',
+        'utf8',
+      );
+      const oldTime = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+      await utimes(filePath, oldTime, oldTime);
+      const { mtimeMs: beforeMs } = await stat(filePath);
+      await removeFrontmatterKeys(filePath, ['ccaudit-stale', 'ccaudit-flagged']);
+      const { mtimeMs: afterMs } = await stat(filePath);
+      expect(Math.abs(afterMs - beforeMs)).toBeLessThan(100);
+    });
+  });
+
+  describe('mtime preservation: setFrontmatterValue', () => {
+    let tmp: string;
+    beforeEach(async () => {
+      tmp = await mkdtemp(path.join(tmpdir(), 'mtime-set-'));
+    });
+    afterEach(async () => {
+      await rm(tmp, { recursive: true, force: true });
+    });
+
+    it('setFrontmatterValue preserves mtime after updating a key', async () => {
+      const { utimes, stat } = await import('node:fs/promises');
+      const filePath = path.join(tmp, 'mtime-set.md');
+      await wf(
+        filePath,
+        '---\nccaudit-stale: true\nccaudit-flagged: 2026-04-05T18:30:00Z\n---\n# body\n',
+        'utf8',
+      );
+      const oldTime = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+      await utimes(filePath, oldTime, oldTime);
+      const { mtimeMs: beforeMs } = await stat(filePath);
+      await setFrontmatterValue(filePath, 'ccaudit-flagged', '2026-04-14T00:00:00Z');
+      const { mtimeMs: afterMs } = await stat(filePath);
+      expect(Math.abs(afterMs - beforeMs)).toBeLessThan(100);
     });
   });
 }

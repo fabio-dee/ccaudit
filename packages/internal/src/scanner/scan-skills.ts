@@ -1,23 +1,19 @@
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { InventoryItem } from './types.ts';
 import type { ClaudePaths } from '../types.ts';
+import { parseFrontmatter } from '../token/frontmatter.ts';
 
 /**
  * Extract the registered skill name from SKILL.md frontmatter.
+ * Delegates to parseFrontmatter() for robust YAML parsing.
  * Returns the `name:` field value, or the directory name as fallback.
  */
 export async function resolveSkillName(skillDir: string): Promise<string> {
   const skillMdPath = path.join(skillDir, 'SKILL.md');
-  try {
-    const content = await readFile(skillMdPath, 'utf-8');
-    // Simple YAML frontmatter extraction (no yaml parser needed)
-    const nameMatch = content.match(/^name:\s*(.+)$/m);
-    if (nameMatch) {
-      return nameMatch[1].trim();
-    }
-  } catch {
-    // SKILL.md doesn't exist or can't be read
+  const fm = await parseFrontmatter(skillMdPath);
+  if (fm?.name) {
+    return fm.name;
   }
   return path.basename(skillDir);
 }
@@ -147,7 +143,7 @@ if (import.meta.vitest) {
     it('should trim whitespace from name field value', async () => {
       const skillDir = path.join(tmpDir, 'trim-test');
       await mkdir(skillDir, { recursive: true });
-      await writeFile(path.join(skillDir, 'SKILL.md'), 'name:   spaced-name   \n');
+      await writeFile(path.join(skillDir, 'SKILL.md'), '---\nname:   spaced-name   \n---\n');
       const name = await resolveSkillName(skillDir);
       expect(name).toBe('spaced-name');
     });

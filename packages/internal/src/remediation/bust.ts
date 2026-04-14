@@ -87,6 +87,10 @@ export type BustResult =
         healthAfter: number;
         gradeBefore: string;
         gradeAfter: string;
+        /** ISO-8601 timestamp of the dry-run checkpoint (for provenance labelling). */
+        checkpointTimestamp: string;
+        /** MCP regime pinned from the checkpoint (for consistent enrichment). */
+        checkpointMcpRegime: 'eager' | 'deferred' | 'unknown';
       };
     }
   | {
@@ -107,7 +111,7 @@ export type BustResult =
 
 /** Per-category op counters threaded through the pipeline for the manifest footer. */
 export interface BustCounts {
-  archive: { completed: number; failed: number };
+  archive: { agents: number; skills: number; failed: number };
   disable: { completed: number; failed: number };
   flag: { completed: number; failed: number; refreshed: number; skipped: number };
 }
@@ -292,7 +296,7 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
   }
 
   const counts: BustCounts = {
-    archive: { completed: 0, failed: 0 },
+    archive: { agents: 0, skills: 0, failed: 0 },
     disable: { completed: 0, failed: 0 },
     flag: { completed: 0, failed: 0, refreshed: 0, skipped: 0 },
   };
@@ -405,7 +409,14 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
   const exitCode = totalFailed > 0 ? 1 : 0;
   const footer = buildFooter({
     status: 'completed',
-    actual_ops: counts,
+    actual_ops: {
+      archive: {
+        completed: counts.archive.agents + counts.archive.skills,
+        failed: counts.archive.failed,
+      },
+      disable: counts.disable,
+      flag: counts.flag,
+    },
     duration_ms,
     exit_code: exitCode,
   });
@@ -444,6 +455,8 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
       healthAfter,
       gradeBefore,
       gradeAfter,
+      checkpointTimestamp: checkpoint.timestamp,
+      checkpointMcpRegime: checkpoint.mcp_regime ?? 'unknown',
     },
   };
 }
@@ -523,7 +536,11 @@ async function archiveOne(
     // Rename is the archive operation itself.
     await deps.renameFile(item.path, archivePath);
 
-    counts.archive.completed += 1;
+    if (category === 'skill') {
+      counts.archive.skills += 1;
+    } else {
+      counts.archive.agents += 1;
+    }
     return buildArchiveOp({
       category,
       scope: item.scope,
@@ -1289,7 +1306,9 @@ if (import.meta.vitest) {
       const result = await runBust({ yes: true, deps });
       expect(result.status).toBe('partial-success');
       if (result.status === 'partial-success') {
-        expect(result.counts.archive.completed).toBe(1);
+        // Both items are agents; one rename fails, one succeeds.
+        expect(result.counts.archive.agents).toBe(1);
+        expect(result.counts.archive.skills).toBe(0);
         expect(result.counts.archive.failed).toBe(1);
       }
       const manifest = await readManifest(deps.manifestPath());
@@ -1478,6 +1497,241 @@ if (import.meta.vitest) {
       expect(disableOps).toHaveLength(2);
       const paths = disableOps.map((o) => o.config_path).sort();
       expect(paths).toEqual([claudeJsonPath, mcpJsonPath].sort());
+    });
+  });
+
+  // ── Phase 5: mcp_regime pinned in checkpoint (Bug #4) ──────────────
+  describe('runBust — mcp_regime pinned from checkpoint, not re-resolved during bust (Phase 5)', () => {
+    let tmp: string;
+    beforeEach(async () => {
+      tmp = await mkdtemp(path.join(tmpdir(), 'bust-regime-'));
+    });
+    afterEach(async () => {
+      await rm(tmp, { recursive: true, force: true });
+    });
+
+    it('checkpoint with mcp_regime field loads without error and bust succeeds', async () => {
+      // Checkpoint with the new mcp_regime + cc_version fields (Phase 5 green)
+      const deps = makeDeps(tmp, {
+        readCheckpoint: async () => ({
+          status: 'ok',
+          checkpoint: {
+            checkpoint_version: 1,
+            ccaudit_version: '0.0.1',
+            timestamp: '2026-04-14T08:19:58.000Z',
+            since_window: '7d',
+            ghost_hash: 'sha256:test',
+            item_count: { agents: 0, skills: 0, mcp: 0, memory: 0 },
+            savings: { tokens: 1000 },
+            total_overhead: 5000,
+            mcp_regime: 'eager' as const,
+            cc_version: '2.2.0',
+          },
+        }),
+      });
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('success');
+    });
+
+    it('checkpoint without mcp_regime (old format) still loads — backward compat', async () => {
+      // Old checkpoint without the new fields must still work
+      const deps = makeDeps(tmp, {
+        readCheckpoint: async () => ({
+          status: 'ok',
+          checkpoint: {
+            checkpoint_version: 1,
+            ccaudit_version: '0.0.1',
+            timestamp: '2026-04-14T08:00:00.000Z',
+            since_window: '7d',
+            ghost_hash: 'sha256:test',
+            item_count: { agents: 0, skills: 0, mcp: 0, memory: 0 },
+            savings: { tokens: 500 },
+            total_overhead: 3000,
+            // mcp_regime and cc_version intentionally absent (old format)
+          },
+        }),
+      });
+      const result = await runBust({ yes: true, deps });
+      // Must succeed (no crash on missing fields)
+      expect(result.status).toBe('success');
+    });
+
+    it('pinned beforeTokens equals checkpoint.total_overhead — regime not re-computed', async () => {
+      // The bust result's beforeTokens must equal checkpoint.total_overhead exactly.
+      // This proves the bust uses the pinned value, not a live re-scan.
+      const deps = makeDeps(tmp, {
+        readCheckpoint: async () => ({
+          status: 'ok',
+          checkpoint: {
+            checkpoint_version: 1,
+            ccaudit_version: '0.0.1',
+            timestamp: '2026-04-14T08:19:58.000Z',
+            since_window: '7d',
+            ghost_hash: 'sha256:test',
+            item_count: { agents: 0, skills: 0, mcp: 0, memory: 0 },
+            savings: { tokens: 2000 },
+            total_overhead: 96_000,
+            mcp_regime: 'eager' as const,
+            cc_version: '2.2.0',
+          },
+        }),
+      });
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('success');
+      if (result.status === 'success') {
+        // beforeTokens must be exactly the pinned checkpoint value (96k)
+        expect(result.summary.beforeTokens).toBe(96_000);
+        // afterTokens must be beforeTokens - savings (96k - 2k = 94k)
+        expect(result.summary.afterTokens).toBe(94_000);
+      }
+    });
+
+    it('bust summary includes checkpointTimestamp for provenance labelling', async () => {
+      // The bust summary must expose the checkpoint timestamp so the renderer
+      // can display "Before (from dry-run 2026-04-14T08:19:58Z): ~96k tokens"
+      const deps = makeDeps(tmp, {
+        readCheckpoint: async () => ({
+          status: 'ok',
+          checkpoint: {
+            checkpoint_version: 1,
+            ccaudit_version: '0.0.1',
+            timestamp: '2026-04-14T08:19:58.000Z',
+            since_window: '7d',
+            ghost_hash: 'sha256:test',
+            item_count: { agents: 0, skills: 0, mcp: 0, memory: 0 },
+            savings: { tokens: 0 },
+            total_overhead: 10_000,
+            mcp_regime: 'eager' as const,
+            cc_version: '2.2.0',
+          },
+        }),
+      });
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('success');
+      if (result.status === 'success') {
+        // summary must expose checkpointTimestamp for provenance
+        expect(result.summary.checkpointTimestamp).toBe('2026-04-14T08:19:58.000Z');
+      }
+    });
+  });
+
+  // ── Bug #1 regression: archive.agents / archive.skills split ────────
+  describe('runBust — archive agents/skills counted independently (Bug #1)', () => {
+    let tmp: string;
+    beforeEach(async () => {
+      tmp = await mkdtemp(path.join(tmpdir(), 'bust-split-'));
+    });
+    afterEach(async () => {
+      await rm(tmp, { recursive: true, force: true });
+    });
+
+    it('BustCounts.archive.agents and archive.skills increment independently', async () => {
+      const claudeRoot = path.join(tmp, '.claude');
+      await mk(path.join(claudeRoot, 'agents'), { recursive: true });
+      await mk(path.join(claudeRoot, 'skills'), { recursive: true });
+      await wf(path.join(claudeRoot, 'agents', 'ghost-agent.md'), '# agent', 'utf8');
+      await wf(path.join(claudeRoot, 'skills', 'ghost-skill.md'), '# skill', 'utf8');
+
+      const enriched: TokenCostResult[] = [
+        {
+          item: {
+            name: 'ghost-agent',
+            path: path.join(claudeRoot, 'agents', 'ghost-agent.md'),
+            scope: 'global',
+            category: 'agent',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 100, confidence: 'estimated', source: 'test' },
+        },
+        {
+          item: {
+            name: 'ghost-skill',
+            path: path.join(claudeRoot, 'skills', 'ghost-skill.md'),
+            scope: 'global',
+            category: 'skill',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 50, confidence: 'estimated', source: 'test' },
+        },
+      ];
+
+      const deps = makeDeps(tmp, { scanAndEnrich: async () => enriched });
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('success');
+
+      if (result.status === 'success') {
+        // archive.agents must be 1 (the agent), archive.skills must be 1 (the skill).
+        expect(result.counts.archive.agents).toBe(1);
+        expect(result.counts.archive.skills).toBe(1);
+        expect(result.counts.archive.failed).toBe(0);
+      }
+    });
+
+    it('archive.agents increments only for agents, archive.skills only for skills', async () => {
+      const claudeRoot = path.join(tmp, '.claude');
+      await mk(path.join(claudeRoot, 'agents'), { recursive: true });
+      await mk(path.join(claudeRoot, 'skills'), { recursive: true });
+      await wf(path.join(claudeRoot, 'agents', 'a1.md'), '# a', 'utf8');
+      await wf(path.join(claudeRoot, 'agents', 'a2.md'), '# a', 'utf8');
+      await wf(path.join(claudeRoot, 'skills', 's1.md'), '# s', 'utf8');
+
+      const enriched: TokenCostResult[] = [
+        {
+          item: {
+            name: 'a1',
+            path: path.join(claudeRoot, 'agents', 'a1.md'),
+            scope: 'global',
+            category: 'agent',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 10, confidence: 'estimated', source: 'test' },
+        },
+        {
+          item: {
+            name: 'a2',
+            path: path.join(claudeRoot, 'agents', 'a2.md'),
+            scope: 'global',
+            category: 'agent',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 10, confidence: 'estimated', source: 'test' },
+        },
+        {
+          item: {
+            name: 's1',
+            path: path.join(claudeRoot, 'skills', 's1.md'),
+            scope: 'global',
+            category: 'skill',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 10, confidence: 'estimated', source: 'test' },
+        },
+      ];
+
+      const deps = makeDeps(tmp, { scanAndEnrich: async () => enriched });
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('success');
+
+      if (result.status === 'success') {
+        expect(result.counts.archive.agents).toBe(2);
+        expect(result.counts.archive.skills).toBe(1);
+        expect(result.counts.archive.failed).toBe(0);
+      }
     });
   });
 }

@@ -71,9 +71,11 @@ function buildHeuristicGroups(
   const buckets = new Map<string, GhostItem[]>();
 
   for (const item of ungrouped) {
-    // DETECT-09: heuristic clustering only applies to agents and skills.
-    // Memory/mcp-server items pass through (they'll end up in `ungrouped` below).
-    if (item.category !== 'agent' && item.category !== 'skill') continue;
+    // DETECT-09: heuristic clustering applies to agents, skills, and (Phase 3)
+    // commands. Memory/mcp-server items pass through (they'll end up in
+    // `ungrouped` below).
+    if (item.category !== 'agent' && item.category !== 'skill' && item.category !== 'command')
+      continue;
 
     const prefix = item.name.split(/[-:_]/)[0]?.toLowerCase() ?? '';
     if (prefix.length < HEURISTIC_MIN_PREFIX_LENGTH) continue;

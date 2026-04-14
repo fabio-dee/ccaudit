@@ -9,6 +9,8 @@ import { scanAgents } from './scan-agents.ts';
 import { scanSkills, resolveSkillName } from './scan-skills.ts';
 import { scanMcpServers, readClaudeConfig } from './scan-mcp.ts';
 import { scanMemoryFiles } from './scan-memory.ts';
+import { scanCommands } from './scan-commands.ts';
+import { scanHooks } from './scan-hooks.ts';
 import { annotateFrameworks } from './annotate.ts';
 
 /**
@@ -24,7 +26,7 @@ export async function matchInventory(
   invocations: InvocationRecord[],
   claudeConfigPath?: string,
 ): Promise<ScanResult[]> {
-  const { agents, skills, mcpServers } = buildInvocationMaps(invocations);
+  const { agents, skills, mcpServers, commands, hooks } = buildInvocationMaps(invocations);
   const config = await readClaudeConfig(claudeConfigPath);
   const skillUsage = config.skillUsage ?? {};
 
@@ -79,6 +81,28 @@ export async function matchInventory(
         count = summary.count;
         lastUsedDate = new Date(summary.lastTimestamp);
       }
+    } else if (item.category === 'command') {
+      const summary = commands.get(item.name);
+      if (summary) {
+        lastUsedMs = new Date(summary.lastTimestamp).getTime();
+        count = summary.count;
+        lastUsedDate = new Date(summary.lastTimestamp);
+      }
+    } else if (item.category === 'hook') {
+      // Hook matching: firing signals are event-level (SessionStart:*) but configured
+      // hooks are granular (SessionStart:*:abc123). We use optimistic attribution:
+      // any configured hook whose hookEvent matches a fired event inherits that
+      // event's lastUsed timestamp and invocationCount. This may overcount firings
+      // when multiple hooks share the same event, but is the best available signal.
+      if (item.hookEvent) {
+        const eventKey = `${item.hookEvent}:*`;
+        const summary = hooks.get(eventKey);
+        if (summary) {
+          lastUsedMs = new Date(summary.lastTimestamp).getTime();
+          count = summary.count;
+          lastUsedDate = new Date(summary.lastTimestamp);
+        }
+      }
     } else if (item.category === 'memory') {
       // Memory files use mtimeMs directly (no invocation matching)
       lastUsedMs = item.mtimeMs ?? null;
@@ -86,7 +110,19 @@ export async function matchInventory(
       lastUsedDate = lastUsedMs !== null ? new Date(lastUsedMs) : null;
     }
 
-    const tier = classifyGhost(lastUsedMs);
+    let tier = classifyGhost(lastUsedMs);
+
+    // Task 34: Dormant tier override for inject-capable hooks with zero fires.
+    // 'dormant' takes precedence over 'definite-ghost'/'likely-ghost' for hooks only.
+    // Non-inject-capable hooks with zero fires stay at their natural tier — they
+    // don't cost context tokens, so "ghost" semantics don't apply in the same way.
+    if (
+      item.category === 'hook' &&
+      item.injectCapable === true &&
+      (count === 0 || lastUsedDate === null)
+    ) {
+      tier = 'dormant';
+    }
 
     // For non-memory items, compute lastUsedDate from lastUsedMs if not already set
     if (lastUsedDate === null && lastUsedMs !== null) {
@@ -129,6 +165,8 @@ export async function scanAll(
     claudePaths?: ClaudePaths;
     projectPaths?: string[];
     claudeConfigPath?: string;
+    /** Override global settings.json paths for scanHooks (used in tests to avoid real ~/.claude) */
+    globalHookSettingsPaths?: string[];
   },
 ): Promise<{
   results: ScanResult[];
@@ -150,13 +188,16 @@ export async function scanAll(
   const home = homedir();
   const projectPaths = rawProjectPaths.filter((p) => p !== home);
 
-  // Run all four scanners in parallel
-  const [agentItems, skillItems, mcpItems, memoryItems] = await Promise.all([
-    scanAgents(claudePaths, projectPaths),
-    scanSkills(claudePaths, projectPaths),
-    scanMcpServers(options?.claudeConfigPath, projectPaths),
-    scanMemoryFiles(claudePaths, projectPaths),
-  ]);
+  // Run all six scanners in parallel
+  const [agentItems, skillItems, mcpItems, memoryItems, commandItems, hookItems] =
+    await Promise.all([
+      scanAgents(claudePaths, projectPaths),
+      scanSkills(claudePaths, projectPaths),
+      scanMcpServers(options?.claudeConfigPath, projectPaths),
+      scanMemoryFiles(claudePaths, projectPaths),
+      scanCommands(claudePaths, projectPaths),
+      scanHooks(projectPaths, undefined, options?.globalHookSettingsPaths),
+    ]);
 
   // Phase 2 (v1.3.0): Annotate agent and skill items with their `framework`
   // field BEFORE concat with mcp/memory items. Subset-annotate is the locked
@@ -165,10 +206,10 @@ export async function scanAll(
   // threshold the correct semantic (only counts agents/skills toward gstack
   // detection). Memory and mcp items pass through with no `framework` key,
   // preserving byte-identical v1.2.1 JSON output for those categories.
-  const annotated = annotateFrameworks([...agentItems, ...skillItems]);
+  const annotated = annotateFrameworks([...agentItems, ...skillItems, ...commandItems]);
 
-  // Flatten all items
-  const allItems: InventoryItem[] = [...annotated, ...mcpItems, ...memoryItems];
+  // Flatten all items (hooks bypass framework annotation — no framework grouping for v1.4.0)
+  const allItems: InventoryItem[] = [...annotated, ...mcpItems, ...memoryItems, ...hookItems];
 
   // Classify all items against invocation ledger
   const results = await matchInventory(allItems, invocations, options?.claudeConfigPath);

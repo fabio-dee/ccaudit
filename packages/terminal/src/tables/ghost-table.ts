@@ -47,13 +47,15 @@ function wrapInBox(content: string, padding = 1, maxWidth?: number): string {
 
 /**
  * Category display names for the summary table.
- * Order: agents, skills, mcp-server, memory -- matching the handoff mockup.
+ * Order: agent, skill, mcp-server, memory, command, hook
  */
 const CATEGORY_DISPLAY: Record<string, string> = {
   agent: 'Agents',
   skill: 'Skills',
   'mcp-server': 'MCP Servers',
   memory: 'Memory Files',
+  command: 'Commands',
+  hook: 'Hooks',
 };
 
 /** Padded category column width -- longest is "Memory Files" (12 chars), padded to 13 */
@@ -478,6 +480,9 @@ export function renderProjectsVerbose(
       if (crossScopeNames.has(label)) {
         label = isGlobal ? `${label} [global]` : `${label} [project]`;
       }
+      // T43: indent import-chain rows by 2×importDepth spaces in the Name column.
+      const nameIndent = ' '.repeat(2 * (item.item.importDepth ?? 0));
+      label = nameIndent + label;
       const tokenDisplay = formatTokenEstimate(item.tokenEstimate);
       const lastUsed = formatLastUsed(item.lastUsed);
 
@@ -761,6 +766,111 @@ export function renderGhostOutputBox(
 
   // Bottom border
   lines.push('└' + '─'.repeat(innerWidth) + '┘');
+
+  return lines.join('\n');
+}
+
+/**
+ * Render the hooks advisory section shown AFTER all other ghost output when
+ * --include-hooks is NOT set (the default).
+ *
+ * Format (non-verbose):
+ *   🪝 Hooks (advisory — not included in total)
+ *
+ *   ┌─────────────────────────────────────────────┐
+ *   │ Hooks  │ Defined: N  │ Dormant: N  │ ~Xk tokens (upper-bound) │
+ *   └─────────────────────────────────────────────┘
+ *
+ *   Hooks inject context only when they fire. ccaudit cannot observe
+ *   firing events reliably, so dormant hooks are upper-bound estimates.
+ *   Pass --include-hooks to include ~Xk in the total above.
+ *
+ * Returns empty string when hookCount is 0 (no hooks configured).
+ * In verbose mode, also renders per-hook rows from the hookItems array.
+ */
+export function renderHooksAdvisory(
+  hookCount: number,
+  dormantCount: number,
+  hookTokens: number,
+  hookItems: TokenCostResult[],
+  verbose: boolean,
+): string {
+  if (hookCount === 0) return '';
+
+  const tokenLabel = formatTokenShort(hookTokens);
+  const tw = getTerminalWidth();
+
+  const lines: string[] = [];
+
+  // Section heading (outside the box)
+  lines.push(
+    colorize.bold('\u{1FA9D} Hooks') + colorize.dim(' (advisory \u2014 not included in total)'),
+  );
+  lines.push('');
+
+  // Summary box
+  const summaryText = `Hooks  \u2502 Defined: ${hookCount}   \u2502 Dormant: ${dormantCount}  \u2502 ${tokenLabel} (upper-bound)`;
+  const summaryVisLen = stripAnsi(summaryText).length;
+  const boxInner = Math.max(summaryVisLen + 2, 40);
+  const boxInnerClamped = Math.min(boxInner, tw - 2);
+  const topBorder = '\u250C' + '\u2500'.repeat(boxInnerClamped) + '\u2510';
+  const bottomBorder = '\u2514' + '\u2500'.repeat(boxInnerClamped) + '\u2518';
+  const rightPad = ' '.repeat(Math.max(0, boxInnerClamped - summaryVisLen - 1));
+  lines.push(topBorder);
+  lines.push('\u2502 ' + summaryText + rightPad + '\u2502');
+  lines.push(bottomBorder);
+
+  // Per-hook rows in verbose mode
+  if (verbose && hookItems.length > 0) {
+    lines.push('');
+    const nameW = Math.max(20, tw - 40);
+    const colWidths = [nameW, 20, 14] as const;
+    const innerWidth2 = tw - 2;
+    const clampRow = (row: string): string => {
+      if (row.length <= tw) return row;
+      return row.slice(0, tw - 1) + row[row.length - 1]!;
+    };
+    lines.push(clampRow('\u250C' + '\u2500'.repeat(innerWidth2) + '\u2510'));
+    lines.push(
+      clampRow(
+        '\u2502 ' +
+          colorize.dim('Per-hook details') +
+          ' '.repeat(Math.max(0, innerWidth2 - 2 - 'Per-hook details'.length)) +
+          ' \u2502',
+      ),
+    );
+    lines.push(clampRow(buildDividerRow([...colWidths], '\u251C', '\u252C', '\u2524')));
+    const hName = wrapCell('Name', nameW)[0]!;
+    const hEvent = wrapCell('Event / Tier', 20)[0]!;
+    const hTokens2 = wrapCell('~Tokens', 14)[0]!;
+    lines.push(clampRow('\u2502' + hName + '\u2502' + hEvent + '\u2502' + hTokens2 + '\u2502'));
+    lines.push(clampRow(buildDividerRow([...colWidths], '\u251C', '\u253C', '\u2524')));
+    for (const item of hookItems) {
+      const nameLines = wrapCell(item.item.name, nameW);
+      const eventStr = `${item.item.hookEvent ?? '?'} (${item.tier})`;
+      const eventLines = wrapCell(eventStr, 20);
+      const tokStr = formatTokensShortPlain(item.tokenEstimate?.tokens ?? 0).padStart(12);
+      const c2 = ' ' + tokStr + ' ';
+      const rowHeight = Math.max(nameLines.length, eventLines.length, 1);
+      for (let r = 0; r < rowHeight; r++) {
+        const c0 = nameLines[r] ?? ' '.repeat(nameW);
+        const c1 = eventLines[r] ?? ' '.repeat(20);
+        const c2r = r === 0 ? c2 : ' '.repeat(14);
+        lines.push(clampRow('\u2502' + c0 + '\u2502' + c1 + '\u2502' + c2r + '\u2502'));
+      }
+    }
+    lines.push(clampRow(buildDividerRow([...colWidths], '\u2514', '\u2534', '\u2518')));
+  }
+
+  lines.push('');
+
+  // Explanatory prose
+  const tokenLabelPlain = formatTokenShort(hookTokens);
+  lines.push(colorize.dim('Hooks inject context only when they fire. ccaudit cannot observe'));
+  lines.push(colorize.dim('firing events reliably, so dormant hooks are upper-bound estimates.'));
+  lines.push(
+    colorize.dim(`Pass --include-hooks to include ${tokenLabelPlain} in the total above.`),
+  );
 
   return lines.join('\n');
 }

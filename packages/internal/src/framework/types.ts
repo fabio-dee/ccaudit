@@ -18,7 +18,9 @@ export const frameworkSchema = v.object({
   prefixes: v.array(v.string()),
   folders: v.array(v.string()),
   knownItems: v.optional(v.array(v.string())),
-  categories: v.array(v.picklist(['agent', 'skill', 'command', 'mcp-server', 'memory'] as const)),
+  categories: v.array(
+    v.picklist(['agent', 'skill', 'command', 'hook', 'mcp-server', 'memory'] as const),
+  ),
   source: v.string(),
   source_type: v.literal('curated'),
 });
@@ -47,7 +49,7 @@ export interface Framework {
   /** Optional list of known item names for prefix-less frameworks (gstack). Detection requires ≥3 present. */
   knownItems?: string[];
   /** Categories the framework targets. */
-  categories: Array<'agent' | 'skill' | 'command' | 'mcp-server' | 'memory'>;
+  categories: Array<'agent' | 'skill' | 'command' | 'hook' | 'mcp-server' | 'memory'>;
   /** URL or the literal string 'unverified'. */
   source: string;
   /** Always 'curated' for registry entries (not widened). */
@@ -79,7 +81,7 @@ export interface DetectResult {
 export interface DetectableItem {
   name: string;
   path: string;
-  category: 'agent' | 'skill' | 'mcp-server' | 'memory';
+  category: 'agent' | 'skill' | 'mcp-server' | 'memory' | 'command' | 'hook';
 }
 
 /**

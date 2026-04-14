@@ -129,7 +129,11 @@ export function renderInventoryTable(
     const recommendation = classifyRecommendation(r.tier);
     const actionStr = formatRecommendation(recommendation);
 
-    const c0Lines = wrapCell(r.item.name, nameW);
+    // T43: indent import-chain rows by 2×importDepth spaces in the Name column.
+    // The indent is prepended before wrapping so column-width accounting stays correct.
+    const nameIndent = ' '.repeat(2 * (r.item.importDepth ?? 0));
+    const displayName = nameIndent + r.item.name;
+    const c0Lines = wrapCell(displayName, nameW);
     const c1Lines = wrapCell(r.item.category, catW);
     const c2Lines = wrapCell(r.item.scope, scopeW);
 

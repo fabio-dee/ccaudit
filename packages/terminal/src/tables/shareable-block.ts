@@ -21,6 +21,13 @@ export interface ShareableBlockParams {
   };
   manifestPath: string;
   privacy?: boolean;
+  /**
+   * Provenance of the Before token count — set when Before was measured at
+   * dry-run checkpoint time (not live). Renders as:
+   *   "Before (from dry-run <at>): ~96k tokens loaded per session"
+   * Omit for backward-compat (renders old format without hint).
+   */
+  beforeProvenance?: { source: 'dry-run'; at: string };
 }
 
 function fmtK(tokens: number): string {
@@ -56,6 +63,9 @@ export function renderShareableBlock(p: ShareableBlockParams): string {
   const headerText3 = '\u{1F47B} Ghost Inventory \u2014 Cleared';
 
   // Content rows (plain text versions for width measurement, colored for render)
+  const beforeLabel = p.beforeProvenance
+    ? `Before (from dry-run ${p.beforeProvenance.at}):`
+    : 'Before:  ';
   const beforeVal = `${fmtK(p.beforeTokens)} tokens loaded per session`;
   const afterVal = `${fmtK(p.afterTokens)} tokens`;
   const freedVal = `${fmtK(p.freedTokens)} tokens (${p.pctWindow}% of context window)`;
@@ -67,7 +77,7 @@ export function renderShareableBlock(p: ShareableBlockParams): string {
 
   // Plain content rows used for width computation
   const plainContentRows: string[] = [
-    `Before:   ${beforeVal}`,
+    `${beforeLabel} ${beforeVal}`,
     `After:    ${afterVal}`,
     `Freed:    ${freedVal}`,
     '',
@@ -117,7 +127,7 @@ export function renderShareableBlock(p: ShareableBlockParams): string {
   const coloredHealthAfter = colorForGrade(p.gradeAfter, healthAfter);
 
   const coloredContentRows: string[] = [
-    `Before:   ${colorize.yellow(beforeVal)}`,
+    `${beforeLabel} ${colorize.yellow(beforeVal)}`,
     `After:    ${colorize.greenBright(colorize.bold(afterVal))}`,
     `Freed:    ${colorize.greenBright(colorize.bold(freedVal))}`,
     '',
@@ -322,6 +332,28 @@ if (import.meta.vitest) {
       const result = renderShareableBlock(baseParams);
       const firstLine = result.split('\n')[0]!;
       expect(firstLine.startsWith('\u250c')).toBe(true);
+    });
+
+    it('Phase 5: beforeProvenance renders timestamp hint on Before line', () => {
+      // When beforeProvenance is provided, the Before line must include
+      // "(from dry-run <timestamp>)" to signal checkpoint provenance.
+      const result = renderShareableBlock({
+        ...baseParams,
+        beforeProvenance: { source: 'dry-run', at: '2026-04-14T08:19:58.000Z' },
+      });
+      // Strip ANSI codes for assertion
+      // eslint-disable-next-line no-control-regex
+      const stripped = result.replace(/\x1b\[[0-9;]*m/g, '');
+      expect(stripped).toMatch(/Before\s*\(from dry-run 2026-04-14T08:19:58\.000Z\)/);
+    });
+
+    it('Phase 5: Before line without beforeProvenance uses existing format (backward compat)', () => {
+      // When beforeProvenance is absent, Before line must still render in old format
+      const result = renderShareableBlock(baseParams);
+      // eslint-disable-next-line no-control-regex
+      const stripped = result.replace(/\x1b\[[0-9;]*m/g, '');
+      expect(stripped).toContain('Before:');
+      expect(stripped).not.toContain('from dry-run');
     });
 
     it('last line is the bottom border starting with └', () => {

@@ -417,13 +417,15 @@ describe.skipIf(process.platform === 'win32')(
           status: string;
           manifestPath: string;
           counts: {
-            archive: { completed: number; failed: number };
+            archive: { agents: number; skills: number; failed: number };
             disable: { completed: number; failed: number };
             flag: { completed: number; failed: number; refreshed: number; skipped: number };
           };
         };
         expect(bustResult.status).toBe('success');
-        expect(bustResult.counts.archive.completed).toBe(1);
+        // The fixture has 1 agent — should show up in agents, not a merged completed.
+        expect(bustResult.counts.archive.agents).toBe(1);
+        expect(bustResult.counts.archive.skills).toBe(0);
         expect(bustResult.counts.disable.completed).toBe(1);
         expect(bustResult.counts.flag.completed).toBe(1);
 
@@ -563,6 +565,181 @@ describe.skipIf(process.platform === 'win32')(
         expect(ourOp!.original_value).toEqual(originalValue);
         expect(ourOp!.scope).toBe('project');
         expect(ourOp!.project_path).toBe(projDir);
+      });
+    });
+
+    // ── Bug #3 regression: staleness survives flag+unflag cycle ──
+    describe('mtime preservation: staleness survives bust+restore cycle (Bug #3)', () => {
+      it('60-day-old memory file remains stale after bust (flag) + restore (unflag) + dry-run', async () => {
+        await buildBaseFixture(tmpHome);
+
+        // Seed a memory file aged 60 days → classifyGhost sees elapsed > 30d → definite-ghost.
+        const memoryPath = path.join(tmpHome, '.claude', 'CLAUDE.md');
+        await writeFile(memoryPath, '# old memory\n', 'utf8');
+        const oldTime = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
+        await utimes(memoryPath, oldTime, oldTime);
+
+        // Step 1: dry-run so the checkpoint records this stale file in the plan.
+        const dry1 = await runBustCommand(tmpHome, ['--dry-run', '--json']);
+        expect(dry1.code, `dry-run stderr: ${dry1.stderr}`).toBe(0);
+        const dry1Parsed = JSON.parse(dry1.stdout) as {
+          changePlan: { flag: Array<Record<string, unknown>> };
+        };
+        expect(
+          dry1Parsed.changePlan.flag.length,
+          'dry-run 1 must plan to flag the stale memory file',
+        ).toBeGreaterThan(0);
+
+        // Step 2: bust → patchFrontmatter writes ccaudit-stale into CLAUDE.md.
+        const bust = await runBustCommand(tmpHome, [
+          '--dangerously-bust-ghosts',
+          '--yes-proceed-busting',
+          '--json',
+        ]);
+        expect(bust.code, `bust stderr: ${bust.stderr}`).toBe(0);
+
+        // Step 3: restore → removeFrontmatterKeys strips the ccaudit keys from CLAUDE.md.
+        const restore = await runBustCommand(tmpHome, ['restore', '--yes-proceed-restoring']);
+        expect(restore.code, `restore stderr: ${restore.stderr}`).toBe(0);
+
+        // Confirm mtime is still close to the original old time (within 5 seconds tolerance
+        // to account for subprocess overhead and timing jitter).
+        const { mtimeMs: mtimeAfterRestoreMs } = await import('node:fs/promises').then((m) =>
+          m.stat(memoryPath),
+        );
+        const expectedMs = oldTime.getTime();
+        expect(
+          Math.abs(mtimeAfterRestoreMs - expectedMs),
+          `mtime should be preserved near ${expectedMs} but got ${mtimeAfterRestoreMs}`,
+        ).toBeLessThan(5000);
+
+        // Step 4: fresh dry-run → the memory file must still appear in the flag plan
+        //         (the 11→0 bug: if mtime was reset, it would no longer be stale).
+        const dry2 = await runBustCommand(tmpHome, ['--dry-run', '--json']);
+        expect(dry2.code, `dry-run 2 stderr: ${dry2.stderr}`).toBe(0);
+        const dry2Parsed = JSON.parse(dry2.stdout) as {
+          changePlan: { flag: Array<Record<string, unknown>> };
+        };
+        expect(
+          dry2Parsed.changePlan.flag.length,
+          'dry-run 2 must still plan to flag the stale file — staleness signal must not be destroyed by bust+restore',
+        ).toBeGreaterThan(0);
+      });
+    });
+
+    // ── Phase 5: Before/After consistency + provenance label ────
+    describe('Phase 5: Before/After consistency across sequential busts + provenance label', () => {
+      it('Before line in rendered summary includes provenance marker (from dry-run)', async () => {
+        await buildBaseFixture(tmpHome);
+        // Run dry-run to create checkpoint.
+        const dry = await runDryRunFirst(tmpHome);
+        expect(dry.code, `dry-run stderr: ${dry.stderr}`).toBe(0);
+
+        // Run bust without --json so we get the rendered shareable block.
+        const bust = await runBustCommand(tmpHome, [
+          '--dangerously-bust-ghosts',
+          '--yes-proceed-busting',
+        ]);
+        expect(bust.code, `bust stderr: ${bust.stderr}`).toBe(0);
+
+        // The rendered output must contain the provenance hint on the Before line.
+        // Pattern: "Before (from dry-run <ISO-timestamp>):"
+        // eslint-disable-next-line no-control-regex
+        const stripped = bust.stdout.replace(/\x1b\[[0-9;]*m/g, '');
+        expect(stripped).toMatch(/Before\s*\(from dry-run \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+      });
+
+      it('second bust Before equals first bust After (±1k tolerance) — no drift', async () => {
+        await buildBaseFixture(tmpHome);
+
+        // Seed a ghost agent so token counts are non-trivial.
+        await writeFile(
+          path.join(tmpHome, '.claude', 'agents', 'drift-agent.md'),
+          '# drift test agent\n'.repeat(20),
+          'utf8',
+        );
+
+        // Step 1: dry-run → checkpoint with Before1 stored.
+        const dry1 = await runBustCommand(tmpHome, ['--dry-run', '--json']);
+        expect(dry1.code, `dry-run 1 stderr: ${dry1.stderr}`).toBe(0);
+
+        // Step 2: bust → produces After1.
+        const bust1 = await runBustCommand(tmpHome, [
+          '--dangerously-bust-ghosts',
+          '--yes-proceed-busting',
+          '--json',
+        ]);
+        expect(bust1.code, `bust 1 stderr: ${bust1.stderr}`).toBe(0);
+        const bust1Parsed = JSON.parse(bust1.stdout) as {
+          bust: {
+            status: string;
+            summary?: { beforeTokens: number; afterTokens: number; freedTokens: number };
+          };
+        };
+        expect(bust1Parsed.bust.status).toBe('success');
+        const after1 = bust1Parsed.bust.summary!.afterTokens;
+
+        // Step 3: new dry-run on the post-bust state → checkpoint with Before2.
+        const dry2 = await runBustCommand(tmpHome, ['--dry-run', '--json']);
+        expect(dry2.code, `dry-run 2 stderr: ${dry2.stderr}`).toBe(0);
+        // Read the checkpoint file directly to extract total_overhead (Before2).
+        const checkpointPath = path.join(tmpHome, '.claude', 'ccaudit', '.last-dry-run');
+        const checkpointRaw = await readFile(checkpointPath, 'utf8');
+        const checkpointJson = JSON.parse(checkpointRaw) as { total_overhead: number };
+        const before2 = checkpointJson.total_overhead;
+
+        // Assert: |Before2 - After1| <= 1000 tokens (±1k tolerance).
+        const drift = Math.abs(before2 - after1);
+        expect(
+          drift,
+          `Before2 (${before2}) should be within 1k of After1 (${after1}), but drift is ${drift}`,
+        ).toBeLessThanOrEqual(1000);
+      });
+    });
+
+    // ── Bug #1 regression: archivedSkills counter split ─────────
+    describe('archivedSkills counter split (Bug #1)', () => {
+      it('summary panel reports split agent + skill counts (archivedSkills > 0 when skills archived)', async () => {
+        await buildBaseFixture(tmpHome);
+
+        // One definite-ghost agent (never invoked -> lastUsed=null -> definite-ghost)
+        await writeFile(
+          path.join(tmpHome, '.claude', 'agents', 'ghost-agent.md'),
+          '# ghost agent body',
+          'utf8',
+        );
+
+        // One definite-ghost skill directory (never invoked -> definite-ghost)
+        const skillDir = path.join(tmpHome, '.claude', 'skills', 'ghost-skill');
+        await mkdir(skillDir, { recursive: true });
+        await writeFile(
+          path.join(skillDir, 'SKILL.md'),
+          '---\nname: ghost-skill\n---\n# Skill body',
+          'utf8',
+        );
+
+        // Dry-run first to generate the checkpoint.
+        const dry = await runDryRunFirst(tmpHome);
+        expect(dry.code, `dry-run stderr: ${dry.stderr}`).toBe(0);
+
+        // Bust without --json so we get the rendered summary in stdout.
+        const bust = await runBustCommand(tmpHome, [
+          '--dangerously-bust-ghosts',
+          '--yes-proceed-busting',
+        ]);
+        expect(bust.code, `bust stderr: ${bust.stderr}`).toBe(0);
+
+        // The rendered summary must contain "Archived: N agents, M skills" with M > 0.
+        // Pattern: "Archived: <digits> agents, <digits> skills"
+        const match = bust.stdout.match(/Archived:\s+(\d+)\s+agents,\s+(\d+)\s+skills/);
+        expect(
+          match,
+          `Expected stdout to contain "Archived: N agents, M skills" — got:\n${bust.stdout}`,
+        ).not.toBeNull();
+        const archivedAgents = parseInt(match![1]!, 10);
+        const archivedSkills = parseInt(match![2]!, 10);
+        expect(archivedAgents).toBeGreaterThan(0);
+        expect(archivedSkills).toBeGreaterThan(0);
       });
     });
   },

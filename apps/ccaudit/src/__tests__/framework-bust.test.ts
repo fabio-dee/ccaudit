@@ -240,8 +240,12 @@ describe('Phase 4: framework-as-unit bust protection (integration)', () => {
   // See CHANGELOG.md for the manifest-compatibility statement. bust.ts
   // remains truly untouched.
   describe('BUST-07: NO-TOUCH file line counts', () => {
-    it('packages/internal/src/remediation/bust.ts is exactly 1483 lines', () => {
-      expect(countLines(bustTsPath)).toBe(1483);
+    it('packages/internal/src/remediation/bust.ts is exactly 1737 lines', () => {
+      // Updated from 1483 → 1616 by Phase 1 (Bug #1 fix): split archive agents/skills
+      // counters + added in-source regression tests for the split (post-oxfmt).
+      // Updated from 1616 → 1737 by Phase 5 (Bug #4 fix): pin MCP regime in checkpoint
+      // + added in-source regression tests for checkpointTimestamp provenance.
+      expect(countLines(bustTsPath)).toBe(1737);
     });
   });
 

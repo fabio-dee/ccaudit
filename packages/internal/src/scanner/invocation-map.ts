@@ -3,23 +3,39 @@ import type { InvocationSummary } from './types.ts';
 
 /**
  * Build lookup maps from the invocation ledger for fast O(1) matching.
- * Returns separate maps for agents, skills, and MCP servers, each keyed
- * by item name with aggregated invocation summaries.
+ * Returns separate maps for agents, skills, MCP servers, commands, and hooks,
+ * each keyed by item name with aggregated invocation summaries.
+ *
+ * Hook firing signals use event-level keys (e.g. 'SessionStart:*') because
+ * the matcher is not recoverable from the [hook EventName] text marker.
  *
  * @param invocations - All invocation records from parsed JSONL sessions
- * @returns Three maps: agents, skills, mcpServers
+ * @returns Five maps: agents, skills, mcpServers, commands, hooks
  */
 export function buildInvocationMaps(invocations: InvocationRecord[]): {
   agents: Map<string, InvocationSummary>;
   skills: Map<string, InvocationSummary>;
   mcpServers: Map<string, InvocationSummary>;
+  commands: Map<string, InvocationSummary>;
+  hooks: Map<string, InvocationSummary>;
 } {
   const agents = new Map<string, InvocationSummary>();
   const skills = new Map<string, InvocationSummary>();
   const mcpServers = new Map<string, InvocationSummary>();
+  const commands = new Map<string, InvocationSummary>();
+  const hooks = new Map<string, InvocationSummary>();
 
   for (const inv of invocations) {
-    const targetMap = inv.kind === 'agent' ? agents : inv.kind === 'skill' ? skills : mcpServers;
+    const targetMap =
+      inv.kind === 'agent'
+        ? agents
+        : inv.kind === 'skill'
+          ? skills
+          : inv.kind === 'command'
+            ? commands
+            : inv.kind === 'hook'
+              ? hooks
+              : mcpServers;
 
     const existing = targetMap.get(inv.name);
     if (existing) {
@@ -39,7 +55,7 @@ export function buildInvocationMaps(invocations: InvocationRecord[]): {
     }
   }
 
-  return { agents, skills, mcpServers };
+  return { agents, skills, mcpServers, commands, hooks };
 }
 
 if (import.meta.vitest) {
@@ -59,11 +75,25 @@ if (import.meta.vitest) {
   }
 
   describe('buildInvocationMaps', () => {
-    it('returns three empty Maps for empty input', () => {
+    it('returns five empty Maps for empty input', () => {
       const result = buildInvocationMaps([]);
       expect(result.agents.size).toBe(0);
       expect(result.skills.size).toBe(0);
       expect(result.mcpServers.size).toBe(0);
+      expect(result.commands.size).toBe(0);
+      expect(result.hooks.size).toBe(0);
+    });
+
+    it('routes a single hook invocation to hooks map', () => {
+      const result = buildInvocationMaps([makeRecord({ kind: 'hook', name: 'SessionStart:*' })]);
+      expect(result.hooks.size).toBe(1);
+      expect(result.agents.size).toBe(0);
+      expect(result.skills.size).toBe(0);
+      expect(result.commands.size).toBe(0);
+
+      const entry = result.hooks.get('SessionStart:*')!;
+      expect(entry.count).toBe(1);
+      expect(entry.lastTimestamp).toBe('2026-04-01T12:00:00.000Z');
     });
 
     it('routes a single agent invocation to agents map', () => {
@@ -71,11 +101,24 @@ if (import.meta.vitest) {
       expect(result.agents.size).toBe(1);
       expect(result.skills.size).toBe(0);
       expect(result.mcpServers.size).toBe(0);
+      expect(result.commands.size).toBe(0);
 
       const entry = result.agents.get('Explore')!;
       expect(entry.count).toBe(1);
       expect(entry.lastTimestamp).toBe('2026-04-01T12:00:00.000Z');
       expect(entry.projects.has('/Users/test/project')).toBe(true);
+    });
+
+    it('routes a single command invocation to commands map', () => {
+      const result = buildInvocationMaps([makeRecord({ kind: 'command', name: 'gsd:update' })]);
+      expect(result.commands.size).toBe(1);
+      expect(result.agents.size).toBe(0);
+      expect(result.skills.size).toBe(0);
+      expect(result.mcpServers.size).toBe(0);
+
+      const entry = result.commands.get('gsd:update')!;
+      expect(entry.count).toBe(1);
+      expect(entry.lastTimestamp).toBe('2026-04-01T12:00:00.000Z');
     });
 
     it('routes a single skill invocation to skills map', () => {

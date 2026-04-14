@@ -7,6 +7,179 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+<!-- TODO: pick next version (likely 1.5.0 — new subcommand + behaviour changes) before tagging. -->
+
+### Added
+
+- `ccaudit reclaim [--dry-run]` subcommand recovers orphan files from `~/.claude/ccaudit/archived/` that no manifest references. Safety invariant: never overwrites an existing source path (skips with warning).
+- Append-only audit trail at `~/.claude/ccaudit/history.jsonl` (mode `0o600`, parent `0o700`). Records every invocation with structured per-command `result`. Opt-out: `CCAUDIT_NO_HISTORY=1`. Schema version: `history_version: 1`. Stderr advisory at >10 MB.
+- Bust summary `Before` line now carries provenance: `Before (from dry-run <ISO timestamp>): ~Xk tokens loaded per session`.
+- Bust summary now splits `Archived: N agents, M skills` into independent counters (skills was previously hard-coded 0 due to merged `archive` count bucket).
+- Restore output now reports `moved` and `already-at-source` separately: `N agents/skills restored to their original locations (M were already at source)`.
+
+### Changed
+
+- `restore` (full mode) now walks **all** manifests in `~/.claude/ccaudit/manifests/` newest-first, deduplicated by `archive_path`. Previously read only the newest manifest, leaving prior busts' items as orphans.
+- `restore` JSON envelope: `counts.unarchived.completed` is replaced by `counts.unarchived.moved` and `counts.unarchived.alreadyAtSource`. **Breaking change for automation consuming this field.**
+- Restore quiet TSV output gains an `alreadyAtSource` column between `moved` and `reenabled`.
+- Bust JSON envelope: `counts.archive` reshaped from `{ completed, failed }` to `{ agents, skills, failed }`. The serialized manifest footer (`ManifestFooter.actual_ops`) keeps the old `{ completed, failed }` shape via internal mapping for backward compatibility.
+- Dry-run checkpoint (`~/.claude/ccaudit/.last-dry-run`) gains `mcp_regime` and `cc_version` fields, captured at dry-run time and pinned through the subsequent bust to eliminate Before/After token-count drift. Old checkpoints without these fields remain valid (defaults: `'unknown'` and `null`).
+
+### Fixed
+
+- Bust summary panel showed `0 skills` even when skills were archived, because `BustCounts.archive` merged categories. Counts are now independent.
+- Full-mode `restore` only consulted the newest manifest, leaving items archived by prior busts as unreachable orphans on disk. Now walks all manifests.
+- `restore` falsely incremented the success counter when the source already existed at the destination (no actual rename happened). Now classified as `already-at-source`.
+- Memory-file flag/unflag operations destroyed the file's `mtime` because `writeFile` was used without `utimes`. Staleness detection (mtime-based) silently lost old timestamps after any bust+restore cycle. Fixed via `writeFilePreservingMtime` helper.
+- MCP regime detection (subprocess `claude --version` with 500 ms timeout) flipped non-deterministically between dry-run and bust, causing 10–20× swings in token estimates. The regime is now pinned in the dry-run checkpoint and consumed by bust.
+
+---
+
+## [1.4.0] - 2026-04-13
+
+Token estimation methodology rewrite. All six Claude Code inventory categories now
+use evidence-based formulas derived from Anthropic's published loading documentation
+and measured session logs, replacing the old blanket `file-size / 4` wave.
+
+---
+
+### Token Math Methodology Rewrite — Migration Guide
+
+#### Why totals will change
+
+The v1.3.x estimator applied a single `file_size_bytes / 4` heuristic across all
+categories. That over-counted skills and agents whose descriptions are shorter than
+the full file, and under-counted (or entirely missed) commands and hooks.
+
+Evidence for the new formulas is drawn from:
+
+- Anthropic's published documentation on how Claude Code loads agents, skills, and
+  commands into context at session start
+- Community-measured session log analysis (GitHub issues #4973, #8997, #14882,
+  #31002) confirming per-category loading behaviour
+- Live `tool_use` token counts extracted from real Claude Code session JSONL logs
+  for MCP server overhead
+
+#### Before vs. after per-category
+
+| Category     | v1.3.x formula        | v1.4.0 formula                                                                                | Typical delta                                     |
+| ------------ | --------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| **Skills**   | `file_size_bytes / 4` | `15 + ceil(description_chars / 4)`, cap 250 chars                                             | Lower (often −40–70%)                             |
+| **Agents**   | `file_size_bytes / 4` | `30 + ceil(description_chars / 4)`, no cap                                                    | Lower for short desc; higher for long-desc agents |
+| **MCP**      | `file_size_bytes / 4` | Measured per-server (eager) or single ToolSearch ~8.7k (deferred)                             | Varies; deferred mode is usually lower            |
+| **Memory**   | `file_size_bytes / 4` | File-size heuristic + recursive `@`-import resolution (depth ≤ 5); auto-memory capped at 25KB | Higher (import chains now surfaced)               |
+| **Commands** | Not counted           | `min(60 + description_chars / 4, 90)` or `file-size / 4` fallback                             | New category; adds modest tokens                  |
+| **Hooks**    | Not counted           | Upper-bound 2,500 tok/fire for inject-capable hooks; advisory by default                      | New category; advisory unless `--include-hooks`   |
+
+#### New CLI flags
+
+| Flag                       | Description                                                                                                                                  |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--regime eager\|deferred` | Override MCP regime detection. `eager` = per-server measured costs. `deferred` = single ToolSearch overhead (~8.7k tokens). Default: `auto`. |
+| `--include-hooks`          | Add hook upper-bound token costs to the reported grand total. Without this flag hooks appear as advisory only.                               |
+
+#### New categories
+
+- **`command`** — Slash commands in `~/.claude/commands/` and `.claude/commands/`. Commands
+  installed by frameworks (GSD, SuperClaude, etc.) are grouped under the same framework
+  detection logic that already groups agents and skills, so bulk-installed commands don't
+  inflate the ungrouped list.
+- **`hook`** — `PreToolUse`, `PostToolUse`, and `SessionStart` hooks from
+  `.claude/settings.json`. Hook token costs are upper-bounds; the actual cost depends on
+  the hook script's injected output.
+
+#### Hook advisory policy (Phase 4.1)
+
+Hooks are excluded from the default grand total. The rationale: a pessimistic
+upper-bound of 2,500 tokens per inject-capable hook dominates the total and masks
+the signal from agents, skills, and memory — which are the categories where the
+bust pipeline can actually take action.
+
+Pass `--include-hooks` to see the pessimistic total. The advisory upper-bound is
+always shown in the summary regardless.
+
+```bash
+# Default: hooks advisory, not in total
+ccaudit ghost --json | jq '.meta.hooksAggregated'       # false
+ccaudit ghost --json | jq '.totalOverhead.hooksUpperBound'  # advisory tokens
+
+# Pessimistic mode: hooks included in total
+ccaudit ghost --include-hooks --json | jq '.meta.hooksAggregated'  # true
+```
+
+#### Auto-memory and import chains (Phase 5)
+
+ccaudit now resolves `@`-import directives in CLAUDE.md files recursively (depth ≤ 5).
+Each imported file appears as a separate `memory` row in the inventory with `importDepth`
+set (`0` = root, `1+` = imported). The `importRoot` field records which root CLAUDE.md
+triggered the import.
+
+Auto-memory files at `~/.claude/projects/<slug>/memory/MEMORY.md` are surfaced
+automatically and capped at 25KB (6,250 tokens) to match Claude Code's own
+truncation limit.
+
+#### Pointer to README
+
+See README.md § "Upgrading from 1.3.x" for a condensed summary of all changes.
+
+---
+
+### Added
+
+- **Phase 2** — MCP regime detection: auto-detects whether Claude Code is running in
+  eager or deferred tool-load mode and applies the appropriate cost model.
+  `--regime eager|deferred` flag for manual override.
+- **Phase 3** — Slash commands scanned as a first-class inventory category (`command`).
+  Framework detection groups bulk-installed commands alongside their sibling agents.
+- **Phase 4** — Hook scanner: surfaces `PreToolUse`, `PostToolUse`, and `SessionStart`
+  hooks from `.claude/settings.json` as `hook` items with inject-capable detection.
+  Category-weighted health score: each category contributes proportionally to the
+  ghost and token penalty bands.
+- **Phase 4.1** — Hooks are advisory by default (`hooksAggregated: false`).
+  `--include-hooks` flag promotes hooks into the grand total.
+- **Phase 5** — Auto-memory discovery: `~/.claude/projects/<slug>/memory/MEMORY.md`
+  files are found automatically. Recursive `@`-import resolution (depth ≤ 5) with
+  per-item `importDepth` and `importRoot` fields in JSON output.
+- New `meta` JSON fields: `mcpRegime`, `toolSearchOverhead`, `hooksAggregated`.
+- New `totalOverhead` JSON field: `hooksUpperBound`.
+- New per-item JSON fields: `hookEvent`, `injectCapable` (hooks); `importDepth`,
+  `importRoot` (memory).
+- Formula tags in `tokenEstimate.source` for all six categories.
+
+### Changed
+
+- Token estimation formulas updated for all categories. See migration guide above.
+- `ghost` summary table gains a **Commands** row (always shown) and a **Hooks** row
+  (shown only when `--include-hooks` is set; advisory line shown in both modes).
+- Health score is now category-weighted. The penalty bands changed — expect small
+  score shifts even with identical ghost counts.
+- `docs/JSON-SCHEMA.md` updated with new fields, category enum, and formula tags table.
+- README updated with v1.4.0 methodology section and "Upgrading from 1.3.x" guide.
+
+### Fixed
+
+- Regression: `ghost --include-hooks` delta math preserved — `totalOverhead.tokens`
+  (with hooks) minus `totalOverhead.tokens` (default) equals `totalOverhead.hooksUpperBound`.
+- Lint cleanup: removed `phase-fanout` scaffold comment from
+  `packages/internal/src/report/recommendation.ts`. The `dormant` → `monitor` mapping
+  is now documented as final rationale (hooks cannot be archived via the bust pipeline;
+  `monitor` is the correct action).
+
+### Known issues
+
+**D1** — `tokenPenalty` is identical in default and `--include-hooks` modes despite a
+~17.5k token difference in the grand total. Both values fall in the same health-score
+penalty band, so the score is unchanged. `ghostPenalty` and `dormantPenalty` are
+correctly identical. This is by-design for v1.4.0; consider widening band resolution
+in v1.5.
+
+**G1** — `ghost --include-hooks invalid-arg` exits 1 with full output and no error
+message. yargs silently ignores extra positional arguments for `ghost`. This is
+pre-existing behaviour inherited from v1.3.x. A small targeted fix is tracked for
+v1.4.1.
+
+---
+
 ## [1.3.1] - 2026-04-13
 
 Metadata-only release to unblock npm publish with provenance. No functional changes.

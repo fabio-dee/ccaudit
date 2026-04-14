@@ -90,7 +90,7 @@ export type { BustResult, BustDeps, BustCounts, CeremonyResult, CeremonyIO } fro
 // Plan 02 wires the real op executors (unarchive, re-enable MCP, strip flags).
 export {
   executeRestore,
-  findManifestForRestore,
+  findManifestsForRestore,
   findManifestForName,
   extractServerName,
   restoreArchiveOp,
@@ -107,6 +107,16 @@ export type {
 } from './restore.ts';
 export { discoverManifests, resolveManifestDir } from './manifest.ts';
 export type { ManifestEntry, DiscoverManifestsDeps } from './manifest.ts';
+
+// Phase 4: orphan reclaim command
+export { reclaim } from './reclaim.ts';
+export type {
+  ReclaimOptions,
+  ReclaimResult,
+  ReclaimDeps,
+  DirEntry,
+  OrphanEntry,
+} from './reclaim.ts';
 
 // v1.3.0 Phase 4: framework-as-unit bust protection helper.
 // Pure synchronous filter — runs at the CLI layer in BOTH the dry-run path

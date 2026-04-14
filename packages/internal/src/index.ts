@@ -37,6 +37,8 @@ export {
   parseDuration,
   parseMcpName,
   extractInvocations,
+  extractCommandInvocations,
+  extractHookInvocations,
 } from './parser/index.ts';
 export type {
   DiscoverOptions,
@@ -46,19 +48,22 @@ export type {
   ParsedSessionResult,
 } from './parser/index.ts';
 
-// Schemas (Phase 2)
-export { anyLineSchema, assistantLineSchema } from './schemas/session-line.ts';
-export type { AnyLine, AssistantLine } from './schemas/session-line.ts';
+// Schemas (Phase 2 + Phase 3)
+export { anyLineSchema, assistantLineSchema, userLineSchema } from './schemas/session-line.ts';
+export type { AnyLine, AssistantLine, UserLine } from './schemas/session-line.ts';
 export { toolUseBlockSchema, contentBlockSchema } from './schemas/tool-use.ts';
 export type { ToolUseBlock, ContentBlock } from './schemas/tool-use.ts';
 
-// Scanner module (Phase 3 + Phase 2 v1.3.0 framework annotation)
+// Scanner module (Phase 3 + Phase 2 v1.3.0 framework annotation; Phase 4 hooks)
 export {
   scanAll,
   scanAgents,
   scanSkills,
   scanMcpServers,
   scanMemoryFiles,
+  scanCommands,
+  resolveCommandName,
+  scanHooks,
   classifyGhost,
   buildInvocationMaps,
   readClaudeConfig,
@@ -82,6 +87,8 @@ export type { ClaudeConfig } from './scanner/index.ts';
 export {
   enrichScanResults,
   calculateTotalOverhead,
+  calculateGhostTotalOverhead,
+  sumHookTokens,
   calculateWorstCaseOverhead,
   lookupMcpEstimate,
   getMcpEstimatesMap,
@@ -94,6 +101,16 @@ export {
   BYTES_PER_TOKEN,
   CONTEXT_WINDOW_SIZE,
   DEFAULT_UNKNOWN_MCP_TOKENS,
+  // Phase 2: MCP regime detection + deferred-tools math
+  detectClaudeCodeVersion,
+  resolveMcpRegime,
+  perToolTokens,
+  regimeFlatOverhead,
+  DEFAULT_UNKNOWN_MCP_TOOL_COUNT,
+  // Phase 3: command estimator
+  estimateCommandTokens,
+  // Phase 4: hook estimator
+  estimateHookTokens,
 } from './token/index.ts';
 export type {
   TokenEstimate,
@@ -101,6 +118,10 @@ export type {
   McpTokenEntry,
   McpServerConfig,
   McpToolDefinition,
+  // Phase 2
+  McpRegime,
+  // Phase 3
+  CommandEstimateResult,
 } from './token/index.ts';
 
 // Report module (Phase 5)
@@ -166,7 +187,7 @@ export type {
 // Surfaced here so restore.ts CLI command can import from `@ccaudit/internal`.
 export {
   executeRestore,
-  findManifestForRestore,
+  findManifestsForRestore,
   findManifestForName,
   extractServerName,
   discoverManifests,
@@ -187,3 +208,29 @@ export type {
   FlagOp,
   RefreshOp,
 } from './remediation/index.ts';
+
+// Phase 4: orphan reclaim command
+export { reclaim } from './remediation/index.ts';
+export type {
+  ReclaimOptions,
+  ReclaimResult,
+  ReclaimDeps,
+  DirEntry,
+  OrphanEntry,
+} from './remediation/index.ts';
+
+// Phase 6: append-only history log
+export { HistoryWriter, recordHistory } from './history/index.ts';
+export type {
+  HistoryHeader,
+  HistoryEntry,
+  HistoryRecord,
+  CommandResult,
+  GhostResult,
+  DryRunResult,
+  HistoryBustResult,
+  HistoryRestoreResult,
+  HistoryReclaimResult,
+  GenericResult,
+  RecordHistoryOpts,
+} from './history/index.ts';

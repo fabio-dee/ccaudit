@@ -1079,7 +1079,14 @@ describe.skipIf(!binaryExists)('TEST-07: JSON backward compatibility', () => {
     // ~96 bytes, Linux returns 4096. Normalize tokenEstimate + totalOverhead to avoid
     // platform-dependent assertion failures.
     function normalize(env: {
-      meta: { timestamp: string; version: string };
+      meta: { timestamp: string; version: string; mcpRegime?: string; toolSearchOverhead?: number };
+      healthScore?: {
+        score: number;
+        grade: string;
+        ghostPenalty: number;
+        tokenPenalty: number;
+        dormantPenalty?: number;
+      };
       totalOverhead?: { tokens: number };
       items?: Array<{
         path?: string;
@@ -1090,7 +1097,19 @@ describe.skipIf(!binaryExists)('TEST-07: JSON backward compatibility', () => {
       }>;
     }): string {
       const copy = JSON.parse(JSON.stringify(env)) as {
-        meta: { timestamp: string; version: string };
+        meta: {
+          timestamp: string;
+          version: string;
+          mcpRegime?: string;
+          toolSearchOverhead?: number;
+        };
+        healthScore?: {
+          score: number;
+          grade: string;
+          ghostPenalty: number;
+          tokenPenalty: number;
+          dormantPenalty?: number;
+        };
         totalOverhead?: { tokens: number };
         items?: Array<{
           path?: string;
@@ -1104,6 +1123,15 @@ describe.skipIf(!binaryExists)('TEST-07: JSON backward compatibility', () => {
       copy.meta.version = 'NORMALIZED';
       // totalOverhead depends on platform-specific skill stat().size — normalize
       if (copy.totalOverhead) copy.totalOverhead.tokens = 0;
+      // Phase 2 additive meta fields — strip so v1.2.1 fixture byte-identity is preserved
+      delete copy.meta.mcpRegime;
+      delete copy.meta.toolSearchOverhead;
+      // Phase 4 additive healthScore field — strip so v1.2.1 fixture byte-identity is preserved
+      if (copy.healthScore) delete copy.healthScore.dormantPenalty;
+      // Phase 4.1 additive fields — strip so v1.2.1 fixture byte-identity is preserved
+      if (copy.meta) delete (copy.meta as Record<string, unknown>).hooksAggregated;
+      if (copy.totalOverhead)
+        delete (copy.totalOverhead as Record<string, unknown>).hooksUpperBound;
       // Paths differ between runs (tmpdir base) — normalize to basename
       // lastUsed, daysSinceLastUse, and urgencyScore are date-dependent — normalize per item
       // tokenEstimate for skills varies across platforms (dir stat().size) — normalize

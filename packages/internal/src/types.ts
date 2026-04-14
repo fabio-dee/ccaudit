@@ -10,18 +10,19 @@ export type ItemScope = 'global' | 'project';
  * - 'used': invoked within the time window
  * - 'likely-ghost': 7-30 days since last invocation
  * - 'definite-ghost': >30 days or never invoked
+ * - 'dormant': configured but never fired (hooks only)
  */
-export type GhostTier = 'used' | 'likely-ghost' | 'definite-ghost';
+export type GhostTier = 'used' | 'likely-ghost' | 'definite-ghost' | 'dormant';
 
 /**
  * Category of auditable inventory item.
  */
-export type ItemCategory = 'agent' | 'skill' | 'mcp-server' | 'memory';
+export type ItemCategory = 'agent' | 'skill' | 'mcp-server' | 'memory' | 'command' | 'hook';
 
 /**
  * Confidence tier for token cost estimates (TOKN-03).
  */
-export type ConfidenceTier = 'estimated' | 'measured' | 'community-reported';
+export type ConfidenceTier = 'estimated' | 'measured' | 'community-reported' | 'upper-bound';
 
 /**
  * Recommendation action for a ghost item (REPT-06).

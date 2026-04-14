@@ -12,8 +12,12 @@ import {
   calculateHealthScore,
   calculateUrgencyScore,
   classifyRecommendation,
+  detectClaudeCodeVersion,
+  resolveMcpRegime,
+  regimeFlatOverhead,
+  CONTEXT_WINDOW_SIZE,
 } from '@ccaudit/internal';
-import type { InvocationRecord, TokenCostResult } from '@ccaudit/internal';
+import type { InvocationRecord, TokenCostResult, McpRegime } from '@ccaudit/internal';
 import {
   renderHeader,
   humanizeSinceWindow,
@@ -46,7 +50,7 @@ import { resolveOutputMode, buildJsonEnvelope } from '../_output-mode.ts';
  * Scanner stays untouched — Phase 8 RMED-06 still knows which config key(s) to rewrite.
  */
 export function aggregateMcpByName(enriched: TokenCostResult[]): TokenCostResult[] {
-  const tierRank = { used: 0, 'likely-ghost': 1, 'definite-ghost': 2 } as const;
+  const tierRank = { used: 0, 'likely-ghost': 1, 'definite-ghost': 2, dormant: 3 } as const;
   const groups = new Map<string, TokenCostResult[]>();
   for (const r of enriched) {
     const key = r.item.name;
@@ -142,6 +146,12 @@ export const mcpCommand = define({
       description: 'Show scan details',
       default: false,
     },
+    regime: {
+      type: 'string',
+      description:
+        'MCP token regime: eager (full schemas), deferred (ToolSearch, cc >=2.1.7), or auto (detect). Default: auto.',
+      default: 'auto',
+    },
   },
   async run(ctx) {
     const sinceStr = ctx.values.since ?? '7d';
@@ -152,6 +162,23 @@ export const mcpCommand = define({
       console.error((e as Error).message);
       process.exitCode = 1;
       return;
+    }
+
+    // Validate and resolve --regime flag
+    const regimeRaw = ctx.values.regime ?? 'auto';
+    if (regimeRaw !== 'eager' && regimeRaw !== 'deferred' && regimeRaw !== 'auto') {
+      console.error(
+        `error: invalid --regime value "${regimeRaw}". Must be one of: eager, deferred, auto`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    const regimeFlag = regimeRaw as McpRegime | 'auto';
+
+    // Detect Claude Code version once (only needed when regime is 'auto')
+    let detectedCcVersion: string | null = null;
+    if (regimeFlag === 'auto') {
+      detectedCcVersion = await detectClaudeCodeVersion();
     }
 
     const timeoutMs = Number.parseInt(ctx.values.timeout ?? '15000', 10);
@@ -189,8 +216,11 @@ export const mcpCommand = define({
     // Step 4: Filter to MCP server items only
     const mcpResults = results.filter((r) => r.item.category === 'mcp-server');
 
-    // Step 5: Enrich with token estimates
-    let enriched: TokenCostResult[] = await enrichScanResults(mcpResults);
+    // Step 5: Enrich with token estimates (regime-aware)
+    let enriched: TokenCostResult[] = await enrichScanResults(mcpResults, {
+      regime: regimeFlag,
+      ccVersion: detectedCcVersion,
+    });
 
     // Step 6: Live measurement (if --live flag)
     if (ctx.values.live) {
@@ -256,46 +286,67 @@ export const mcpCommand = define({
     const hasGhosts = enriched.some((r) => r.tier !== 'used');
     const exitCode = hasGhosts ? 1 : 0;
 
+    // Resolve final regime for JSON envelope meta (matches ghost.ts logic)
+    let resolvedRegime: McpRegime;
+    if (regimeFlag === 'auto') {
+      const eagerMcpTotal = enriched.reduce((sum, r) => sum + (r.tokenEstimate?.tokens ?? 0), 0);
+      resolvedRegime = resolveMcpRegime({
+        totalMcpToolTokens: eagerMcpTotal,
+        contextWindow: CONTEXT_WINDOW_SIZE,
+        ccVersion: detectedCcVersion,
+        override: null,
+      }).regime;
+    } else {
+      resolvedRegime = regimeFlag;
+    }
+    const toolSearchOverhead = regimeFlatOverhead(resolvedRegime);
+
     // Step 7: Display results
     if (mode.json) {
       const totalTokens = calculateTotalOverhead(enriched);
       const healthScore = calculateHealthScore(enriched);
-      const envelope = buildJsonEnvelope('mcp', sinceStr, exitCode, {
-        window: sinceStr,
-        live: ctx.values.live ?? false,
-        servers: enriched.length,
-        totalOverhead: {
-          tokens: totalTokens,
+      const envelope = buildJsonEnvelope(
+        'mcp',
+        sinceStr,
+        exitCode,
+        {
+          window: sinceStr,
+          live: ctx.values.live ?? false,
+          servers: enriched.length,
+          totalOverhead: {
+            tokens: totalTokens,
+          },
+          healthScore: {
+            score: healthScore.score,
+            grade: healthScore.grade,
+            ghostPenalty: healthScore.ghostPenalty,
+            tokenPenalty: healthScore.tokenPenalty,
+          },
+          items: enriched.map((r) => {
+            const itemWithPaths = r.item as typeof r.item & { projectPaths?: string[] };
+            return {
+              name: r.item.name,
+              scope: r.item.scope,
+              tier: r.tier,
+              invocations: r.invocationCount,
+              lastUsed: r.lastUsed?.toISOString() ?? null,
+              projectPath: r.item.projectPath,
+              projectPaths:
+                itemWithPaths.projectPaths ?? (r.item.projectPath ? [r.item.projectPath] : []),
+              tokenEstimate: r.tokenEstimate
+                ? {
+                    tokens: r.tokenEstimate.tokens,
+                    confidence: r.tokenEstimate.confidence,
+                    source: r.tokenEstimate.source,
+                  }
+                : null,
+              recommendation: classifyRecommendation(r.tier),
+              ...calculateUrgencyScore(r.lastUsed, r.tokenEstimate),
+            };
+          }),
         },
-        healthScore: {
-          score: healthScore.score,
-          grade: healthScore.grade,
-          ghostPenalty: healthScore.ghostPenalty,
-          tokenPenalty: healthScore.tokenPenalty,
-        },
-        items: enriched.map((r) => {
-          const itemWithPaths = r.item as typeof r.item & { projectPaths?: string[] };
-          return {
-            name: r.item.name,
-            scope: r.item.scope,
-            tier: r.tier,
-            invocations: r.invocationCount,
-            lastUsed: r.lastUsed?.toISOString() ?? null,
-            projectPath: r.item.projectPath,
-            projectPaths:
-              itemWithPaths.projectPaths ?? (r.item.projectPath ? [r.item.projectPath] : []),
-            tokenEstimate: r.tokenEstimate
-              ? {
-                  tokens: r.tokenEstimate.tokens,
-                  confidence: r.tokenEstimate.confidence,
-                  source: r.tokenEstimate.source,
-                }
-              : null,
-            recommendation: classifyRecommendation(r.tier),
-            ...calculateUrgencyScore(r.lastUsed, r.tokenEstimate),
-          };
-        }),
-      });
+        { mcpRegime: resolvedRegime, toolSearchOverhead },
+      );
       const indent = mode.quiet ? 0 : 2;
       console.log(JSON.stringify(envelope, null, indent));
     } else if (mode.csv) {
@@ -391,6 +442,7 @@ if (import.meta.vitest) {
       expect(argKeys).toContain('quiet');
       expect(argKeys).toContain('csv');
       expect(argKeys).toContain('ci');
+      expect(argKeys).toContain('regime');
     });
   });
 

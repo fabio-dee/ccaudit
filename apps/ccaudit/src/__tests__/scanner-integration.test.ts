@@ -1,5 +1,7 @@
 /**
- * Phase 2 (v1.3.0) Scanner Integration Test
+ * Phase 3 (v1.4.0) Scanner Integration Test — Commands category
+ * and Phase 2 (v1.3.0) Scanner Integration Test
+
  *
  * In-process integration test for the framework annotation pipeline.
  * Mirrors the fixture-based pattern from `ghost-command.test.ts` but
@@ -29,12 +31,14 @@ import {
   scanAll,
   scanAgents,
   scanSkills,
+  scanCommands,
   enrichScanResults,
   annotateFrameworks,
   toGhostItems,
   groupByFramework,
 } from '@ccaudit/internal';
 import type { ClaudePaths } from '@ccaudit/internal';
+import { renderGhostSummary } from '@ccaudit/terminal';
 
 // ── Fixture state ──────────────────────────────────────────────────
 
@@ -99,6 +103,106 @@ function claudePathsForFixture(): ClaudePaths {
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
+
+// ── Phase 3 Tests ─────────────────────────────────────────────────────────
+
+describe.skipIf(process.platform === 'win32')(
+  'scanner-integration: commands category (Phase 3)',
+  () => {
+    let phase3Dir: string;
+
+    beforeAll(async () => {
+      phase3Dir = await mkdtemp(join(tmpdir(), 'ccaudit-cmd-int-'));
+      const commandsDir = join(phase3Dir, 'commands');
+      const gitDir = join(commandsDir, 'git');
+      await mkdir(gitDir, { recursive: true });
+
+      // Plain command (no namespace)
+      await writeFile(
+        join(commandsDir, 'deploy.md'),
+        '---\ndescription: Deploy to production environment\n---\n# Deploy\n',
+        'utf-8',
+      );
+
+      // Namespaced command: git/commit.md → git:commit
+      await writeFile(
+        join(gitDir, 'commit.md'),
+        '---\ndescription: Commit staged changes with a message\n---\n# Git Commit\n',
+        'utf-8',
+      );
+    });
+
+    afterAll(async () => {
+      if (phase3Dir) await rm(phase3Dir, { recursive: true, force: true });
+    });
+
+    it('scanCommands returns 2 items: plain and namespaced', async () => {
+      const claudePaths: ClaudePaths = {
+        legacy: phase3Dir,
+        xdg: join(phase3Dir, 'xdg-does-not-exist'),
+      };
+      const results = await scanCommands(claudePaths, []);
+      expect(results).toHaveLength(2);
+      const names = results.map((r) => r.name).sort();
+      expect(names).toEqual(['deploy', 'git:commit']);
+      for (const r of results) {
+        expect(r.category).toBe('command');
+        expect(r.scope).toBe('global');
+      }
+    });
+
+    it('enrichScanResults gives correct token estimate for command with description (lazy formula)', async () => {
+      const claudePaths: ClaudePaths = {
+        legacy: phase3Dir,
+        xdg: join(phase3Dir, 'xdg-does-not-exist'),
+      };
+      const cmdItems = await scanCommands(claudePaths, []);
+
+      // Enrich just the command items
+      const enriched = await enrichScanResults(
+        cmdItems.map((item) => ({
+          item,
+          tier: 'definite-ghost' as const,
+          lastUsed: null,
+          invocationCount: 0,
+        })),
+      );
+
+      for (const r of enriched) {
+        expect(r.tokenEstimate).not.toBeNull();
+        expect(r.tokenEstimate!.confidence).toBe('estimated');
+        expect(r.tokenEstimate!.source).toContain('command:lazy');
+        // description is ~34-40 chars → tokens = 15 + ceil(N/4)
+        expect(r.tokenEstimate!.tokens).toBeGreaterThan(15);
+        expect(r.tokenEstimate!.tokens).toBeLessThanOrEqual(78); // max for 250-char desc
+      }
+    });
+
+    it('scanAll includes command items in results', async () => {
+      const claudePaths: ClaudePaths = {
+        legacy: phase3Dir,
+        xdg: join(phase3Dir, 'xdg-does-not-exist'),
+      };
+      const { results } = await scanAll([], {
+        claudePaths,
+        claudeConfigPath: join(phase3Dir, 'does-not-exist.json'),
+      });
+      const commandResults = results.filter((r) => r.item.category === 'command');
+      expect(commandResults.length).toBeGreaterThanOrEqual(2);
+      const names = commandResults.map((r) => r.item.name).sort();
+      expect(names).toContain('deploy');
+      expect(names).toContain('git:commit');
+    });
+
+    it('renderGhostSummary renders "Commands" row when command items present (smoke test)', async () => {
+      const summaries = [
+        { category: 'command' as const, defined: 2, used: 0, ghost: 2, tokenCost: 60 },
+      ];
+      const rendered = renderGhostSummary(summaries);
+      expect(rendered).toContain('Commands');
+    });
+  },
+);
 
 // Windows: skill names contain colons (sc:build) which are invalid in NTFS filenames.
 describe.skipIf(process.platform === 'win32')(
@@ -267,10 +371,12 @@ describe.skipIf(process.platform === 'win32')(
       const { results: results1 } = await scanAll([], {
         claudePaths: claudePathsForFixture(),
         claudeConfigPath: join(fixtureDir, 'does-not-exist-claude.json'),
+        globalHookSettingsPaths: [], // avoid real ~/.claude/settings.json in tests
       });
       const { results: results2 } = await scanAll([], {
         claudePaths: claudePathsForFixture(),
         claudeConfigPath: join(fixtureDir, 'does-not-exist-claude.json'),
+        globalHookSettingsPaths: [], // avoid real ~/.claude/settings.json in tests
       });
 
       expect(results1.length).toBe(results2.length);

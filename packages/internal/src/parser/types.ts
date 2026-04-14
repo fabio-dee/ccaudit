@@ -1,7 +1,9 @@
 /**
  * Kind of invocation detected in JSONL tool_use blocks.
+ * 'command' is emitted by extractCommandInvocations from user-line <command-name> markers.
+ * 'hook' is emitted by extractHookInvocations from tool-result [hook EventName] markers.
  */
-export type InvocationKind = 'agent' | 'skill' | 'mcp';
+export type InvocationKind = 'agent' | 'skill' | 'mcp' | 'command' | 'hook';
 
 /**
  * A single invocation record extracted from a JSONL assistant message.

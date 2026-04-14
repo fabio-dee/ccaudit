@@ -4,6 +4,7 @@ import { ghostCommand } from './commands/ghost.ts';
 import { inventoryCommand } from './commands/inventory.ts';
 import { mcpCommand } from './commands/mcp.ts';
 import { restoreCommand } from './commands/restore.ts';
+import { reclaimCommand } from './commands/reclaim.ts';
 import { trendCommand } from './commands/trend.ts';
 import { installSkillCommand } from './commands/install-skill.ts';
 
@@ -29,6 +30,7 @@ export async function run(): Promise<void> {
       inventory: inventoryCommand,
       mcp: mcpCommand,
       restore: restoreCommand, // Phase 9
+      reclaim: reclaimCommand, // Phase 4
       trend: trendCommand,
       'install-skill': installSkillCommand,
     },
