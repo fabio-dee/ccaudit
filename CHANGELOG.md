@@ -5,41 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-<!-- TODO: pick next version (likely 1.5.0 — new subcommand + behaviour changes) before tagging. -->
-
-### Added
-
-- `ccaudit reclaim [--dry-run]` subcommand recovers orphan files from `~/.claude/ccaudit/archived/` that no manifest references. Safety invariant: never overwrites an existing source path (skips with warning).
-- Append-only audit trail at `~/.claude/ccaudit/history.jsonl` (mode `0o600`, parent `0o700`). Records every invocation with structured per-command `result`. Opt-out: `CCAUDIT_NO_HISTORY=1`. Schema version: `history_version: 1`. Stderr advisory at >10 MB.
-- Bust summary `Before` line now carries provenance: `Before (from dry-run <ISO timestamp>): ~Xk tokens loaded per session`.
-- Bust summary now splits `Archived: N agents, M skills` into independent counters (skills was previously hard-coded 0 due to merged `archive` count bucket).
-- Restore output now reports `moved` and `already-at-source` separately: `N agents/skills restored to their original locations (M were already at source)`.
-
-### Changed
-
-- `restore` (full mode) now walks **all** manifests in `~/.claude/ccaudit/manifests/` newest-first, deduplicated by `archive_path`. Previously read only the newest manifest, leaving prior busts' items as orphans.
-- `restore` JSON envelope: `counts.unarchived.completed` is replaced by `counts.unarchived.moved` and `counts.unarchived.alreadyAtSource`. **Breaking change for automation consuming this field.**
-- Restore quiet TSV output gains an `alreadyAtSource` column between `moved` and `reenabled`.
-- Bust JSON envelope: `counts.archive` reshaped from `{ completed, failed }` to `{ agents, skills, failed }`. The serialized manifest footer (`ManifestFooter.actual_ops`) keeps the old `{ completed, failed }` shape via internal mapping for backward compatibility.
-- Dry-run checkpoint (`~/.claude/ccaudit/.last-dry-run`) gains `mcp_regime` and `cc_version` fields, captured at dry-run time and pinned through the subsequent bust to eliminate Before/After token-count drift. Old checkpoints without these fields remain valid (defaults: `'unknown'` and `null`).
-
-### Fixed
-
-- Bust summary panel showed `0 skills` even when skills were archived, because `BustCounts.archive` merged categories. Counts are now independent.
-- Full-mode `restore` only consulted the newest manifest, leaving items archived by prior busts as unreachable orphans on disk. Now walks all manifests.
-- `restore` falsely incremented the success counter when the source already existed at the destination (no actual rename happened). Now classified as `already-at-source`.
-- Memory-file flag/unflag operations destroyed the file's `mtime` because `writeFile` was used without `utimes`. Staleness detection (mtime-based) silently lost old timestamps after any bust+restore cycle. Fixed via `writeFilePreservingMtime` helper.
-- MCP regime detection (subprocess `claude --version` with 500 ms timeout) flipped non-deterministically between dry-run and bust, causing 10–20× swings in token estimates. The regime is now pinned in the dry-run checkpoint and consumed by bust.
-
----
-
 ## [1.4.0] - 2026-04-13
 
 Token estimation methodology rewrite. All six Claude Code inventory categories now
 use evidence-based formulas derived from Anthropic's published loading documentation
 and measured session logs, replacing the old blanket `file-size / 4` wave.
+
+This release also ships the `reclaim` subcommand for recovering orphaned archive
+files, an append-only `history.jsonl` audit trail, and four reliability fixes
+covering bust accounting, multi-manifest restore, memory-file mtime preservation,
+and MCP regime drift between dry-run and bust.
 
 ---
 
@@ -145,6 +120,12 @@ See README.md § "Upgrading from 1.3.x" for a condensed summary of all changes.
 - New per-item JSON fields: `hookEvent`, `injectCapable` (hooks); `importDepth`,
   `importRoot` (memory).
 - Formula tags in `tokenEstimate.source` for all six categories.
+- `ccaudit reclaim [--dry-run]` subcommand recovers orphan files from `~/.claude/ccaudit/archived/` that no manifest references. Safety invariant: never overwrites an existing source path (skips with warning).
+- Append-only audit trail at `~/.claude/ccaudit/history.jsonl` (mode `0o600`, parent `0o700`). Records every invocation with structured per-command `result`. Opt-out: `CCAUDIT_NO_HISTORY=1`. Schema version: `history_version: 1`. Stderr advisory at >10 MB.
+- Bust summary `Before` line now carries provenance: `Before (from dry-run <ISO timestamp>): ~Xk tokens loaded per session`.
+- Bust summary now splits `Archived: N agents, M skills` into independent counters.
+- Restore output now reports `moved` and `already-at-source` separately: `N agents/skills restored to their original locations (M were already at source)`.
+- `CLAUDE.md` project memory file added for AI coding assistants working in this repo.
 
 ### Changed
 
@@ -155,6 +136,11 @@ See README.md § "Upgrading from 1.3.x" for a condensed summary of all changes.
   score shifts even with identical ghost counts.
 - `docs/JSON-SCHEMA.md` updated with new fields, category enum, and formula tags table.
 - README updated with v1.4.0 methodology section and "Upgrading from 1.3.x" guide.
+- `restore` (full mode) now walks **all** manifests in `~/.claude/ccaudit/manifests/` newest-first, deduplicated by `archive_path`. Previously read only the newest manifest, leaving prior busts' items as orphans.
+- `restore` JSON envelope: `counts.unarchived.completed` is replaced by `counts.unarchived.moved` and `counts.unarchived.alreadyAtSource`. **Breaking change for automation consuming this field.**
+- Restore quiet TSV output gains an `alreadyAtSource` column between `moved` and `reenabled`.
+- Bust JSON envelope: `counts.archive` reshaped from `{ completed, failed }` to `{ agents, skills, failed }`. The serialized manifest footer (`ManifestFooter.actual_ops`) keeps the old `{ completed, failed }` shape via internal mapping for backward compatibility.
+- Dry-run checkpoint (`~/.claude/ccaudit/.last-dry-run`) gains `mcp_regime` and `cc_version` fields, captured at dry-run time and pinned through the subsequent bust to eliminate Before/After token-count drift. Old checkpoints without these fields remain valid (defaults: `'unknown'` and `null`).
 
 ### Fixed
 
@@ -164,6 +150,11 @@ See README.md § "Upgrading from 1.3.x" for a condensed summary of all changes.
   `packages/internal/src/report/recommendation.ts`. The `dormant` → `monitor` mapping
   is now documented as final rationale (hooks cannot be archived via the bust pipeline;
   `monitor` is the correct action).
+- Bust summary panel showed `0 skills` even when skills were archived, because `BustCounts.archive` merged categories. Counts are now independent.
+- Full-mode `restore` only consulted the newest manifest, leaving items archived by prior busts as unreachable orphans on disk. Now walks all manifests.
+- `restore` falsely incremented the success counter when the source already existed at the destination (no actual rename happened). Now classified as `already-at-source`.
+- Memory-file flag/unflag operations destroyed the file's `mtime` because `writeFile` was used without `utimes`. Staleness detection (mtime-based) silently lost old timestamps after any bust+restore cycle. Fixed via `writeFilePreservingMtime` helper.
+- MCP regime detection (subprocess `claude --version` with 500 ms timeout) flipped non-deterministically between dry-run and bust, causing 10-20× swings in token estimates. The regime is now pinned in the dry-run checkpoint and consumed by bust.
 
 ### Known issues
 
