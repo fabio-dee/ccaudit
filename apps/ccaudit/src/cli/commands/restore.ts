@@ -130,6 +130,21 @@ export const restoreCommand = define({
     const _historyStartMs = Date.now();
     const _argv = process.argv.slice(2);
     const _homeDir = process.env.HOME ?? process.env.USERPROFILE ?? homedir();
+    const _privacy = outMode.privacy;
+    const safeRecordHistory = async (
+      entry: Omit<Parameters<typeof recordHistory>[0], 'privacy'>,
+    ): Promise<void> => {
+      if (process.env.CCAUDIT_NO_HISTORY === '1') return;
+      try {
+        await recordHistory({ ...entry, privacy: _privacy });
+      } catch (err) {
+        process.stderr.write(
+          `[ccaudit] warning: failed to record history: ${
+            err instanceof Error ? err.message : String(err)
+          }\n`,
+        );
+      }
+    };
 
     // Parse invocation mode:
     //   positional arg → single restore by name
@@ -167,14 +182,13 @@ export const restoreCommand = define({
       } else {
         process.stderr.write(`ccaudit restore failed: ${message}\n`);
       }
-      await recordHistory({
+      await safeRecordHistory({
         homeDir: _homeDir,
         command: 'restore',
         argv: _argv,
         exitCode: 2,
         durationMs: Date.now() - _historyStartMs,
         cwd: process.cwd(),
-        privacy: false,
         result: null,
         errors: [message],
         ccauditVersion: CCAUDIT_VERSION,
@@ -206,17 +220,16 @@ export const restoreCommand = define({
             moved: result.counts.unarchived.moved,
             already_at_source: result.counts.unarchived.alreadyAtSource,
             failed: result.counts.unarchived.failed,
-            manifests_consumed: [result.manifestPath],
+            manifests_consumed: result.manifestPaths ?? [result.manifestPath],
           }
         : { status: result.status };
-    await recordHistory({
+    await safeRecordHistory({
       homeDir: _homeDir,
       command: 'restore',
       argv: _argv,
       exitCode,
       durationMs: Date.now() - _historyStartMs,
       cwd: process.cwd(),
-      privacy: false,
       result: _historyResult,
       errors: [],
       ccauditVersion: CCAUDIT_VERSION,
@@ -529,13 +542,14 @@ function renderRestoreCsv(result: RestoreResult): string {
 
   // Summary rows per category (not per-op — v1.2 limitation)
   const c = result.counts;
-  const uTotal = c.unarchived.moved + c.unarchived.alreadyAtSource + c.unarchived.failed;
+  const uOk = c.unarchived.moved + c.unarchived.alreadyAtSource;
+  const uTotal = uOk + c.unarchived.failed;
   const rTotal = c.reenabled.completed + c.reenabled.failed;
   const sTotal = c.stripped.completed + c.stripped.failed;
 
   return (
     header +
-    `restore,agents_skills,,all,,,${c.unarchived.moved}/${uTotal} ok,\n` +
+    `restore,agents_skills,,all,,,${uOk}/${uTotal} ok,\n` +
     `restore,mcp,,all,,,${c.reenabled.completed}/${rTotal} ok,\n` +
     `restore,memory,,all,,,${c.stripped.completed}/${sTotal} ok,\n`
   );
@@ -555,6 +569,7 @@ if (import.meta.vitest) {
             stripped: { completed: 0, failed: 0 },
           },
           manifestPath: '/p',
+          manifestPaths: ['/p'],
           duration_ms: 10,
         },
         0,
@@ -572,6 +587,7 @@ if (import.meta.vitest) {
           },
           failed: 1,
           manifestPath: '/p',
+          manifestPaths: ['/p'],
           duration_ms: 5,
         },
         1,
@@ -600,6 +616,7 @@ if (import.meta.vitest) {
           stripped: { completed: 3, failed: 0 },
         },
         manifestPath: '/m',
+        manifestPaths: ['/m'],
         duration_ms: 50,
       };
       expect(renderRestoreQuiet(result)).toBe('restore\tsuccess\t2\t1\t1\t3\n');
@@ -626,6 +643,7 @@ if (import.meta.vitest) {
           stripped: { completed: 1, failed: 0 },
         },
         manifestPath: '/m',
+        manifestPaths: ['/m'],
         duration_ms: 10,
       };
       const rows = renderRestoreCsv(result).trim().split('\n');

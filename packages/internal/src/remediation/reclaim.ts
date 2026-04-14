@@ -147,9 +147,14 @@ export async function reclaim(opts: ReclaimOptions): Promise<ReclaimResult> {
   let diskEntries: DirEntry[];
   try {
     diskEntries = await deps.readDirRecursive(archivedRoot);
-  } catch {
-    // archived/ does not exist → nothing to reclaim
-    return { orphans: [], reclaimed: 0, skippedSourceExists: 0, failed: [] };
+  } catch (err) {
+    // ENOENT means archived/ does not exist; nothing to reclaim.
+    // Any other error (EACCES, EIO, etc.) is unexpected: rethrow so the caller
+    // is not silently misled into treating every archived file as an orphan.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { orphans: [], reclaimed: 0, skippedSourceExists: 0, failed: [] };
+    }
+    throw err;
   }
 
   // Collect only regular files (skip dirs, symlinks, non-regular)
@@ -175,8 +180,15 @@ export async function reclaim(opts: ReclaimOptions): Promise<ReclaimResult> {
   let manifests: ManifestEntry[];
   try {
     manifests = await deps.discoverManifests();
-  } catch {
-    manifests = [];
+  } catch (err) {
+    // ENOENT means the manifests directory does not exist yet (no busts have run).
+    // Any other error is unexpected: rethrow to avoid silently treating all
+    // archived files as orphans on a real filesystem failure.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      manifests = [];
+    } else {
+      throw err;
+    }
   }
 
   for (const entry of manifests) {
@@ -362,6 +374,43 @@ if (import.meta.vitest) {
       const result = await reclaim({ dryRun: false, deps });
       expect(result.orphans).toHaveLength(0);
       expect(result.reclaimed).toBe(0);
+    });
+
+    it('rethrows non-ENOENT errors from readDirRecursive', async () => {
+      const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      const deps: Partial<ReclaimDeps> = {
+        homeDir: '/home/user',
+        discoverManifests: async () => [],
+        readManifest,
+        readDirRecursive: async () => {
+          throw eacces;
+        },
+        pathExists: async () => false,
+        renameFile: async () => undefined,
+        mkdirRecursive: async () => undefined,
+      };
+
+      await expect(reclaim({ dryRun: false, deps })).rejects.toThrow('EACCES');
+    });
+
+    it('rethrows non-ENOENT errors from discoverManifests', async () => {
+      const eio = Object.assign(new Error('EIO: i/o error'), { code: 'EIO' });
+      const home = '/home/user';
+      const archivedRoot = `${home}/.claude/ccaudit/archived`;
+      const archivePath = `${archivedRoot}/.claude/agents/foo.md`;
+      const deps: Partial<ReclaimDeps> = {
+        homeDir: home,
+        discoverManifests: async () => {
+          throw eio;
+        },
+        readManifest,
+        readDirRecursive: async () => [makeFile(archivePath)],
+        pathExists: async () => false,
+        renameFile: async () => undefined,
+        mkdirRecursive: async () => undefined,
+      };
+
+      await expect(reclaim({ dryRun: false, deps })).rejects.toThrow('EIO');
     });
 
     it('treats all files as orphans when manifests dir is empty', async () => {

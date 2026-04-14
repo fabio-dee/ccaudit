@@ -886,6 +886,7 @@ export const ghostCommand = define({
         // Phase 6: populate bust history result shape before returning.
         if (result.status === 'success') {
           _historyResult = {
+            status: 'success' as const,
             before_tokens: result.summary.beforeTokens,
             after_tokens: result.summary.afterTokens,
             freed_tokens: result.summary.freedTokens,

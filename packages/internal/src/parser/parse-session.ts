@@ -66,9 +66,9 @@ export async function parseSession(
       const assistantLine = assistantResult.output;
 
       // Time window filter (PARS-07)
-      if (assistantLine.timestamp) {
-        const ts = new Date(assistantLine.timestamp).getTime();
-        if (ts < cutoff) continue; // Outside --since window
+      if (sinceMs !== Infinity) {
+        const ts = Date.parse(assistantLine.timestamp);
+        if (!Number.isFinite(ts) || ts < cutoff) continue; // Outside --since window or invalid timestamp
       }
 
       // Extract invocations from content blocks (PARS-03, PARS-04, PARS-05)
@@ -83,9 +83,9 @@ export async function parseSession(
       const userLine = userResult.output;
 
       // Time window filter for user lines (use timestamp if present)
-      if (userLine.timestamp) {
-        const ts = new Date(userLine.timestamp).getTime();
-        if (ts < cutoff) continue;
+      if (sinceMs !== Infinity) {
+        const ts = userLine.timestamp ? Date.parse(userLine.timestamp) : Number.NaN;
+        if (!Number.isFinite(ts) || ts < cutoff) continue;
       }
 
       const commandRecords = extractCommandInvocations(userLine);

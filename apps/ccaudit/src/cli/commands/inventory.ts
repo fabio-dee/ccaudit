@@ -86,10 +86,18 @@ export const inventoryCommand = define({
     }
     const regimeFlag = regimeRaw as McpRegime | 'auto';
 
-    // Detect Claude Code version once (only needed when regime is 'auto')
+    // Detect Claude Code version once (only needed when regime is 'auto').
+    // Degrade gracefully on detection failure: null triggers the unknown-version path.
     let detectedCcVersion: string | null = null;
     if (regimeFlag === 'auto') {
-      detectedCcVersion = await detectClaudeCodeVersion();
+      try {
+        detectedCcVersion = await detectClaudeCodeVersion();
+      } catch (err) {
+        console.error(
+          `[ccaudit] warning: version detection failed (${(err as Error).message ?? err}); defaulting to unknown-version regime`,
+        );
+        detectedCcVersion = null;
+      }
     }
 
     // Initialize color detection from process.argv (--no-color) and env (NO_COLOR)

@@ -43,19 +43,25 @@ export interface DryRunResult {
   checkpoint_hash: string | null;
 }
 
-/** bust command result */
-export interface BustResult {
-  before_tokens: number;
-  after_tokens: number;
-  freed_tokens: number;
-  archived_agents: number;
-  archived_skills: number;
-  disabled_mcp: number;
-  flagged_memory: number;
-  manifest_ref: string | null;
-  health_before: string | null;
-  health_after: string | null;
-}
+/** bust command result -- discriminated on status */
+export type BustResult =
+  | {
+      status: 'success';
+      before_tokens: number;
+      after_tokens: number;
+      freed_tokens: number;
+      archived_agents: number;
+      archived_skills: number;
+      disabled_mcp: number;
+      flagged_memory: number;
+      manifest_ref: string | null;
+      health_before: string | null;
+      health_after: string | null;
+    }
+  | {
+      /** Non-success bust: only the status string is recorded. */
+      status: Exclude<string, 'success'>;
+    };
 
 /** restore command result */
 export interface RestoreResult {

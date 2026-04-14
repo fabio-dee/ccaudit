@@ -48,8 +48,9 @@ export async function scanSkills(
         const skillPath = path.join(skillsDir, entry.name);
         try {
           const s = await stat(skillPath);
+          const name = await resolveSkillName(skillPath);
           items.push({
-            name: entry.name,
+            name,
             path: skillPath,
             scope: 'global',
             category: 'skill',
@@ -80,8 +81,9 @@ export async function scanSkills(
         const skillPath = path.join(skillsDir, entry.name);
         try {
           const s = await stat(skillPath);
+          const name = await resolveSkillName(skillPath);
           items.push({
-            name: entry.name,
+            name,
             path: skillPath,
             scope: 'project',
             category: 'skill',
@@ -296,6 +298,48 @@ if (import.meta.vitest) {
       expect(global?.scope).toBe('global');
       expect(local?.scope).toBe('project');
       expect(local?.projectPath).toBe(projPath);
+    });
+
+    it('should use frontmatter name when it differs from folder basename (global)', async () => {
+      // Regression: scanSkills must call resolveSkillName, not use entry.name directly.
+      const skillsDir = path.join(tmpDir, 'legacy', 'skills');
+      const folderName = 'folder-basename';
+      const frontmatterName = 'declared-name-in-frontmatter';
+      const skillDir = path.join(skillsDir, folderName);
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        path.join(skillDir, 'SKILL.md'),
+        `---\nname: ${frontmatterName}\ndescription: Regression test\n---\n# Skill`,
+      );
+
+      const result = await scanSkills(
+        { legacy: path.join(tmpDir, 'legacy'), xdg: path.join(tmpDir, 'xdg') },
+        [],
+      );
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe(frontmatterName);
+      expect(result[0].path).toContain(folderName);
+    });
+
+    it('should use frontmatter name when it differs from folder basename (project-local)', async () => {
+      const projPath = path.join(tmpDir, 'my-project');
+      const skillsDir = path.join(projPath, '.claude', 'skills');
+      const folderName = 'proj-folder';
+      const frontmatterName = 'proj-declared-name';
+      const skillDir = path.join(skillsDir, folderName);
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        path.join(skillDir, 'SKILL.md'),
+        `---\nname: ${frontmatterName}\ndescription: Regression test\n---\n# Skill`,
+      );
+
+      const result = await scanSkills(
+        { legacy: path.join(tmpDir, 'legacy'), xdg: path.join(tmpDir, 'xdg') },
+        [projPath],
+      );
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe(frontmatterName);
+      expect(result[0].scope).toBe('project');
     });
   });
 }

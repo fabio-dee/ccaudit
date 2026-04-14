@@ -206,10 +206,16 @@ export async function scanAll(
   // threshold the correct semantic (only counts agents/skills toward gstack
   // detection). Memory and mcp items pass through with no `framework` key,
   // preserving byte-identical v1.2.1 JSON output for those categories.
-  const annotated = annotateFrameworks([...agentItems, ...skillItems, ...commandItems]);
+  const annotated = annotateFrameworks([...agentItems, ...skillItems]);
 
-  // Flatten all items (hooks bypass framework annotation — no framework grouping for v1.4.0)
-  const allItems: InventoryItem[] = [...annotated, ...mcpItems, ...memoryItems, ...hookItems];
+  // Flatten all items (hooks and commands bypass framework annotation -- no framework grouping for v1.4.0)
+  const allItems: InventoryItem[] = [
+    ...annotated,
+    ...commandItems,
+    ...mcpItems,
+    ...memoryItems,
+    ...hookItems,
+  ];
 
   // Classify all items against invocation ledger
   const results = await matchInventory(allItems, invocations, options?.claudeConfigPath);

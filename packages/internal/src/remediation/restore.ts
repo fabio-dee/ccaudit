@@ -123,12 +123,19 @@ export interface ManifestListEntry {
  *   config-write-error    → 1
  */
 export type RestoreResult =
-  | { status: 'success'; counts: RestoreCounts; manifestPath: string; duration_ms: number }
+  | {
+      status: 'success';
+      counts: RestoreCounts;
+      manifestPath: string;
+      manifestPaths: string[];
+      duration_ms: number;
+    }
   | {
       status: 'partial-success';
       counts: RestoreCounts;
       failed: number;
       manifestPath: string;
+      manifestPaths: string[];
       duration_ms: number;
     }
   | { status: 'no-manifests' }
@@ -561,6 +568,7 @@ async function executeOpsOnManifest(
   ops: ManifestOp[],
   deps: RestoreDeps,
   start: number,
+  allEntryPaths?: string[],
 ): Promise<RestoreResult> {
   const counts: RestoreCounts = {
     unarchived: { moved: 0, alreadyAtSource: 0, failed: 0 },
@@ -622,14 +630,16 @@ async function executeOpsOnManifest(
 
   const totalFailed = counts.unarchived.failed + counts.reenabled.failed + counts.stripped.failed;
   const duration_ms = Date.now() - start;
+  const manifestPaths = allEntryPaths ?? [entry.path];
   if (totalFailed === 0) {
-    return { status: 'success', counts, manifestPath: entry.path, duration_ms };
+    return { status: 'success', counts, manifestPath: entry.path, manifestPaths, duration_ms };
   }
   return {
     status: 'partial-success',
     counts,
     failed: totalFailed,
     manifestPath: entry.path,
+    manifestPaths,
     duration_ms,
   };
 }
@@ -751,7 +761,14 @@ export async function executeRestore(mode: RestoreMode, deps: RestoreDeps): Prom
 
     // Execute all collected ops via the existing orchestrator.
     // Pass newestEntry as the manifest reference for the result (manifestPath field).
-    return executeOpsOnManifest(newestEntry, collectedOps, deps, start);
+    // Pass allEntries paths so the result records every consumed manifest.
+    return executeOpsOnManifest(
+      newestEntry,
+      collectedOps,
+      deps,
+      start,
+      allEntries.map((e) => e.path),
+    );
   }
 
   // Single-item restore: search all manifests for the named item
