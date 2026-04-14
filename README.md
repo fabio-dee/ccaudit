@@ -80,6 +80,7 @@ A typical audit looks like this (default mode, hooks advisory, not included in t
 │ [████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 32%                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
+
 ## Show your ghost score
 
 Share your audit results in the [GitHub Discussion](https://github.com/fabio-dee/ccaudit/discussions/4)
