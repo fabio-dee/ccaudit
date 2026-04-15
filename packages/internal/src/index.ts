@@ -145,6 +145,7 @@ export type {
 // Remediation module (Phase 7)
 export {
   buildChangePlan,
+  filterChangePlan,
   calculateDryRunSavings,
   canonicalItemId,
   computeGhostHash,
@@ -172,7 +173,13 @@ export {
   atomicWriteJson,
   defaultProcessDeps,
 } from './remediation/index.ts';
-export type { BustResult, BustDeps, BustCounts, CeremonyResult } from './remediation/index.ts';
+export type {
+  BustResult,
+  BustDeps,
+  BustCounts,
+  CeremonyResult,
+  SelectionFilter,
+} from './remediation/index.ts';
 
 // Remediation module (v1.3.0 Phase 4 — framework-as-unit bust protection)
 // Surfaced here so the CLI layer (apps/ccaudit/src/cli/commands/ghost.ts)
