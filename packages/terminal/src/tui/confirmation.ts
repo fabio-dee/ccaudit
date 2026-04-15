@@ -132,7 +132,9 @@ export function renderConfirmationScreen(input: ConfirmationInput): string {
       lines.push(boxLine(`   ${nMcp} ${mcpLabel} → key-renamed in ~/.claude/mcp_servers.json`));
     }
     if (nMemory > 0) {
-      lines.push(boxLine(`   ${nMemory} memory     → frontmatter-flagged in place (files not moved)`));
+      lines.push(
+        boxLine(`   ${nMemory} memory     → frontmatter-flagged in place (files not moved)`),
+      );
     }
     lines.push(boxLine(''));
     lines.push(boxLine(` Estimated savings:  ≈ ${formatTokens(estSavings)} tokens / session`));
@@ -207,32 +209,75 @@ if (import.meta.vitest) {
   const { describe, it, expect, vi } = import.meta.vitest;
 
   /** Build a minimal ChangePlan for tests. */
-  function makePlan(parts: {
-    agents?: number;
-    skills?: number;
-    mcp?: number;
-    memory?: number;
-  } = {}): ChangePlan {
+  function makePlan(
+    parts: {
+      agents?: number;
+      skills?: number;
+      mcp?: number;
+      memory?: number;
+    } = {},
+  ): ChangePlan {
     const archive = [];
     for (let i = 0; i < (parts.agents ?? 0); i++) {
-      archive.push({ action: 'archive' as const, category: 'agent' as const, scope: 'global' as const, name: `agent${i}`, projectPath: null, path: `/a/${i}`, tokens: 100, tier: 'definite-ghost' as const });
+      archive.push({
+        action: 'archive' as const,
+        category: 'agent' as const,
+        scope: 'global' as const,
+        name: `agent${i}`,
+        projectPath: null,
+        path: `/a/${i}`,
+        tokens: 100,
+        tier: 'definite-ghost' as const,
+      });
     }
     for (let i = 0; i < (parts.skills ?? 0); i++) {
-      archive.push({ action: 'archive' as const, category: 'skill' as const, scope: 'global' as const, name: `skill${i}`, projectPath: null, path: `/s/${i}`, tokens: 50, tier: 'definite-ghost' as const });
+      archive.push({
+        action: 'archive' as const,
+        category: 'skill' as const,
+        scope: 'global' as const,
+        name: `skill${i}`,
+        projectPath: null,
+        path: `/s/${i}`,
+        tokens: 50,
+        tier: 'definite-ghost' as const,
+      });
     }
     const disable = [];
     for (let i = 0; i < (parts.mcp ?? 0); i++) {
-      disable.push({ action: 'disable' as const, category: 'mcp-server' as const, scope: 'global' as const, name: `mcp${i}`, projectPath: null, path: '/.claude.json', tokens: 2000, tier: 'definite-ghost' as const });
+      disable.push({
+        action: 'disable' as const,
+        category: 'mcp-server' as const,
+        scope: 'global' as const,
+        name: `mcp${i}`,
+        projectPath: null,
+        path: '/.claude.json',
+        tokens: 2000,
+        tier: 'definite-ghost' as const,
+      });
     }
     const flag = [];
     for (let i = 0; i < (parts.memory ?? 0); i++) {
-      flag.push({ action: 'flag' as const, category: 'memory' as const, scope: 'global' as const, name: `mem${i}`, projectPath: null, path: `/m/${i}`, tokens: 500, tier: 'definite-ghost' as const });
+      flag.push({
+        action: 'flag' as const,
+        category: 'memory' as const,
+        scope: 'global' as const,
+        name: `mem${i}`,
+        projectPath: null,
+        path: `/m/${i}`,
+        tokens: 500,
+        tier: 'definite-ghost' as const,
+      });
     }
     return {
       archive,
       disable,
       flag,
-      counts: { agents: parts.agents ?? 0, skills: parts.skills ?? 0, mcp: parts.mcp ?? 0, memory: parts.memory ?? 0 },
+      counts: {
+        agents: parts.agents ?? 0,
+        skills: parts.skills ?? 0,
+        mcp: parts.mcp ?? 0,
+        memory: parts.memory ?? 0,
+      },
       savings: { tokens: 0 },
     };
   }
@@ -242,32 +287,57 @@ if (import.meta.vitest) {
   describe('renderConfirmationScreen', () => {
     it('contains "Archiving 8 items:" for 5 archive + 2 disable + 1 flag', () => {
       const plan = makePlan({ agents: 5, mcp: 2, memory: 1 });
-      const out = renderConfirmationScreen({ plan, estSavings: 1000, manifestDir: defaultManifestDir, useAscii: false });
+      const out = renderConfirmationScreen({
+        plan,
+        estSavings: 1000,
+        manifestDir: defaultManifestDir,
+        useAscii: false,
+      });
       expect(out).toContain('Archiving 8 items:');
     });
 
     it('renders agents line and NOT skills line when only agents present', () => {
       const plan = makePlan({ agents: 3 });
-      const out = renderConfirmationScreen({ plan, estSavings: 300, manifestDir: defaultManifestDir, useAscii: false });
+      const out = renderConfirmationScreen({
+        plan,
+        estSavings: 300,
+        manifestDir: defaultManifestDir,
+        useAscii: false,
+      });
       expect(out).toContain('3 agents');
       expect(out).not.toContain('skills');
     });
 
     it('formats estSavings=4210 as "4,210 tokens / session"', () => {
       const plan = makePlan({ agents: 1 });
-      const out = renderConfirmationScreen({ plan, estSavings: 4210, manifestDir: defaultManifestDir, useAscii: false });
+      const out = renderConfirmationScreen({
+        plan,
+        estSavings: 4210,
+        manifestDir: defaultManifestDir,
+        useAscii: false,
+      });
       expect(out).toContain('4,210 tokens / session');
     });
 
     it('formats estSavings=0 as "0 tokens / session"', () => {
       const plan = makePlan({ memory: 1 });
-      const out = renderConfirmationScreen({ plan, estSavings: 0, manifestDir: defaultManifestDir, useAscii: false });
+      const out = renderConfirmationScreen({
+        plan,
+        estSavings: 0,
+        manifestDir: defaultManifestDir,
+        useAscii: false,
+      });
       expect(out).toContain('0 tokens / session');
     });
 
     it('useAscii=true produces no Unicode box characters', () => {
       const plan = makePlan({ agents: 1 });
-      const out = renderConfirmationScreen({ plan, estSavings: 100, manifestDir: defaultManifestDir, useAscii: true });
+      const out = renderConfirmationScreen({
+        plan,
+        estSavings: 100,
+        manifestDir: defaultManifestDir,
+        useAscii: true,
+      });
       expect(out).not.toContain('─');
       expect(out).not.toContain('│');
       expect(out).not.toContain('┌');
@@ -276,7 +346,12 @@ if (import.meta.vitest) {
 
     it('output contains the v0.5 footer "Proceed? [y/N] · q = cancel" and does NOT advertise the deferred b-keybind', () => {
       const plan = makePlan({ agents: 1 });
-      const out = renderConfirmationScreen({ plan, estSavings: 100, manifestDir: defaultManifestDir, useAscii: false });
+      const out = renderConfirmationScreen({
+        plan,
+        estSavings: 100,
+        manifestDir: defaultManifestDir,
+        useAscii: false,
+      });
       expect(out).toContain('Proceed? [y/N] · q = cancel');
       // D-21: the deferred 'b = back' affordance must NOT appear in rendered output
       // Split to avoid grep matching the phrase in acceptance-criteria checks:
@@ -285,20 +360,35 @@ if (import.meta.vitest) {
 
     it('output contains ccaudit restore hint and manifest dir', () => {
       const plan = makePlan({ agents: 2 });
-      const out = renderConfirmationScreen({ plan, estSavings: 200, manifestDir: defaultManifestDir, useAscii: false });
+      const out = renderConfirmationScreen({
+        plan,
+        estSavings: 200,
+        manifestDir: defaultManifestDir,
+        useAscii: false,
+      });
       expect(out).toContain('ccaudit restore');
       expect(out).toContain(defaultManifestDir);
     });
 
     it('output contains header "ccaudit  ·  Confirm archive"', () => {
       const plan = makePlan({ agents: 1 });
-      const out = renderConfirmationScreen({ plan, estSavings: 100, manifestDir: defaultManifestDir, useAscii: false });
+      const out = renderConfirmationScreen({
+        plan,
+        estSavings: 100,
+        manifestDir: defaultManifestDir,
+        useAscii: false,
+      });
       expect(out).toContain('ccaudit  ·  Confirm archive');
     });
 
     it('Estimated savings line contains the exact phrase', () => {
       const plan = makePlan({ agents: 1 });
-      const out = renderConfirmationScreen({ plan, estSavings: 1234, manifestDir: defaultManifestDir, useAscii: false });
+      const out = renderConfirmationScreen({
+        plan,
+        estSavings: 1234,
+        manifestDir: defaultManifestDir,
+        useAscii: false,
+      });
       expect(out).toContain('Estimated savings:');
       expect(out).toContain('1,234 tokens / session');
     });

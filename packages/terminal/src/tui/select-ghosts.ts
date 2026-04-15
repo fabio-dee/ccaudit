@@ -109,8 +109,7 @@ export function formatRowLabel(item: TokenCostResult, useAscii: boolean, now: nu
 
   // Warning stub (Phase 6 populates referencedConfigs; Phase 2 just passes through)
   const referencedConfigs = (item.item as { referencedConfigs?: string[] }).referencedConfigs;
-  const warn =
-    referencedConfigs && referencedConfigs.length > 1 ? (useAscii ? ' !' : ' ⚠') : '';
+  const warn = referencedConfigs && referencedConfigs.length > 1 ? (useAscii ? ' !' : ' ⚠') : '';
 
   return `${glyph}${frameworkPrefix}${name}  ${tokenStr}  ${pathDisplay}${warn}`.trim();
 }
@@ -159,9 +158,7 @@ export async function selectGhosts(input: SelectGhostsInput): Promise<SelectGhos
 
   // D-12: Sort within each category by tokens desc
   for (const cat of CATEGORY_ORDER) {
-    grouped[cat].sort(
-      (a, b) => (b.tokenEstimate?.tokens ?? 0) - (a.tokenEstimate?.tokens ?? 0),
-    );
+    grouped[cat].sort((a, b) => (b.tokenEstimate?.tokens ?? 0) - (a.tokenEstimate?.tokens ?? 0));
   }
 
   // Build @clack/prompts options object (only include non-empty categories)
@@ -252,8 +249,18 @@ if (import.meta.vitest) {
     });
 
     it('option values are canonicalItemId strings', async () => {
-      const ghost1 = makeGhost({ name: 'my-agent', category: 'agent', path: '/a/my-agent.md', tokens: 100 });
-      const ghost2 = makeGhost({ name: 'my-skill', category: 'skill', path: '/s/my-skill', tokens: 200 });
+      const ghost1 = makeGhost({
+        name: 'my-agent',
+        category: 'agent',
+        path: '/a/my-agent.md',
+        tokens: 100,
+      });
+      const ghost2 = makeGhost({
+        name: 'my-skill',
+        category: 'skill',
+        path: '/s/my-skill',
+        tokens: 200,
+      });
 
       const selected = ['agent|global||/a/my-agent.md', 'skill|global||/s/my-skill'];
       const clackFns: ClackGroupDep = {
@@ -299,7 +306,12 @@ if (import.meta.vitest) {
     it('memory item renders [~] glyph when age ≤ 60 days (recent)', async () => {
       const now = Date.now();
       const recentMtime = now - 30 * 86_400_000; // 30 days ago
-      const ghost = makeGhost({ name: 'CLAUDE.md', category: 'memory', mtimeMs: recentMtime, tokens: 50 });
+      const ghost = makeGhost({
+        name: 'CLAUDE.md',
+        category: 'memory',
+        mtimeMs: recentMtime,
+        tokens: 50,
+      });
 
       let capturedOptions: Record<string, Array<{ value: string; label: string }>> = {};
       const clack: ClackGroupDep = {
@@ -319,7 +331,12 @@ if (import.meta.vitest) {
     it('memory item renders [≈] glyph when age > 60 days (stale)', async () => {
       const now = Date.now();
       const staleMtime = now - 90 * 86_400_000; // 90 days ago
-      const ghost = makeGhost({ name: 'old.md', category: 'memory', mtimeMs: staleMtime, tokens: 50 });
+      const ghost = makeGhost({
+        name: 'old.md',
+        category: 'memory',
+        mtimeMs: staleMtime,
+        tokens: 50,
+      });
 
       let capturedOptions: Record<string, Array<{ value: string; label: string }>> = {};
       const clack: ClackGroupDep = {
@@ -340,8 +357,18 @@ if (import.meta.vitest) {
       const now = Date.now();
       const recentMtime = now - 30 * 86_400_000;
       const staleMtime = now - 90 * 86_400_000;
-      const recent = makeGhost({ name: 'recent.md', category: 'memory', mtimeMs: recentMtime, tokens: 100 });
-      const stale = makeGhost({ name: 'stale.md', category: 'memory', mtimeMs: staleMtime, tokens: 50 });
+      const recent = makeGhost({
+        name: 'recent.md',
+        category: 'memory',
+        mtimeMs: recentMtime,
+        tokens: 100,
+      });
+      const stale = makeGhost({
+        name: 'stale.md',
+        category: 'memory',
+        mtimeMs: staleMtime,
+        tokens: 50,
+      });
 
       let capturedOptions: Record<string, Array<{ value: string; label: string }>> = {};
       const clack: ClackGroupDep = {

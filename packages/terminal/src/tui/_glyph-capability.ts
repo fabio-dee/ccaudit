@@ -69,10 +69,7 @@ if (import.meta.vitest) {
   const { describe, it, expect } = import.meta.vitest;
 
   /** Minimal fake stdout for tests — satisfies StdoutCapability. */
-  function makeStdout(opts: {
-    hasColors?: () => boolean;
-    columns?: number;
-  }): StdoutCapability {
+  function makeStdout(opts: { hasColors?: () => boolean; columns?: number }): StdoutCapability {
     return {
       hasColors: opts.hasColors,
       columns: opts.columns ?? 80,

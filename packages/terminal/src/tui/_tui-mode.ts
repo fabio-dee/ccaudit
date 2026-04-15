@@ -120,9 +120,7 @@ export function checkTuiGuards(input: GuardInputs): TuiGuardMode {
  * Convenience wrapper: returns true iff the auto-open check would pass (kind === 'ok').
  * Equivalent to `checkTuiGuards({ ...input, isExplicitInteractive: false }).kind === 'ok'`.
  */
-export function isTuiAvailable(
-  input: Pick<GuardInputs, 'mode' | 'isTty' | 'ttyCols'>,
-): boolean {
+export function isTuiAvailable(input: Pick<GuardInputs, 'mode' | 'isTty' | 'ttyCols'>): boolean {
   return checkTuiGuards({ ...input, isExplicitInteractive: false }).kind === 'ok';
 }
 
@@ -151,7 +149,17 @@ if (import.meta.vitest) {
     // Rule 1: --json + --interactive → hard-error
     it('rule 1: json + explicit-interactive → hard-error', () => {
       const result = checkTuiGuards(
-        makeInput({ mode: { json: true, csv: false, quiet: false, ci: false, dryRun: false, dangerouslyBustGhosts: false }, isExplicitInteractive: true }),
+        makeInput({
+          mode: {
+            json: true,
+            csv: false,
+            quiet: false,
+            ci: false,
+            dryRun: false,
+            dangerouslyBustGhosts: false,
+          },
+          isExplicitInteractive: true,
+        }),
       );
       expect(result.kind).toBe('hard-error');
       expect((result as { kind: 'hard-error'; message: string; exitCode: 2 }).message).toBe(
@@ -163,28 +171,68 @@ if (import.meta.vitest) {
     // Rule 2: auto-open + json → suppress
     it('rule 2a: auto-open + json → suppress-auto-open', () => {
       const result = checkTuiGuards(
-        makeInput({ mode: { json: true, csv: false, quiet: false, ci: false, dryRun: false, dangerouslyBustGhosts: false }, isExplicitInteractive: false }),
+        makeInput({
+          mode: {
+            json: true,
+            csv: false,
+            quiet: false,
+            ci: false,
+            dryRun: false,
+            dangerouslyBustGhosts: false,
+          },
+          isExplicitInteractive: false,
+        }),
       );
       expect(result.kind).toBe('suppress-auto-open');
     });
 
     it('rule 2b: auto-open + csv → suppress-auto-open', () => {
       const result = checkTuiGuards(
-        makeInput({ mode: { json: false, csv: true, quiet: false, ci: false, dryRun: false, dangerouslyBustGhosts: false }, isExplicitInteractive: false }),
+        makeInput({
+          mode: {
+            json: false,
+            csv: true,
+            quiet: false,
+            ci: false,
+            dryRun: false,
+            dangerouslyBustGhosts: false,
+          },
+          isExplicitInteractive: false,
+        }),
       );
       expect(result.kind).toBe('suppress-auto-open');
     });
 
     it('rule 2c: auto-open + quiet → suppress-auto-open', () => {
       const result = checkTuiGuards(
-        makeInput({ mode: { json: false, csv: false, quiet: true, ci: false, dryRun: false, dangerouslyBustGhosts: false }, isExplicitInteractive: false }),
+        makeInput({
+          mode: {
+            json: false,
+            csv: false,
+            quiet: true,
+            ci: false,
+            dryRun: false,
+            dangerouslyBustGhosts: false,
+          },
+          isExplicitInteractive: false,
+        }),
       );
       expect(result.kind).toBe('suppress-auto-open');
     });
 
     it('rule 2d: auto-open + ci → suppress-auto-open', () => {
       const result = checkTuiGuards(
-        makeInput({ mode: { json: false, csv: false, quiet: false, ci: true, dryRun: false, dangerouslyBustGhosts: false }, isExplicitInteractive: false }),
+        makeInput({
+          mode: {
+            json: false,
+            csv: false,
+            quiet: false,
+            ci: true,
+            dryRun: false,
+            dangerouslyBustGhosts: false,
+          },
+          isExplicitInteractive: false,
+        }),
       );
       expect(result.kind).toBe('suppress-auto-open');
     });
@@ -192,7 +240,17 @@ if (import.meta.vitest) {
     // Rule 3: auto-open + dryRun → suppress (D-23 new)
     it('rule 3: auto-open + dryRun=true → suppress-auto-open', () => {
       const result = checkTuiGuards(
-        makeInput({ mode: { json: false, csv: false, quiet: false, ci: false, dryRun: true, dangerouslyBustGhosts: false }, isExplicitInteractive: false }),
+        makeInput({
+          mode: {
+            json: false,
+            csv: false,
+            quiet: false,
+            ci: false,
+            dryRun: true,
+            dangerouslyBustGhosts: false,
+          },
+          isExplicitInteractive: false,
+        }),
       );
       expect(result.kind).toBe('suppress-auto-open');
     });
@@ -200,7 +258,17 @@ if (import.meta.vitest) {
     // dryRun with explicit-interactive does NOT by itself suppress (falls through to ok)
     it('rule 3 inverse: explicit-interactive + dryRun does NOT suppress by itself', () => {
       const result = checkTuiGuards(
-        makeInput({ mode: { json: false, csv: false, quiet: false, ci: false, dryRun: true, dangerouslyBustGhosts: false }, isExplicitInteractive: true }),
+        makeInput({
+          mode: {
+            json: false,
+            csv: false,
+            quiet: false,
+            ci: false,
+            dryRun: true,
+            dangerouslyBustGhosts: false,
+          },
+          isExplicitInteractive: true,
+        }),
       );
       // No TTY rule applies (isTty=true), no narrow rule (cols=120) → ok
       expect(result.kind).toBe('ok');
@@ -209,7 +277,17 @@ if (import.meta.vitest) {
     // Rule 4: auto-open + dangerouslyBustGhosts → suppress (D-23 new)
     it('rule 4: auto-open + dangerouslyBustGhosts=true → suppress-auto-open', () => {
       const result = checkTuiGuards(
-        makeInput({ mode: { json: false, csv: false, quiet: false, ci: false, dryRun: false, dangerouslyBustGhosts: true }, isExplicitInteractive: false }),
+        makeInput({
+          mode: {
+            json: false,
+            csv: false,
+            quiet: false,
+            ci: false,
+            dryRun: false,
+            dangerouslyBustGhosts: true,
+          },
+          isExplicitInteractive: false,
+        }),
       );
       expect(result.kind).toBe('suppress-auto-open');
     });
@@ -217,7 +295,17 @@ if (import.meta.vitest) {
     // dangerouslyBustGhosts with explicit-interactive does NOT by itself suppress
     it('rule 4 inverse: explicit-interactive + dangerouslyBustGhosts does NOT suppress by itself', () => {
       const result = checkTuiGuards(
-        makeInput({ mode: { json: false, csv: false, quiet: false, ci: false, dryRun: false, dangerouslyBustGhosts: true }, isExplicitInteractive: true }),
+        makeInput({
+          mode: {
+            json: false,
+            csv: false,
+            quiet: false,
+            ci: false,
+            dryRun: false,
+            dangerouslyBustGhosts: true,
+          },
+          isExplicitInteractive: true,
+        }),
       );
       expect(result.kind).toBe('ok');
     });
@@ -262,7 +350,14 @@ if (import.meta.vitest) {
   describe('isTuiAvailable', () => {
     it('returns true when auto-open check passes (no flags, TTY, wide)', () => {
       const input = {
-        mode: { json: false, csv: false, quiet: false, ci: false, dryRun: false, dangerouslyBustGhosts: false },
+        mode: {
+          json: false,
+          csv: false,
+          quiet: false,
+          ci: false,
+          dryRun: false,
+          dangerouslyBustGhosts: false,
+        },
         isTty: true,
         ttyCols: 120,
       };
@@ -271,7 +366,14 @@ if (import.meta.vitest) {
 
     it('returns false when json flag set (auto-open would be suppressed)', () => {
       const input = {
-        mode: { json: true, csv: false, quiet: false, ci: false, dryRun: false, dangerouslyBustGhosts: false },
+        mode: {
+          json: true,
+          csv: false,
+          quiet: false,
+          ci: false,
+          dryRun: false,
+          dangerouslyBustGhosts: false,
+        },
         isTty: true,
         ttyCols: 120,
       };
@@ -280,7 +382,14 @@ if (import.meta.vitest) {
 
     it('returns false when not a TTY', () => {
       const input = {
-        mode: { json: false, csv: false, quiet: false, ci: false, dryRun: false, dangerouslyBustGhosts: false },
+        mode: {
+          json: false,
+          csv: false,
+          quiet: false,
+          ci: false,
+          dryRun: false,
+          dangerouslyBustGhosts: false,
+        },
         isTty: false,
         ttyCols: 120,
       };
