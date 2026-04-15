@@ -31,7 +31,12 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import type { TokenCostResult } from '../token/types.ts';
 import { type ReadCheckpointResult } from './checkpoint.ts';
-import { buildChangePlan, filterChangePlan, type ChangePlan, type ChangePlanItem } from './change-plan.ts';
+import {
+  buildChangePlan,
+  filterChangePlan,
+  type ChangePlan,
+  type ChangePlanItem,
+} from './change-plan.ts';
 import { calculateDryRunSavings } from './savings.ts';
 import { buildArchivePath, buildDisabledMcpKey } from './collisions.ts';
 import {
@@ -1811,28 +1816,68 @@ if (import.meta.vitest) {
 
       const enriched: TokenCostResult[] = [
         {
-          item: { name: 'agent1', path: path.join(claudeRoot, 'agents', 'agent1.md'), scope: 'global', category: 'agent', projectPath: null },
-          tier: 'definite-ghost', lastUsed: null, invocationCount: 0,
+          item: {
+            name: 'agent1',
+            path: path.join(claudeRoot, 'agents', 'agent1.md'),
+            scope: 'global',
+            category: 'agent',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
           tokenEstimate: { tokens: 100, confidence: 'estimated', source: 'test' },
         },
         {
-          item: { name: 'agent2', path: path.join(claudeRoot, 'agents', 'agent2.md'), scope: 'global', category: 'agent', projectPath: null },
-          tier: 'definite-ghost', lastUsed: null, invocationCount: 0,
+          item: {
+            name: 'agent2',
+            path: path.join(claudeRoot, 'agents', 'agent2.md'),
+            scope: 'global',
+            category: 'agent',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
           tokenEstimate: { tokens: 200, confidence: 'estimated', source: 'test' },
         },
         {
-          item: { name: 'skill1', path: path.join(claudeRoot, 'skills', 'skill1.md'), scope: 'global', category: 'skill', projectPath: null },
-          tier: 'definite-ghost', lastUsed: null, invocationCount: 0,
+          item: {
+            name: 'skill1',
+            path: path.join(claudeRoot, 'skills', 'skill1.md'),
+            scope: 'global',
+            category: 'skill',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
           tokenEstimate: { tokens: 300, confidence: 'estimated', source: 'test' },
         },
         {
-          item: { name: 'mcp1', path: configPath, scope: 'global', category: 'mcp-server', projectPath: null },
-          tier: 'definite-ghost', lastUsed: null, invocationCount: 0,
+          item: {
+            name: 'mcp1',
+            path: configPath,
+            scope: 'global',
+            category: 'mcp-server',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
           tokenEstimate: { tokens: 400, confidence: 'estimated', source: 'test' },
         },
         {
-          item: { name: 'CLAUDE.md', path: path.join(claudeRoot, 'CLAUDE.md'), scope: 'global', category: 'memory', projectPath: null },
-          tier: 'definite-ghost', lastUsed: null, invocationCount: 0,
+          item: {
+            name: 'CLAUDE.md',
+            path: path.join(claudeRoot, 'CLAUDE.md'),
+            scope: 'global',
+            category: 'memory',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
           tokenEstimate: { tokens: 50, confidence: 'estimated', source: 'test' },
         },
       ];
@@ -1848,11 +1893,14 @@ if (import.meta.vitest) {
         readCheckpoint: async () => ({
           status: 'ok',
           checkpoint: {
-            checkpoint_version: 1, ccaudit_version: '0.0.1',
-            timestamp: '2026-04-05T18:30:00.000Z', since_window: '7d',
+            checkpoint_version: 1,
+            ccaudit_version: '0.0.1',
+            timestamp: '2026-04-05T18:30:00.000Z',
+            since_window: '7d',
             ghost_hash: 'sha256:test',
             item_count: { agents: 2, skills: 1, mcp: 1, memory: 1 },
-            savings: { tokens: 1000 }, total_overhead: 5000,
+            savings: { tokens: 1000 },
+            total_overhead: 5000,
           },
         }),
       });
@@ -1871,20 +1919,20 @@ if (import.meta.vitest) {
       const { enriched } = await makeFixture5(claudeRoot);
       const agent1 = enriched[0]!.item;
       const agent2 = enriched[1]!.item;
-      const selectedItems = new Set([
-        canonicalItemId(agent1),
-        canonicalItemId(agent2),
-      ]);
+      const selectedItems = new Set([canonicalItemId(agent1), canonicalItemId(agent2)]);
       const deps = makeDeps(tmp, {
         scanAndEnrich: async () => enriched,
         readCheckpoint: async () => ({
           status: 'ok',
           checkpoint: {
-            checkpoint_version: 1, ccaudit_version: '0.0.1',
-            timestamp: '2026-04-05T18:30:00.000Z', since_window: '7d',
+            checkpoint_version: 1,
+            ccaudit_version: '0.0.1',
+            timestamp: '2026-04-05T18:30:00.000Z',
+            since_window: '7d',
             ghost_hash: 'sha256:test',
             item_count: { agents: 2, skills: 1, mcp: 1, memory: 1 },
-            savings: { tokens: 1000 }, total_overhead: 5000,
+            savings: { tokens: 1000 },
+            total_overhead: 5000,
           },
         }),
       });
@@ -1910,11 +1958,14 @@ if (import.meta.vitest) {
         readCheckpoint: async () => ({
           status: 'ok',
           checkpoint: {
-            checkpoint_version: 1, ccaudit_version: '0.0.1',
-            timestamp: '2026-04-05T18:30:00.000Z', since_window: '7d',
+            checkpoint_version: 1,
+            ccaudit_version: '0.0.1',
+            timestamp: '2026-04-05T18:30:00.000Z',
+            since_window: '7d',
             ghost_hash: 'sha256:test',
             item_count: { agents: 2, skills: 1, mcp: 1, memory: 1 },
-            savings: { tokens: 1000 }, total_overhead: 5000,
+            savings: { tokens: 1000 },
+            total_overhead: 5000,
           },
         }),
       });
@@ -1941,7 +1992,11 @@ if (import.meta.vitest) {
       try {
         const someId = 'agent|global||/some/path/agent.md';
         const depsSub = makeDeps(tmp2);
-        const resultSub = await runBust({ yes: true, deps: depsSub, selectedItems: new Set([someId]) });
+        const resultSub = await runBust({
+          yes: true,
+          deps: depsSub,
+          selectedItems: new Set([someId]),
+        });
         expect(resultSub.status).toBe('success');
         const manifestSub = await readManifest(depsSub.manifestPath());
         const sf = manifestSub.header!.selection_filter;
@@ -1962,17 +2017,22 @@ if (import.meta.vitest) {
         readCheckpoint: async () => ({
           status: 'ok',
           checkpoint: {
-            checkpoint_version: 1, ccaudit_version: '0.0.1',
-            timestamp: '2026-04-05T18:30:00.000Z', since_window: '7d',
+            checkpoint_version: 1,
+            ccaudit_version: '0.0.1',
+            timestamp: '2026-04-05T18:30:00.000Z',
+            since_window: '7d',
             ghost_hash: 'sha256:test',
             item_count: { agents: 2, skills: 1, mcp: 1, memory: 1 },
-            savings: { tokens: 1000 }, total_overhead: 5000,
+            savings: { tokens: 1000 },
+            total_overhead: 5000,
           },
         }),
       });
       const warnSpy: string[] = [];
       const origWarn = console.warn;
-      console.warn = (...args: unknown[]) => { warnSpy.push(String(args[0])); };
+      console.warn = (...args: unknown[]) => {
+        warnSpy.push(String(args[0]));
+      };
       try {
         const result = await runBust({ yes: true, deps, selectedItems: new Set() });
         expect(result.status).toBe('success');
@@ -2000,11 +2060,14 @@ if (import.meta.vitest) {
         readCheckpoint: async () => ({
           status: 'ok',
           checkpoint: {
-            checkpoint_version: 1, ccaudit_version: '0.0.1',
-            timestamp: '2026-04-05T18:30:00.000Z', since_window: '7d',
+            checkpoint_version: 1,
+            ccaudit_version: '0.0.1',
+            timestamp: '2026-04-05T18:30:00.000Z',
+            since_window: '7d',
             ghost_hash: 'sha256:test',
             item_count: { agents: 2, skills: 1, mcp: 1, memory: 1 },
-            savings: { tokens: 1000 }, total_overhead: 5000,
+            savings: { tokens: 1000 },
+            total_overhead: 5000,
           },
         }),
       });

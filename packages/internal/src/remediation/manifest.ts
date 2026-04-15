@@ -40,9 +40,7 @@ export const MANIFEST_VERSION = 1 as const;
  *   canonicalItemId values of the selected items, sorted ascending so
  *   manifests diff deterministically.
  */
-export type SelectionFilter =
-  | { mode: 'full' }
-  | { mode: 'subset'; ids: string[] };
+export type SelectionFilter = { mode: 'full' } | { mode: 'subset'; ids: string[] };
 
 export interface ManifestHeader {
   record_type: 'header';

@@ -143,7 +143,8 @@ export function filterChangePlan(
     };
   }
 
-  const keep = (i: ChangePlanItem): boolean => selectedItems.has(canonicalItemId(toInventoryItemLike(i)));
+  const keep = (i: ChangePlanItem): boolean =>
+    selectedItems.has(canonicalItemId(toInventoryItemLike(i)));
 
   const archive = plan.archive.filter(keep);
   const disable = plan.disable.filter(keep);
