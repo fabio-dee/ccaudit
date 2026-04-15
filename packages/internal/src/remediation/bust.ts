@@ -30,7 +30,7 @@ import { rename } from 'node:fs/promises';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
 import type { TokenCostResult } from '../token/types.ts';
-import { type ReadCheckpointResult } from './checkpoint.ts';
+import { canonicalItemId, type ReadCheckpointResult } from './checkpoint.ts';
 import {
   buildChangePlan,
   filterChangePlan,
@@ -318,10 +318,20 @@ export async function runBust(opts: {
     flag: filteredPlan.flag.length,
   };
 
-  const selectionFilter: SelectionFilter =
-    selectedItems === undefined
-      ? { mode: 'full' }
-      : { mode: 'subset', ids: Array.from(selectedItems) }; // buildHeader sorts ids
+  let selectionFilter: SelectionFilter;
+  if (selectedItems === undefined) {
+    selectionFilter = { mode: 'full' };
+  } else {
+    // Record only the IDs that actually survived the filter and will be actioned.
+    // This excludes IDs that were requested but matched nothing in the change plan
+    // (e.g. typos, already-archived items, framework-protected items).
+    const actionedIds = [
+      ...filteredPlan.archive,
+      ...filteredPlan.disable,
+      ...filteredPlan.flag,
+    ].map((i) => canonicalItemId({ name: i.name, path: i.path, scope: i.scope, category: i.category, projectPath: i.projectPath }));
+    selectionFilter = { mode: 'subset', ids: actionedIds }; // buildHeader sorts
+  }
 
   const header = buildHeader({
     ccaudit_version: deps.ccauditVersion,
@@ -482,13 +492,35 @@ export async function runBust(opts: {
   const afterTokens = Math.max(0, beforeTokens - freedTokens);
   const pctWindow = Math.round((freedTokens / 200_000) * 100);
 
-  // health after: remove definite-ghost agents/skills and all non-used MCPs
-  const remainingEnriched = enriched.filter((r) => {
-    if ((r.item.category === 'agent' || r.item.category === 'skill') && r.tier === 'definite-ghost')
-      return false;
-    if (r.item.category === 'mcp-server' && r.tier !== 'used') return false;
-    return true;
-  });
+  // health after: remove only the items that were actually actioned.
+  // Full bust (v1.4.0 behavior): remove all definite-ghost agents/skills and all non-used MCPs.
+  // Subset bust: remove only the items present in filteredPlan so the score reflects
+  // the true post-bust state rather than overstating health improvement.
+  const remainingEnriched =
+    selectedItems === undefined
+      ? // Full bust: original broad filter (v1.4.0 behavior unchanged)
+        enriched.filter((r) => {
+          if (
+            (r.item.category === 'agent' || r.item.category === 'skill') &&
+            r.tier === 'definite-ghost'
+          )
+            return false;
+          if (r.item.category === 'mcp-server' && r.tier !== 'used') return false;
+          return true;
+        })
+      : // Subset bust: only remove items that were actually in filteredPlan
+        (() => {
+          const actionedPaths = new Set([
+            ...filteredPlan.archive.map((i) => i.path),
+            ...filteredPlan.flag.map((i) => i.path),
+            ...filteredPlan.disable.map((i) => `${i.name}::${i.path}`),
+          ]);
+          return enriched.filter((r) =>
+            r.item.category === 'mcp-server'
+              ? !actionedPaths.has(`${r.item.name}::${r.item.path}`)
+              : !actionedPaths.has(r.item.path),
+          );
+        })();
   const healthScoreAfter = calculateHealthScore(remainingEnriched);
   const healthAfter = healthScoreAfter.score;
   const gradeAfter = healthScoreAfter.grade;
