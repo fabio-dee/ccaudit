@@ -21,7 +21,7 @@
  */
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile, rm, utimes, chmod } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, chmod } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -273,15 +273,9 @@ describe.skipIf(process.platform === 'win32')(
       expect(
         existsSync(path.join(tmpHome, '.claude', 'ccaudit', 'archived', 'agents', 'alpha.md')),
       ).toBe(true);
-      expect(
-        existsSync(path.join(tmpHome, '.claude', 'agents', 'alpha.md')),
-      ).toBe(false);
-      expect(
-        existsSync(path.join(tmpHome, '.claude', 'agents', 'beta.md')),
-      ).toBe(true);
-      expect(
-        existsSync(path.join(tmpHome, '.claude', 'agents', 'gamma.md')),
-      ).toBe(true);
+      expect(existsSync(path.join(tmpHome, '.claude', 'agents', 'alpha.md'))).toBe(false);
+      expect(existsSync(path.join(tmpHome, '.claude', 'agents', 'beta.md'))).toBe(true);
+      expect(existsSync(path.join(tmpHome, '.claude', 'agents', 'gamma.md'))).toBe(true);
     });
 
     // ── Test B: INV-S5 — freedTokens subset-accurate; totalPlannedTokens full ──
@@ -399,9 +393,7 @@ describe.skipIf(process.platform === 'win32')('CCAUDIT_SELECT_IDS — edge cases
     const bustParsed = JSON.parse(bust.stdout) as {
       bust: { summary: { freedTokens: number; totalPlannedTokens: number } };
     };
-    expect(bustParsed.bust.summary.freedTokens).toBe(
-      bustParsed.bust.summary.totalPlannedTokens,
-    );
+    expect(bustParsed.bust.summary.freedTokens).toBe(bustParsed.bust.summary.totalPlannedTokens);
   });
 
   // ── Test D: empty string env is a no-op subset with a warning ──
