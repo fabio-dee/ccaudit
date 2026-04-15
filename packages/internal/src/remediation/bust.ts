@@ -31,7 +31,8 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import type { TokenCostResult } from '../token/types.ts';
 import { type ReadCheckpointResult } from './checkpoint.ts';
-import { buildChangePlan, type ChangePlan, type ChangePlanItem } from './change-plan.ts';
+import { buildChangePlan, filterChangePlan, type ChangePlan, type ChangePlanItem } from './change-plan.ts';
+import { calculateDryRunSavings } from './savings.ts';
 import { buildArchivePath, buildDisabledMcpKey } from './collisions.ts';
 import {
   detectClaudeProcesses,
@@ -51,6 +52,7 @@ import {
   buildRefreshOp,
   buildSkippedOp,
   type ManifestOp,
+  type SelectionFilter,
 } from './manifest.ts';
 
 // -- Result types -------------------------------------------------
@@ -81,6 +83,9 @@ export type BustResult =
       summary: {
         beforeTokens: number;
         freedTokens: number;
+        /** Full-plan token figure preserved for consumers when a subset bust filtered the plan.
+         *  Equals `freedTokens` on full-inventory bust. */
+        totalPlannedTokens: number;
         afterTokens: number;
         pctWindow: number;
         healthBefore: number;
@@ -197,8 +202,20 @@ export interface BustDeps {
  *                   real implementations via a buildProductionDeps() helper
  *                   (defined at the CLI command layer, not here).
  */
-export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<BustResult> {
-  const { yes, deps } = opts;
+export async function runBust(opts: {
+  yes: boolean;
+  deps: BustDeps;
+  /**
+   * Optional subset filter. `undefined` = full-inventory bust (v1.4.0 contract).
+   * `Set<string>` of canonicalItemId values = subset bust: items whose id is not
+   * in the set are excluded from the change plan AFTER hash verification.
+   * `new Set()` (empty) = explicit "select nothing" no-op; manifest is written
+   * with zero planned_ops and a warning is emitted. This is distinct from
+   * `undefined` so Phase 2's TUI can deliver an empty selection cleanly.
+   */
+  selectedItems?: Set<string>;
+}): Promise<BustResult> {
+  const { yes, deps, selectedItems } = opts;
   const start = Date.now();
 
   // ── Gate 1: checkpoint exists (D-01) ─────────────────────────────
@@ -258,13 +275,30 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
 
   const plan = buildChangePlan(enriched);
 
+  // Preserve the full-plan figure for totalPlannedTokens (INV-S5).
+  const fullPlanTokens = checkpoint.savings.tokens;
+
+  // Approach A (D-03): filter AFTER hash verification, BEFORE manifest is serialized.
+  // selectedItems === undefined → full bust (v1.4.0 behavior unchanged).
+  // selectedItems is a Set → subset bust; items not in set are excluded.
+  let filteredPlan = plan;
+  if (selectedItems !== undefined) {
+    filteredPlan = filterChangePlan(plan, selectedItems);
+    if (selectedItems.size === 0) {
+      console.warn(
+        '[ccaudit] selectedItems is an empty set — no items will be archived. ' +
+          'If you meant a full-inventory bust, omit selectedItems.',
+      );
+    }
+  }
+
   const healthScoreBefore = calculateHealthScore(enriched);
   const healthBefore = healthScoreBefore.score;
   const gradeBefore = healthScoreBefore.grade;
   const beforeTokens = checkpoint.total_overhead ?? 0;
 
   // ── Confirmation ceremony (D-15, D-16) ───────────────────────────
-  const ceremony = await deps.runCeremony({ plan, yes });
+  const ceremony = await deps.runCeremony({ plan: filteredPlan, yes });
   if (ceremony.status === 'aborted') {
     return { status: 'user-aborted', stage: ceremony.stage };
   }
@@ -274,10 +308,15 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
   const writer = deps.createManifestWriter(manifestPath);
 
   const plannedOps = {
-    archive: plan.archive.length,
-    disable: plan.disable.length,
-    flag: plan.flag.length,
+    archive: filteredPlan.archive.length,
+    disable: filteredPlan.disable.length,
+    flag: filteredPlan.flag.length,
   };
+
+  const selectionFilter: SelectionFilter =
+    selectedItems === undefined
+      ? { mode: 'full' }
+      : { mode: 'subset', ids: Array.from(selectedItems) }; // buildHeader sorts ids
 
   const header = buildHeader({
     ccaudit_version: deps.ccauditVersion,
@@ -287,6 +326,7 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
     os: deps.os,
     node_version: deps.nodeVersion,
     planned_ops: plannedOps,
+    selection_filter: selectionFilter,
   });
 
   try {
@@ -305,8 +345,8 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
   // Filesystem-only ops first per D-13 rationale: if a later step fails, the
   // archived files still have manifest entries Phase 9 can reverse. D-14 says
   // these are continue-on-error.
-  const agentItems = plan.archive.filter((i) => i.category === 'agent');
-  const skillItems = plan.archive.filter((i) => i.category === 'skill');
+  const agentItems = filteredPlan.archive.filter((i) => i.category === 'agent');
+  const skillItems = filteredPlan.archive.filter((i) => i.category === 'skill');
 
   for (const item of agentItems) {
     const op = await archiveOne(item, 'agent', deps, counts);
@@ -322,8 +362,8 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
   // read, mutated in memory, and atomically written back. A parse or write
   // error aborts the whole Disable MCP step WITHOUT committing any ops to
   // the manifest (the atomicWriteJson rename is the transaction boundary).
-  if (plan.disable.length > 0) {
-    const disableResult = await disableMcpTransactional(plan.disable, deps, counts);
+  if (filteredPlan.disable.length > 0) {
+    const disableResult = await disableMcpTransactional(filteredPlan.disable, deps, counts);
     if (disableResult.status === 'parse-error') {
       await writer.close(null); // footer omitted -> Phase 9 partial-bust marker
       return {
@@ -347,7 +387,7 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
   }
 
   // ── Step 3: Flag memory (D-13, continue-on-error per D-14) ───────
-  for (const item of plan.flag) {
+  for (const item of filteredPlan.flag) {
     const nowIso = deps.now().toISOString();
     try {
       // Read content BEFORE patching so the manifest's sha256 reflects the
@@ -426,7 +466,14 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
     return { status: 'partial-success', manifestPath, counts, failed: totalFailed, duration_ms };
   }
 
-  const freedTokens = checkpoint.savings.tokens;
+  // INV-S5: freedTokens is subset-accurate; totalPlannedTokens preserves full figure.
+  // For full bust (selectedItems === undefined): freedTokens === fullPlanTokens (v1.4.0 behavior).
+  // For subset bust: freedTokens = sum of archive+disable tokens of selected items only.
+  const freedTokens =
+    selectedItems === undefined
+      ? fullPlanTokens // v1.4.0 behavior: checkpoint figure
+      : calculateDryRunSavings(filteredPlan); // subset figure
+  const totalPlannedTokens = fullPlanTokens;
   const afterTokens = Math.max(0, beforeTokens - freedTokens);
   const pctWindow = Math.round((freedTokens / 200_000) * 100);
 
@@ -449,6 +496,7 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
     summary: {
       beforeTokens,
       freedTokens,
+      totalPlannedTokens,
       afterTokens,
       pctWindow,
       healthBefore,
@@ -860,6 +908,8 @@ if (import.meta.vitest) {
   const { mkdtemp, writeFile: wf, rm, readFile: rf, mkdir: mk } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const { readManifest } = await import('./manifest.ts');
+  const { canonicalItemId } = await import('./checkpoint.ts');
+  const { existsSync } = await import('node:fs');
   type ArchiveOp = import('./manifest.ts').ArchiveOp;
   type DisableOp = import('./manifest.ts').DisableOp;
 
@@ -1732,6 +1782,259 @@ if (import.meta.vitest) {
         expect(result.counts.archive.skills).toBe(1);
         expect(result.counts.archive.failed).toBe(0);
       }
+    });
+  });
+
+  // ── INV-S4 + INV-S5: selectedItems filter (Plan 01-02) ────────────
+  describe('runBust — selectedItems subset filter (INV-S4 + INV-S5)', () => {
+    let tmp: string;
+
+    beforeEach(async () => {
+      tmp = await mkdtemp(path.join(tmpdir(), 'bust-subset-'));
+    });
+    afterEach(async () => {
+      await rm(tmp, { recursive: true, force: true });
+    });
+
+    // Build a 5-item fixture: 2 agents, 1 skill, 1 mcp-server, 1 memory.
+    // Tokens: agent1=100, agent2=200, skill1=300, mcp1=400, mem1=50.
+    // Only archive/disable contribute to freedTokens (not flag/memory).
+    async function makeFixture5(claudeRoot: string) {
+      await mk(path.join(claudeRoot, 'agents'), { recursive: true });
+      await mk(path.join(claudeRoot, 'skills'), { recursive: true });
+      await wf(path.join(claudeRoot, 'agents', 'agent1.md'), '# agent1', 'utf8');
+      await wf(path.join(claudeRoot, 'agents', 'agent2.md'), '# agent2', 'utf8');
+      await wf(path.join(claudeRoot, 'skills', 'skill1.md'), '# skill1', 'utf8');
+      await wf(path.join(claudeRoot, 'CLAUDE.md'), '# memory', 'utf8');
+      const configPath = path.join(tmp, '.claude.json');
+      await wf(configPath, JSON.stringify({ mcpServers: { mcp1: { command: 'x' } } }), 'utf8');
+
+      const enriched: TokenCostResult[] = [
+        {
+          item: { name: 'agent1', path: path.join(claudeRoot, 'agents', 'agent1.md'), scope: 'global', category: 'agent', projectPath: null },
+          tier: 'definite-ghost', lastUsed: null, invocationCount: 0,
+          tokenEstimate: { tokens: 100, confidence: 'estimated', source: 'test' },
+        },
+        {
+          item: { name: 'agent2', path: path.join(claudeRoot, 'agents', 'agent2.md'), scope: 'global', category: 'agent', projectPath: null },
+          tier: 'definite-ghost', lastUsed: null, invocationCount: 0,
+          tokenEstimate: { tokens: 200, confidence: 'estimated', source: 'test' },
+        },
+        {
+          item: { name: 'skill1', path: path.join(claudeRoot, 'skills', 'skill1.md'), scope: 'global', category: 'skill', projectPath: null },
+          tier: 'definite-ghost', lastUsed: null, invocationCount: 0,
+          tokenEstimate: { tokens: 300, confidence: 'estimated', source: 'test' },
+        },
+        {
+          item: { name: 'mcp1', path: configPath, scope: 'global', category: 'mcp-server', projectPath: null },
+          tier: 'definite-ghost', lastUsed: null, invocationCount: 0,
+          tokenEstimate: { tokens: 400, confidence: 'estimated', source: 'test' },
+        },
+        {
+          item: { name: 'CLAUDE.md', path: path.join(claudeRoot, 'CLAUDE.md'), scope: 'global', category: 'memory', projectPath: null },
+          tier: 'definite-ghost', lastUsed: null, invocationCount: 0,
+          tokenEstimate: { tokens: 50, confidence: 'estimated', source: 'test' },
+        },
+      ];
+      return { enriched, configPath };
+    }
+
+    it('Test 1 (INV-S4): full bust — planned_ops sum equals full plan total, freedTokens === totalPlannedTokens', async () => {
+      const claudeRoot = path.join(tmp, '.claude');
+      const { enriched } = await makeFixture5(claudeRoot);
+      // Checkpoint savings = 100+200+300+400 = 1000 (agents+skills+mcp, no memory)
+      const deps = makeDeps(tmp, {
+        scanAndEnrich: async () => enriched,
+        readCheckpoint: async () => ({
+          status: 'ok',
+          checkpoint: {
+            checkpoint_version: 1, ccaudit_version: '0.0.1',
+            timestamp: '2026-04-05T18:30:00.000Z', since_window: '7d',
+            ghost_hash: 'sha256:test',
+            item_count: { agents: 2, skills: 1, mcp: 1, memory: 1 },
+            savings: { tokens: 1000 }, total_overhead: 5000,
+          },
+        }),
+      });
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('success');
+      if (result.status === 'success') {
+        expect(result.summary.freedTokens).toBe(result.summary.totalPlannedTokens);
+      }
+      const manifest = await readManifest(deps.manifestPath());
+      const ops = manifest.header!.planned_ops;
+      expect(ops.archive + ops.disable + ops.flag).toBe(5);
+    });
+
+    it('Test 2 (INV-S4): subset bust with 2 of 5 selected — planned_ops sum equals 2', async () => {
+      const claudeRoot = path.join(tmp, '.claude');
+      const { enriched } = await makeFixture5(claudeRoot);
+      const agent1 = enriched[0]!.item;
+      const agent2 = enriched[1]!.item;
+      const selectedItems = new Set([
+        canonicalItemId(agent1),
+        canonicalItemId(agent2),
+      ]);
+      const deps = makeDeps(tmp, {
+        scanAndEnrich: async () => enriched,
+        readCheckpoint: async () => ({
+          status: 'ok',
+          checkpoint: {
+            checkpoint_version: 1, ccaudit_version: '0.0.1',
+            timestamp: '2026-04-05T18:30:00.000Z', since_window: '7d',
+            ghost_hash: 'sha256:test',
+            item_count: { agents: 2, skills: 1, mcp: 1, memory: 1 },
+            savings: { tokens: 1000 }, total_overhead: 5000,
+          },
+        }),
+      });
+      const result = await runBust({ yes: true, deps, selectedItems });
+      expect(result.status).toBe('success');
+      const manifest = await readManifest(deps.manifestPath());
+      const ops = manifest.header!.planned_ops;
+      // 2 agents selected → archive=2, disable=0, flag=0 → sum=2
+      expect(ops.archive + ops.disable + ops.flag).toBe(2);
+      // header + 2 ops + footer = 4 lines
+      expect(manifest.ops).toHaveLength(2);
+    });
+
+    it('Test 3 (INV-S5): subset bust — freedTokens reflects selected items, totalPlannedTokens reflects full plan', async () => {
+      const claudeRoot = path.join(tmp, '.claude');
+      const { enriched } = await makeFixture5(claudeRoot);
+      // Select agent1 (100 tokens) and mcp1 (400 tokens) = freedTokens = 500
+      const agent1 = enriched[0]!.item;
+      const mcp1 = enriched[3]!.item;
+      const selectedItems = new Set([canonicalItemId(agent1), canonicalItemId(mcp1)]);
+      const deps = makeDeps(tmp, {
+        scanAndEnrich: async () => enriched,
+        readCheckpoint: async () => ({
+          status: 'ok',
+          checkpoint: {
+            checkpoint_version: 1, ccaudit_version: '0.0.1',
+            timestamp: '2026-04-05T18:30:00.000Z', since_window: '7d',
+            ghost_hash: 'sha256:test',
+            item_count: { agents: 2, skills: 1, mcp: 1, memory: 1 },
+            savings: { tokens: 1000 }, total_overhead: 5000,
+          },
+        }),
+      });
+      const result = await runBust({ yes: true, deps, selectedItems });
+      expect(result.status).toBe('success');
+      if (result.status === 'success') {
+        // freedTokens = agent1(100) + mcp1(400) = 500 (subset)
+        expect(result.summary.freedTokens).toBe(500);
+        // totalPlannedTokens = checkpoint.savings.tokens = 1000 (full plan)
+        expect(result.summary.totalPlannedTokens).toBe(1000);
+      }
+    });
+
+    it('Test 4: selection_filter in manifest header — full bust sets mode=full, subset sets mode=subset', async () => {
+      // Full bust: uses default makeDeps (empty scan) to verify mode=full
+      const depsFull = makeDeps(tmp);
+      const resultFull = await runBust({ yes: true, deps: depsFull });
+      expect(resultFull.status).toBe('success');
+      const manifestFull = await readManifest(depsFull.manifestPath());
+      expect(manifestFull.header!.selection_filter?.mode).toBe('full');
+
+      // Subset bust — fresh tmp, empty scan, just verify mode=subset + ids in header
+      const tmp2 = await mkdtemp(path.join(tmpdir(), 'bust-sf-sub-'));
+      try {
+        const someId = 'agent|global||/some/path/agent.md';
+        const depsSub = makeDeps(tmp2);
+        const resultSub = await runBust({ yes: true, deps: depsSub, selectedItems: new Set([someId]) });
+        expect(resultSub.status).toBe('success');
+        const manifestSub = await readManifest(depsSub.manifestPath());
+        const sf = manifestSub.header!.selection_filter;
+        expect(sf?.mode).toBe('subset');
+        if (sf?.mode === 'subset') {
+          expect(sf.ids).toContain(someId);
+        }
+      } finally {
+        await rm(tmp2, { recursive: true, force: true });
+      }
+    });
+
+    it('Test 5: empty selectedItems — planned_ops all 0, freedTokens=0, totalPlannedTokens from checkpoint', async () => {
+      const claudeRoot = path.join(tmp, '.claude');
+      const { enriched } = await makeFixture5(claudeRoot);
+      const deps = makeDeps(tmp, {
+        scanAndEnrich: async () => enriched,
+        readCheckpoint: async () => ({
+          status: 'ok',
+          checkpoint: {
+            checkpoint_version: 1, ccaudit_version: '0.0.1',
+            timestamp: '2026-04-05T18:30:00.000Z', since_window: '7d',
+            ghost_hash: 'sha256:test',
+            item_count: { agents: 2, skills: 1, mcp: 1, memory: 1 },
+            savings: { tokens: 1000 }, total_overhead: 5000,
+          },
+        }),
+      });
+      const warnSpy: string[] = [];
+      const origWarn = console.warn;
+      console.warn = (...args: unknown[]) => { warnSpy.push(String(args[0])); };
+      try {
+        const result = await runBust({ yes: true, deps, selectedItems: new Set() });
+        expect(result.status).toBe('success');
+        if (result.status === 'success') {
+          expect(result.summary.freedTokens).toBe(0);
+          expect(result.summary.totalPlannedTokens).toBe(1000);
+        }
+        const manifest = await readManifest(deps.manifestPath());
+        const ops = manifest.header!.planned_ops;
+        expect(ops.archive).toBe(0);
+        expect(ops.disable).toBe(0);
+        expect(ops.flag).toBe(0);
+        // Warning emitted
+        expect(warnSpy.some((w) => w.includes('empty set'))).toBe(true);
+      } finally {
+        console.warn = origWarn;
+      }
+    });
+
+    it('Test 6 (backward-compat): selectedItems=undefined produces same manifest counts as pre-Plan-02', async () => {
+      const claudeRoot = path.join(tmp, '.claude');
+      const { enriched } = await makeFixture5(claudeRoot);
+      const deps = makeDeps(tmp, {
+        scanAndEnrich: async () => enriched,
+        readCheckpoint: async () => ({
+          status: 'ok',
+          checkpoint: {
+            checkpoint_version: 1, ccaudit_version: '0.0.1',
+            timestamp: '2026-04-05T18:30:00.000Z', since_window: '7d',
+            ghost_hash: 'sha256:test',
+            item_count: { agents: 2, skills: 1, mcp: 1, memory: 1 },
+            savings: { tokens: 1000 }, total_overhead: 5000,
+          },
+        }),
+      });
+      // No selectedItems → full bust
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('success');
+      if (result.status === 'success') {
+        // freedTokens = checkpoint.savings.tokens = 1000 (v1.4.0 behavior)
+        expect(result.summary.freedTokens).toBe(1000);
+        expect(result.summary.totalPlannedTokens).toBe(1000);
+      }
+      const manifest = await readManifest(deps.manifestPath());
+      // 5 total planned ops (2 archive + 1 archive + 1 disable + 1 flag)
+      const ops = manifest.header!.planned_ops;
+      expect(ops.archive + ops.disable + ops.flag).toBe(5);
+    });
+
+    it('Test 7 (approach A — hash gate): subset bust with mismatched hash returns hash-mismatch, no manifest file', async () => {
+      const claudeRoot = path.join(tmp, '.claude');
+      const { enriched } = await makeFixture5(claudeRoot);
+      const agent1 = enriched[0]!.item;
+      const selectedItems = new Set([canonicalItemId(agent1)]);
+      const deps = makeDeps(tmp, {
+        scanAndEnrich: async () => enriched,
+        computeHash: async () => 'sha256:different', // mismatch
+      });
+      const result = await runBust({ yes: true, deps, selectedItems });
+      expect(result.status).toBe('hash-mismatch');
+      // Manifest must NOT exist (hash gate aborted before any disk write)
+      expect(existsSync(deps.manifestPath())).toBe(false);
     });
   });
 }
