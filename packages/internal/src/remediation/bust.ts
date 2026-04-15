@@ -2012,7 +2012,7 @@ if (import.meta.vitest) {
       }
     });
 
-    it('Test 4: selection_filter in manifest header — full bust sets mode=full, subset sets mode=subset', async () => {
+    it('Test 4: selection_filter in manifest header — full bust sets mode=full, subset records only actioned IDs', async () => {
       // Full bust: uses default makeDeps (empty scan) to verify mode=full
       const depsFull = makeDeps(tmp);
       const resultFull = await runBust({ yes: true, deps: depsFull });
@@ -2020,22 +2020,46 @@ if (import.meta.vitest) {
       const manifestFull = await readManifest(depsFull.manifestPath());
       expect(manifestFull.header!.selection_filter?.mode).toBe('full');
 
-      // Subset bust — fresh tmp, empty scan, just verify mode=subset + ids in header
+      // Subset bust — use a fixture with real items so that actioned IDs can be verified.
+      // Per MEDIUM-01 fix: sf.ids records only IDs that actually survived the filter
+      // and were actioned — not the raw requested Set (which may include unmatched IDs).
       const tmp2 = await mkdtemp(path.join(tmpdir(), 'bust-sf-sub-'));
       try {
-        const someId = 'agent|global||/some/path/agent.md';
-        const depsSub = makeDeps(tmp2);
+        const claudeRoot2 = path.join(tmp2, '.claude');
+        const { enriched } = await makeFixture5(claudeRoot2);
+        const agent1 = enriched[0]!.item;
+        const actionedId = canonicalItemId(agent1);
+        const unmatchedId = 'agent|global||/nonexistent/ghost.md'; // will not match any plan item
+        const depsSub = makeDeps(tmp2, {
+          scanAndEnrich: async () => enriched,
+          readCheckpoint: async () => ({
+            status: 'ok',
+            checkpoint: {
+              checkpoint_version: 1,
+              ccaudit_version: '0.0.1',
+              timestamp: '2026-04-05T18:30:00.000Z',
+              since_window: '7d',
+              ghost_hash: 'sha256:test',
+              item_count: { agents: 2, skills: 1, mcp: 1, memory: 1 },
+              savings: { tokens: 1000 },
+              total_overhead: 5000,
+            },
+          }),
+        });
         const resultSub = await runBust({
           yes: true,
           deps: depsSub,
-          selectedItems: new Set([someId]),
+          selectedItems: new Set([actionedId, unmatchedId]),
         });
         expect(resultSub.status).toBe('success');
         const manifestSub = await readManifest(depsSub.manifestPath());
         const sf = manifestSub.header!.selection_filter;
         expect(sf?.mode).toBe('subset');
         if (sf?.mode === 'subset') {
-          expect(sf.ids).toContain(someId);
+          // Only the ID that matched a real plan item should appear
+          expect(sf.ids).toContain(actionedId);
+          // The unmatched requested ID must NOT appear in the manifest
+          expect(sf.ids).not.toContain(unmatchedId);
         }
       } finally {
         await rm(tmp2, { recursive: true, force: true });
