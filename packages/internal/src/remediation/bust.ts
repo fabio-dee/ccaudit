@@ -200,12 +200,18 @@ export interface BustDeps {
  * BustResult without mutating anything when it fails, so the CLI layer can
  * cleanly print the error message and exit with the appropriate code.
  *
- * @param opts.yes   If true, both D-15 prompts are skipped (the
- *                   --yes-proceed-busting bypass flag from D-16).
- * @param opts.deps  Full dependency-injection surface. Tests pass a minimal
- *                   BustDeps with fakes for every I/O path; production passes
- *                   real implementations via a buildProductionDeps() helper
- *                   (defined at the CLI command layer, not here).
+ * @param opts.yes            If true, both D-15 prompts are skipped (the
+ *                            --yes-proceed-busting bypass flag from D-16).
+ * @param opts.deps           Full dependency-injection surface. Tests pass a minimal
+ *                            BustDeps with fakes for every I/O path; production passes
+ *                            real implementations via a buildProductionDeps() helper
+ *                            (defined at the CLI command layer, not here).
+ * @param opts.skipCeremony   When true, `deps.runCeremony` is NOT called. The interactive
+ *                            TUI confirmation (Phase 2) already happened upstream, so the
+ *                            3-prompt readline ceremony is redundant and harmful (stdin
+ *                            collision with @clack). Default: false/undefined → ceremony
+ *                            runs as before (non-interactive `--dangerously-bust-ghosts`
+ *                            path is unchanged).
  */
 export async function runBust(opts: {
   yes: boolean;
@@ -219,8 +225,15 @@ export async function runBust(opts: {
    * `undefined` so Phase 2's TUI can deliver an empty selection cleanly.
    */
   selectedItems?: Set<string>;
+  /**
+   * When true, bypass `deps.runCeremony` entirely. Used by the interactive TUI
+   * path (Phase 2) which already presented its own confirmation screen before
+   * calling runBust. The non-interactive `--dangerously-bust-ghosts` path must
+   * NOT pass this flag — it relies on the ceremony for safety.
+   */
+  skipCeremony?: boolean;
 }): Promise<BustResult> {
-  const { yes, deps, selectedItems } = opts;
+  const { yes, deps, selectedItems, skipCeremony } = opts;
   const start = Date.now();
 
   // ── Gate 1: checkpoint exists (D-01) ─────────────────────────────
@@ -303,9 +316,13 @@ export async function runBust(opts: {
   const beforeTokens = checkpoint.total_overhead ?? 0;
 
   // ── Confirmation ceremony (D-15, D-16) ───────────────────────────
-  const ceremony = await deps.runCeremony({ plan: filteredPlan, yes });
-  if (ceremony.status === 'aborted') {
-    return { status: 'user-aborted', stage: ceremony.stage };
+  // skipCeremony=true: the interactive TUI already confirmed upstream (Phase 2).
+  // skipCeremony=false/undefined: run the 3-prompt readline ceremony as before.
+  if (skipCeremony !== true) {
+    const ceremony = await deps.runCeremony({ plan: filteredPlan, yes });
+    if (ceremony.status === 'aborted') {
+      return { status: 'user-aborted', stage: ceremony.stage };
+    }
   }
 
   // ── Execute ops (D-13 order) with manifest (D-09..D-12) ──────────
@@ -2155,6 +2172,26 @@ if (import.meta.vitest) {
       expect(result.status).toBe('hash-mismatch');
       // Manifest must NOT exist (hash gate aborted before any disk write)
       expect(existsSync(deps.manifestPath())).toBe(false);
+    });
+
+    it('Test 8 (skipCeremony=true): runCeremony is NOT called when skipCeremony is true (D-20)', async () => {
+      const { vi } = import.meta.vitest;
+      const ceremonySpy = vi.fn(async () => ({ status: 'accepted' as const }));
+      const deps = makeDeps(tmp, { runCeremony: ceremonySpy });
+      const result = await runBust({ yes: true, deps, skipCeremony: true });
+      expect(result.status).toBe('success');
+      // Ceremony must NOT have been called — the TUI confirmed upstream.
+      expect(ceremonySpy).not.toHaveBeenCalled();
+    });
+
+    it('Test 9 (skipCeremony=undefined): runCeremony IS called when skipCeremony is absent (regression guard)', async () => {
+      const { vi } = import.meta.vitest;
+      const ceremonySpy = vi.fn(async () => ({ status: 'accepted' as const }));
+      const deps = makeDeps(tmp, { runCeremony: ceremonySpy });
+      // skipCeremony not passed → default behavior: ceremony runs
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('success');
+      expect(ceremonySpy).toHaveBeenCalledOnce();
     });
   });
 }
