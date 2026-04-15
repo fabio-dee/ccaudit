@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, writeFile, rename, unlink, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import type { InventoryItem } from '../scanner/types.ts';
 import type { TokenCostResult } from '../token/types.ts';
 
 // -- Checkpoint schema (D-17) ------------------------------------
@@ -60,6 +61,33 @@ interface MemoryHashRecord {
   mtimeMs: number;
 }
 type HashRecord = AgentSkillHashRecord | McpHashRecord | MemoryHashRecord;
+
+// -- Canonical item identifier (Plan 01 extraction) ---------------
+
+/**
+ * Canonical item identifier — the single source of truth for how an
+ * InventoryItem is keyed inside computeGhostHash AND inside any
+ * subset-selection Set<string>. This identifier is intentionally
+ * INDEPENDENT of mtimeMs (mtime tracks "this version"; the id tracks
+ * "this item"). Plan 02's selectedItems filter and Phase 2's TUI
+ * picker both consume this function so their ids are identical to
+ * the hash's internal keys.
+ *
+ * Format is an opaque internal contract; callers must NEVER parse it.
+ * Stability guarantee: the byte sequence computeGhostHash produces
+ * for any given inventory is frozen by __fixtures__/ghost-hash-golden.json.
+ */
+export function canonicalItemId(item: InventoryItem): string {
+  switch (item.category) {
+    case 'mcp-server':
+      return `mcp-server|${item.scope}|${item.projectPath ?? ''}|${item.name}|${item.path}`;
+    case 'memory':
+      return `memory|${item.scope}|${item.path}`;
+    default:
+      // agent | skill | command | hook
+      return `${item.category}|${item.scope}|${item.projectPath ?? ''}|${item.path}`;
+  }
+}
 
 // -- Hash computation (D-10 through D-16) ------------------------
 
@@ -723,6 +751,57 @@ if (import.meta.vitest) {
           'savings',
         ]).toContain(result.missingField);
       }
+    });
+  });
+
+  describe('canonicalItemId', () => {
+    function makeItem(overrides: Partial<InventoryItem> & { category: InventoryItem['category'] }): InventoryItem {
+      return {
+        name: 'test-item',
+        path: '/synthetic/path/item.md',
+        scope: 'global',
+        projectPath: null,
+        ...overrides,
+      };
+    }
+
+    it('Test 1: returns a deterministic string — same result across 10 calls on the same item', () => {
+      const item = makeItem({ category: 'agent' });
+      const first = canonicalItemId(item);
+      for (let i = 0; i < 10; i++) {
+        expect(canonicalItemId(item)).toBe(first);
+      }
+      expect(typeof first).toBe('string');
+      expect(first.length).toBeGreaterThan(0);
+    });
+
+    it('Test 2: is independent of item.mtimeMs — two items differing only in mtimeMs produce the same id', () => {
+      const base = makeItem({ category: 'agent', mtimeMs: 1000000 });
+      const bumped = makeItem({ category: 'agent', mtimeMs: 9999999 });
+      expect(canonicalItemId(base)).toBe(canonicalItemId(bumped));
+    });
+
+    it('Test 3: differs across category even when other fields are identical', () => {
+      const sharedProps = { name: 'x', path: '/synth/x', scope: 'global' as const, projectPath: null };
+      const agent = canonicalItemId(makeItem({ category: 'agent', ...sharedProps }));
+      const skill = canonicalItemId(makeItem({ category: 'skill', ...sharedProps }));
+      const memory = canonicalItemId(makeItem({ category: 'memory', ...sharedProps }));
+      expect(agent).not.toBe(skill);
+      expect(agent).not.toBe(memory);
+      expect(skill).not.toBe(memory);
+    });
+
+    it('Test 4: differs across scope even with same name/path', () => {
+      const globalItem = makeItem({ category: 'agent', scope: 'global', projectPath: null });
+      const projectItem = makeItem({ category: 'agent', scope: 'project', projectPath: '/some/project' });
+      expect(canonicalItemId(globalItem)).not.toBe(canonicalItemId(projectItem));
+    });
+
+    it('mcp-server id includes name (serverName) and path (sourcePath)', () => {
+      const mcp1 = makeItem({ category: 'mcp-server', name: 'server-a', path: '/synth/.claude.json', scope: 'global', projectPath: null });
+      const mcp2 = makeItem({ category: 'mcp-server', name: 'server-b', path: '/synth/.claude.json', scope: 'global', projectPath: null });
+      // Same sourcePath, different names => different ids
+      expect(canonicalItemId(mcp1)).not.toBe(canonicalItemId(mcp2));
     });
   });
 }

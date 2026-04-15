@@ -7,6 +7,7 @@ export type { ChangePlan, ChangePlanItem, ChangePlanAction } from './change-plan
 export { calculateDryRunSavings } from './savings.ts';
 
 export {
+  canonicalItemId,
   computeGhostHash,
   resolveCheckpointPath,
   writeCheckpoint,
