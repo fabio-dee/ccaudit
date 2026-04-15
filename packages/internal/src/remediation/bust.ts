@@ -959,7 +959,7 @@ function defaultCeremonyIo(): CeremonyIO {
 // -- In-source tests ----------------------------------------------
 
 if (import.meta.vitest) {
-  const { describe, it, expect, beforeEach, afterEach } = import.meta.vitest;
+  const { describe, it, expect, beforeEach, afterEach, vi } = import.meta.vitest;
   const { mkdtemp, writeFile: wf, rm, readFile: rf, mkdir: mk } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const { readManifest } = await import('./manifest.ts');
@@ -2175,7 +2175,6 @@ if (import.meta.vitest) {
     });
 
     it('Test 8 (skipCeremony=true): runCeremony is NOT called when skipCeremony is true (D-20)', async () => {
-      const { vi } = import.meta.vitest;
       const ceremonySpy = vi.fn(async () => ({ status: 'accepted' as const }));
       const deps = makeDeps(tmp, { runCeremony: ceremonySpy });
       const result = await runBust({ yes: true, deps, skipCeremony: true });
@@ -2185,7 +2184,6 @@ if (import.meta.vitest) {
     });
 
     it('Test 9 (skipCeremony=undefined): runCeremony IS called when skipCeremony is absent (regression guard)', async () => {
-      const { vi } = import.meta.vitest;
       const ceremonySpy = vi.fn(async () => ({ status: 'accepted' as const }));
       const deps = makeDeps(tmp, { runCeremony: ceremonySpy });
       // skipCeremony not passed → default behavior: ceremony runs

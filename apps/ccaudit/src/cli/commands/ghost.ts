@@ -113,6 +113,13 @@ export const ghostCommand = define({
         'Preview changes without mutating files (writes checkpoint to ~/.claude/ccaudit/.last-dry-run)',
       default: false,
     },
+    interactive: {
+      type: 'boolean',
+      short: 'i',
+      description:
+        'Open an interactive TUI picker to archive a subset of ghosts. Implies bust with an inline confirmation screen (replaces the 3-prompt readline ceremony). Requires a TTY; non-TTY sessions fall back to --dry-run.',
+      default: false,
+    },
     dangerouslyBustGhosts: {
       type: 'boolean',
       description:
@@ -157,6 +164,15 @@ export const ghostCommand = define({
     const _argv = process.argv.slice(2);
     const _isDryRun = ctx.values.dryRun === true;
     const _isBust = ctx.values.dangerouslyBustGhosts === true;
+    const _isInteractive = ctx.values.interactive === true;
+
+    // D-06: --interactive + --json is a hard error at parse time, before any scan.
+    if (_isInteractive && ctx.values.json === true) {
+      console.error('Error: --interactive cannot be combined with --json.');
+      process.exitCode = 2;
+      return;
+    }
+
     // historyResult accumulates structured result for the history entry.
     // Each branch populates this before returning.
     let _historyResult: CommandResult = null;
