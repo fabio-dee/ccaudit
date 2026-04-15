@@ -18,7 +18,7 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "typecheck": "pnpm -r typecheck",
-    "verify": "pnpm -w typecheck && pnpm -w lint && pnpm -w build && pnpm -w test && pnpm format:check"
+    "verify": "pnpm -w typecheck && pnpm -w lint && pnpm -w build && node apps/ccaudit/scripts/bundle-smoke-test.mjs && node apps/ccaudit/scripts/bundle-size-check.mjs && pnpm -w test && pnpm format:check"
   },
   "devDependencies": {
     "@eslint/js": "catalog:",
