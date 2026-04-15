@@ -622,6 +622,32 @@ export const ghostCommand = define({
         // closure below.
         let bustProtection: FrameworkBustResult | null = null;
 
+        /**
+         * CCAUDIT_SELECT_IDS — internal integration-test hook (Phase 1, Plan 03).
+         *
+         * Comma-separated canonical item IDs (format: canonicalItemId(InventoryItem)).
+         * When set, parses into a Set<string> passed to runBust so only the listed
+         * items are archived/disabled. When absent, preserves the v1.4.0 full-inventory
+         * behavior byte-for-byte (selectedItems === undefined).
+         *
+         * This env var is NOT a public flag and MUST NOT appear in --help output.
+         * Phase 2's --interactive flag replaces this for user-facing subset selection.
+         */
+        let selectedItems: Set<string> | undefined;
+        const rawSelectIds = process.env['CCAUDIT_SELECT_IDS'];
+        if (rawSelectIds !== undefined) {
+          const ids = rawSelectIds
+            .split(',')
+            .map((id) => id.trim())
+            .filter((id) => id.length > 0);
+          selectedItems = new Set(ids);
+          if (mode.verbose) {
+            console.error(
+              `[ccaudit] CCAUDIT_SELECT_IDS set — subset bust with ${selectedItems.size} item(s)`,
+            );
+          }
+        }
+
         // Rule #4: Build BustDeps with a SELF-CONTAINED scanAndEnrich.
         // scanAndEnrich drives the FULL discover → parse → scan → enrich pipeline
         // internally rather than closing over the outer `enriched` variable. This
@@ -718,7 +744,7 @@ export const ghostCommand = define({
           console.error('[ccaudit] Starting bust pipeline...');
         }
 
-        const result = await runBust({ yes, deps });
+        const result = await runBust({ yes, deps, selectedItems });
 
         // ── Output rendering per BustResult variant ────────────────
         // bustProtection is reassigned inside the scanAndEnrich closure, so
