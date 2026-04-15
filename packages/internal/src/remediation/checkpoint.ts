@@ -811,7 +811,9 @@ if (import.meta.vitest) {
   });
 
   describe('canonicalItemId', () => {
-    function makeItem(overrides: Partial<InventoryItem> & { category: InventoryItem['category'] }): InventoryItem {
+    function makeItem(
+      overrides: Partial<InventoryItem> & { category: InventoryItem['category'] },
+    ): InventoryItem {
       return {
         name: 'test-item',
         path: '/synthetic/path/item.md',
@@ -838,7 +840,12 @@ if (import.meta.vitest) {
     });
 
     it('Test 3: differs across category even when other fields are identical', () => {
-      const sharedProps = { name: 'x', path: '/synth/x', scope: 'global' as const, projectPath: null };
+      const sharedProps = {
+        name: 'x',
+        path: '/synth/x',
+        scope: 'global' as const,
+        projectPath: null,
+      };
       const agent = canonicalItemId(makeItem({ category: 'agent', ...sharedProps }));
       const skill = canonicalItemId(makeItem({ category: 'skill', ...sharedProps }));
       const memory = canonicalItemId(makeItem({ category: 'memory', ...sharedProps }));
@@ -849,13 +856,29 @@ if (import.meta.vitest) {
 
     it('Test 4: differs across scope even with same name/path', () => {
       const globalItem = makeItem({ category: 'agent', scope: 'global', projectPath: null });
-      const projectItem = makeItem({ category: 'agent', scope: 'project', projectPath: '/some/project' });
+      const projectItem = makeItem({
+        category: 'agent',
+        scope: 'project',
+        projectPath: '/some/project',
+      });
       expect(canonicalItemId(globalItem)).not.toBe(canonicalItemId(projectItem));
     });
 
     it('mcp-server id includes name (serverName) and path (sourcePath)', () => {
-      const mcp1 = makeItem({ category: 'mcp-server', name: 'server-a', path: '/synth/.claude.json', scope: 'global', projectPath: null });
-      const mcp2 = makeItem({ category: 'mcp-server', name: 'server-b', path: '/synth/.claude.json', scope: 'global', projectPath: null });
+      const mcp1 = makeItem({
+        category: 'mcp-server',
+        name: 'server-a',
+        path: '/synth/.claude.json',
+        scope: 'global',
+        projectPath: null,
+      });
+      const mcp2 = makeItem({
+        category: 'mcp-server',
+        name: 'server-b',
+        path: '/synth/.claude.json',
+        scope: 'global',
+        projectPath: null,
+      });
       // Same sourcePath, different names => different ids
       expect(canonicalItemId(mcp1)).not.toBe(canonicalItemId(mcp2));
     });

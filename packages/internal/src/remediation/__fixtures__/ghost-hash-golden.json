@@ -1,11 +1,76 @@
 {
   "_comment": "Frozen input/output pair for computeGhostHash. If this hash changes, the hash contract has drifted — that is a BREAKING change requiring CHANGELOG + checkpoint-version bump. DO NOT edit expectedHash casually.",
   "input": [
-    { "item": { "name": "agent-alpha", "path": "/synthetic/agents/alpha.md", "scope": "global", "category": "agent", "projectPath": null, "mtimeMs": 1700000000000 }, "tier": "definite-ghost", "lastUsed": null, "invocationCount": 0, "tokenEstimate": { "tokens": 100, "confidence": "estimated", "source": "test" } },
-    { "item": { "name": "skill-beta",  "path": "/synthetic/skills/beta/SKILL.md", "scope": "project", "category": "skill", "projectPath": "/synthetic/proj-a", "mtimeMs": 1700000001000 }, "tier": "definite-ghost", "lastUsed": null, "invocationCount": 0, "tokenEstimate": { "tokens": 200, "confidence": "estimated", "source": "test" } },
-    { "item": { "name": "mcp-gamma", "path": "/synthetic/.claude.json", "scope": "global", "category": "mcp-server", "projectPath": null, "mtimeMs": 1700000002000 }, "tier": "likely-ghost", "lastUsed": null, "invocationCount": 0, "tokenEstimate": { "tokens": 300, "confidence": "estimated", "source": "test" } },
-    { "item": { "name": "mcp-delta", "path": "/synthetic/.claude.json", "scope": "global", "category": "mcp-server", "projectPath": null, "mtimeMs": 1700000002000 }, "tier": "definite-ghost", "lastUsed": null, "invocationCount": 0, "tokenEstimate": { "tokens": 400, "confidence": "estimated", "source": "test" } },
-    { "item": { "name": "CLAUDE.md", "path": "/synthetic/memory/CLAUDE.md", "scope": "project", "category": "memory", "projectPath": "/synthetic/proj-a", "mtimeMs": 1700000003000 }, "tier": "definite-ghost", "lastUsed": null, "invocationCount": 0, "tokenEstimate": { "tokens": 500, "confidence": "estimated", "source": "test" } }
+    {
+      "item": {
+        "name": "agent-alpha",
+        "path": "/synthetic/agents/alpha.md",
+        "scope": "global",
+        "category": "agent",
+        "projectPath": null,
+        "mtimeMs": 1700000000000
+      },
+      "tier": "definite-ghost",
+      "lastUsed": null,
+      "invocationCount": 0,
+      "tokenEstimate": { "tokens": 100, "confidence": "estimated", "source": "test" }
+    },
+    {
+      "item": {
+        "name": "skill-beta",
+        "path": "/synthetic/skills/beta/SKILL.md",
+        "scope": "project",
+        "category": "skill",
+        "projectPath": "/synthetic/proj-a",
+        "mtimeMs": 1700000001000
+      },
+      "tier": "definite-ghost",
+      "lastUsed": null,
+      "invocationCount": 0,
+      "tokenEstimate": { "tokens": 200, "confidence": "estimated", "source": "test" }
+    },
+    {
+      "item": {
+        "name": "mcp-gamma",
+        "path": "/synthetic/.claude.json",
+        "scope": "global",
+        "category": "mcp-server",
+        "projectPath": null,
+        "mtimeMs": 1700000002000
+      },
+      "tier": "likely-ghost",
+      "lastUsed": null,
+      "invocationCount": 0,
+      "tokenEstimate": { "tokens": 300, "confidence": "estimated", "source": "test" }
+    },
+    {
+      "item": {
+        "name": "mcp-delta",
+        "path": "/synthetic/.claude.json",
+        "scope": "global",
+        "category": "mcp-server",
+        "projectPath": null,
+        "mtimeMs": 1700000002000
+      },
+      "tier": "definite-ghost",
+      "lastUsed": null,
+      "invocationCount": 0,
+      "tokenEstimate": { "tokens": 400, "confidence": "estimated", "source": "test" }
+    },
+    {
+      "item": {
+        "name": "CLAUDE.md",
+        "path": "/synthetic/memory/CLAUDE.md",
+        "scope": "project",
+        "category": "memory",
+        "projectPath": "/synthetic/proj-a",
+        "mtimeMs": 1700000003000
+      },
+      "tier": "definite-ghost",
+      "lastUsed": null,
+      "invocationCount": 0,
+      "tokenEstimate": { "tokens": 500, "confidence": "estimated", "source": "test" }
+    }
   ],
   "expectedHash": "sha256:10e831d9fd26785cb6ab7959813190024b3e1ae8d240c64425a6cec27c6a6287"
 }
