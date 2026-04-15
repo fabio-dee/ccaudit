@@ -7,6 +7,19 @@
  */
 
 /**
+ * Minimal stdout shape needed by shouldUseAscii.
+ * Using a dedicated interface instead of Pick<NodeJS.WriteStream, ...> so that
+ * test fakes can satisfy it with a simple `() => boolean` without matching
+ * Node's overloaded hasColors signature.
+ */
+export interface StdoutCapability {
+  /** Optional — returns false when the stream has no color support. */
+  hasColors?: () => boolean;
+  /** Terminal column width, if known. */
+  columns?: number;
+}
+
+/**
  * Returns `true` when Unicode glyphs are unreliable and ASCII fallbacks
  * should be used throughout the TUI session.
  *
@@ -18,12 +31,12 @@
  *      (non-Unicode locale with dumb terminal)
  *
  * @param env  - Node.js process environment (injected for testability)
- * @param stdout - Node.js write stream (injected for testability)
+ * @param stdout - Stdout capability object (injected for testability)
  * @param ttyCols - Explicit column override (skips stdout.columns lookup if provided)
  */
 export function shouldUseAscii(
   env: NodeJS.ProcessEnv,
-  stdout: Pick<NodeJS.WriteStream, 'hasColors' | 'columns'>,
+  stdout: StdoutCapability,
   ttyCols?: number | undefined,
 ): boolean {
   // Trigger 1: explicit opt-in via env var
@@ -55,11 +68,11 @@ export function shouldUseAscii(
 if (import.meta.vitest) {
   const { describe, it, expect } = import.meta.vitest;
 
-  /** Minimal fake stdout for tests */
+  /** Minimal fake stdout for tests — satisfies StdoutCapability. */
   function makeStdout(opts: {
     hasColors?: () => boolean;
     columns?: number;
-  }): Pick<NodeJS.WriteStream, 'hasColors' | 'columns'> {
+  }): StdoutCapability {
     return {
       hasColors: opts.hasColors,
       columns: opts.columns ?? 80,

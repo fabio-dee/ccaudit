@@ -29,3 +29,5 @@ export type { ChangePlanRenderOptions, ProtectedItem } from './tables/index.ts';
 export { initColor, isColorEnabled, getTableStyle, colorize } from './color.ts';
 export { csvEscape, csvRow, csvTable } from './csv.ts';
 export { tsvRow } from './quiet.ts';
+
+export * from './tui/index.ts';

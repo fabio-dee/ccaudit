@@ -23,6 +23,19 @@ export type SelectGhostsOutcome =
   | { kind: 'cancel' }
   | { kind: 'empty-inventory' };
 
+/**
+ * Injectable clack dependency — uses a looser isCancel signature so vi.fn()
+ * mocks in in-source tests satisfy the type without requiring a type predicate.
+ */
+interface ClackGroupDep {
+  groupMultiselect: (opts: {
+    message: string;
+    options: Record<string, Array<{ value: string; label: string }>>;
+    required?: boolean;
+  }) => Promise<symbol | string[]>;
+  isCancel: (value: unknown) => boolean;
+}
+
 export interface SelectGhostsInput {
   /** Items already filtered to ghost tier by caller. */
   ghosts: readonly TokenCostResult[];
@@ -34,10 +47,7 @@ export interface SelectGhostsInput {
    * Optional clack dependency injection for tests.
    * In production the real @clack/prompts functions are used.
    */
-  _clack?: {
-    groupMultiselect: typeof groupMultiselect;
-    isCancel: typeof isCancel;
-  };
+  _clack?: ClackGroupDep;
 }
 
 // ---------------------------------------------------------------------------
@@ -106,6 +116,16 @@ export function formatRowLabel(item: TokenCostResult, useAscii: boolean, now: nu
 }
 
 // ---------------------------------------------------------------------------
+// Real clack adapter (bridges the looser ClackGroupDep to the real @clack API)
+// ---------------------------------------------------------------------------
+
+const realClack: ClackGroupDep = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  groupMultiselect: (opts) => groupMultiselect(opts as any) as Promise<symbol | string[]>,
+  isCancel: (v) => isCancel(v),
+};
+
+// ---------------------------------------------------------------------------
 // Main exported function
 // ---------------------------------------------------------------------------
 
@@ -157,7 +177,7 @@ export async function selectGhosts(input: SelectGhostsInput): Promise<SelectGhos
   }
 
   // Use injected or real clack
-  const clack = _clack ?? { groupMultiselect, isCancel };
+  const clack = _clack ?? realClack;
 
   const result = await clack.groupMultiselect({
     message: 'Select ghosts to archive:',
@@ -208,13 +228,12 @@ if (import.meta.vitest) {
     };
   }
 
-  /** Make a fake @clack/prompts dependency. */
-  function makeClack(returnValue: string[] | symbol) {
+  /** Build a fake ClackGroupDep for tests. */
+  function makeClack(returnValue: string[] | symbol): ClackGroupDep & { fakeCancelSymbol: symbol } {
     const fakeCancelSymbol = Symbol('clack-cancel');
+    const resolvedValue = returnValue instanceof Symbol ? returnValue : returnValue;
     return {
-      groupMultiselect: vi.fn().mockResolvedValue(
-        returnValue === fakeCancelSymbol ? fakeCancelSymbol : returnValue,
-      ),
+      groupMultiselect: vi.fn().mockResolvedValue(resolvedValue),
       isCancel: vi.fn((v: unknown) => v === fakeCancelSymbol),
       fakeCancelSymbol,
     };
@@ -236,7 +255,11 @@ if (import.meta.vitest) {
       const ghost1 = makeGhost({ name: 'my-agent', category: 'agent', path: '/a/my-agent.md', tokens: 100 });
       const ghost2 = makeGhost({ name: 'my-skill', category: 'skill', path: '/s/my-skill', tokens: 200 });
 
-      const clackFns = makeClack(['agent|global||/a/my-agent.md', 'skill|global||/s/my-skill']);
+      const selected = ['agent|global||/a/my-agent.md', 'skill|global||/s/my-skill'];
+      const clackFns: ClackGroupDep = {
+        groupMultiselect: vi.fn().mockResolvedValue(selected),
+        isCancel: vi.fn(() => false),
+      };
       const result = await selectGhosts({
         ghosts: [ghost1, ghost2],
         useAscii: false,
@@ -255,8 +278,8 @@ if (import.meta.vitest) {
       const mid = makeGhost({ name: 'mid', category: 'agent', tokens: 500 });
 
       let capturedOptions: Record<string, Array<{ value: string; label: string }>> = {};
-      const clack = {
-        groupMultiselect: vi.fn((args: { message: string; options: typeof capturedOptions }) => {
+      const clack: ClackGroupDep = {
+        groupMultiselect: vi.fn((args) => {
           capturedOptions = args.options;
           return Promise.resolve([]);
         }),
@@ -279,8 +302,8 @@ if (import.meta.vitest) {
       const ghost = makeGhost({ name: 'CLAUDE.md', category: 'memory', mtimeMs: recentMtime, tokens: 50 });
 
       let capturedOptions: Record<string, Array<{ value: string; label: string }>> = {};
-      const clack = {
-        groupMultiselect: vi.fn((args: { message: string; options: typeof capturedOptions }) => {
+      const clack: ClackGroupDep = {
+        groupMultiselect: vi.fn((args) => {
           capturedOptions = args.options;
           return Promise.resolve([]);
         }),
@@ -299,8 +322,8 @@ if (import.meta.vitest) {
       const ghost = makeGhost({ name: 'old.md', category: 'memory', mtimeMs: staleMtime, tokens: 50 });
 
       let capturedOptions: Record<string, Array<{ value: string; label: string }>> = {};
-      const clack = {
-        groupMultiselect: vi.fn((args: { message: string; options: typeof capturedOptions }) => {
+      const clack: ClackGroupDep = {
+        groupMultiselect: vi.fn((args) => {
           capturedOptions = args.options;
           return Promise.resolve([]);
         }),
@@ -321,8 +344,8 @@ if (import.meta.vitest) {
       const stale = makeGhost({ name: 'stale.md', category: 'memory', mtimeMs: staleMtime, tokens: 50 });
 
       let capturedOptions: Record<string, Array<{ value: string; label: string }>> = {};
-      const clack = {
-        groupMultiselect: vi.fn((args: { message: string; options: typeof capturedOptions }) => {
+      const clack: ClackGroupDep = {
+        groupMultiselect: vi.fn((args) => {
           capturedOptions = args.options;
           return Promise.resolve([]);
         }),
@@ -340,7 +363,7 @@ if (import.meta.vitest) {
     it('isCancel path returns cancel outcome', async () => {
       const ghost = makeGhost({ name: 'agent-x', tokens: 100 });
       const fakeCancelSymbol = Symbol('cancel');
-      const clack = {
+      const clack: ClackGroupDep = {
         groupMultiselect: vi.fn().mockResolvedValue(fakeCancelSymbol),
         isCancel: vi.fn((v: unknown) => v === fakeCancelSymbol),
       };
@@ -352,8 +375,8 @@ if (import.meta.vitest) {
     it('message passed to groupMultiselect is exactly "Select ghosts to archive:"', async () => {
       const ghost = makeGhost({ name: 'g', tokens: 1 });
       let capturedMessage = '';
-      const clack = {
-        groupMultiselect: vi.fn((args: { message: string }) => {
+      const clack: ClackGroupDep = {
+        groupMultiselect: vi.fn((args) => {
           capturedMessage = args.message;
           return Promise.resolve([]);
         }),

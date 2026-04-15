@@ -154,10 +154,13 @@ export function renderConfirmationScreen(input: ConfirmationInput): string {
 
 /**
  * Dependency injection interface for testability.
+ * isCancel is typed as `(value: unknown) => boolean` (not the type predicate `value is symbol`)
+ * so that vi.fn() mocks in in-source tests can satisfy the interface without
+ * requiring the mock to declare a type predicate signature.
  */
 interface ClackConfirmDep {
-  confirm: typeof confirm;
-  isCancel: typeof isCancel;
+  confirm: (opts: { message: string; initialValue?: boolean }) => Promise<symbol | boolean>;
+  isCancel: (value: unknown) => boolean;
 }
 
 /**
