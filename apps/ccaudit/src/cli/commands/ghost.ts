@@ -1,6 +1,7 @@
 import { rename, mkdir, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { platform as osPlatform, homedir } from 'node:os';
+import { dirname } from 'node:path';
 import { define } from 'gunshi';
 import { recordHistory } from '@ccaudit/internal';
 import type { CommandResult } from '@ccaudit/internal';
@@ -24,6 +25,8 @@ import {
   calculateUrgencyScore,
   classifyRecommendation,
   buildChangePlan,
+  filterChangePlan,
+  calculateDryRunSavings,
   computeGhostHash,
   writeCheckpoint,
   resolveCheckpointPath,
@@ -73,10 +76,283 @@ import {
   renderGhostOutputBox,
   renderHooksAdvisory,
   colorize,
+  checkTuiGuards,
+  shouldUseAscii,
+  selectGhosts,
+  runConfirmationPrompt,
 } from '@ccaudit/terminal';
 import { outputArgs } from '../_shared-args.ts';
 import { resolveOutputMode, buildJsonEnvelope } from '../_output-mode.ts';
 import { CCAUDIT_VERSION } from '../../_version.ts';
+
+// ---------------------------------------------------------------------------
+// runInteractiveGhostFlow — private module helper (Plan 03, D-05..D-21, D-26)
+//
+// Orchestrates the full interactive archive flow on a TTY:
+//   guard check → empty-inventory short-circuit → checkpoint write →
+//   selectGhosts picker → runConfirmationPrompt → runBust (ceremony skipped)
+//
+// Plan 04 will add a SECOND call site (the auto-open 'y' branch). This
+// function MUST remain module-scoped — do NOT inline or nest inside run(ctx).
+// ---------------------------------------------------------------------------
+async function runInteractiveGhostFlow(args: {
+  /** Full enriched inventory (all tiers) from the outer scan+enrich step. */
+  enriched: TokenCostResult[];
+  /** Pre-filtered to tier !== 'used' (ghost items only). */
+  ghosts: TokenCostResult[];
+  /** Resolved since window string (e.g. "7d") for checkpoint + BustDeps. */
+  sinceStr: string;
+  /** Resolved regime flag ('eager' | 'deferred' | 'auto'). */
+  regimeFlag: McpRegime | 'auto';
+  /** Claude Code version detected at startup (null if regime != 'auto'). */
+  detectedCcVersion: string | null;
+  /** The output mode object resolved by resolveOutputMode, plus raw ci flag. */
+  mode: {
+    json: boolean;
+    csv: boolean;
+    quiet: boolean;
+    /** Raw --ci flag value (not absorbed into mode.json/mode.quiet yet for guard check). */
+    ci: boolean;
+    groupFrameworks: boolean;
+    verbose: boolean;
+    privacy: boolean;
+  };
+  /** Whether --force-partial was passed. */
+  forcePartial: boolean;
+  /** Pre-resolved MCP regime (computed by caller after enrichScanResults). */
+  resolvedRegime: McpRegime;
+  /** Pre-computed worst-case session overhead for checkpoint.total_overhead. */
+  totalOverhead: number;
+}): Promise<void> {
+  const {
+    enriched,
+    ghosts,
+    sinceStr,
+    regimeFlag,
+    detectedCcVersion,
+    mode,
+    forcePartial,
+    resolvedRegime,
+    totalOverhead,
+  } = args;
+
+  // ── Guard: narrow terminal (D-08, D-23) ──────────────────────────────────
+  // Note: non-TTY + explicit --interactive is already handled by the caller
+  // (which sets effectiveDryRun=true and falls through). If we somehow reach
+  // here with a non-TTY, the guard will catch it defensively.
+  const isTty = Boolean(process.stdout.isTTY) && Boolean(process.stdin.isTTY);
+  const ttyCols = process.stdout.columns;
+  const guard = checkTuiGuards({
+    mode: {
+      json: mode.json,
+      csv: mode.csv,
+      quiet: mode.quiet,
+      ci: mode.ci,
+      dryRun: false, // interactive path already bypassed dry-run branch
+      dangerouslyBustGhosts: false, // interactive path is distinct
+    },
+    isTty,
+    ttyCols,
+    isExplicitInteractive: true,
+  });
+
+  switch (guard.kind) {
+    case 'hard-error':
+      // Unreachable: D-06 is caught before the scan at the flag-parse stage.
+      console.error(guard.message);
+      process.exitCode = guard.exitCode;
+      return;
+    case 'fallback-dry-run':
+      // Non-TTY path — caller should have handled this, but defensive guard.
+      console.error(guard.reason);
+      return;
+    case 'refuse-narrow':
+      console.error(guard.message);
+      process.exitCode = 1;
+      return;
+    case 'suppress-auto-open':
+      // Unreachable when isExplicitInteractive=true — defensive.
+      return;
+    case 'ok':
+      break;
+  }
+
+  // ── D-13: empty inventory → skip picker entirely ──────────────────────────
+  if (ghosts.length === 0) {
+    console.log('✅ No ghosts found. Your inventory is clean.');
+    return;
+  }
+
+  // ── Write dry-run checkpoint BEFORE opening picker (D-26) ────────────────
+  // Apply framework protection first so the checkpoint hash matches runBust.
+  const interactiveProtection = applyFrameworkProtection(enriched, {
+    forcePartial,
+    groupFrameworks: mode.groupFrameworks,
+  });
+  const interactivePlan = buildChangePlan(interactiveProtection.filtered);
+  const ghostHash = await computeGhostHash(interactiveProtection.filtered);
+
+  const checkpoint = {
+    checkpoint_version: 1 as const,
+    ccaudit_version: CCAUDIT_VERSION,
+    timestamp: new Date().toISOString(),
+    since_window: sinceStr,
+    ghost_hash: ghostHash,
+    item_count: interactivePlan.counts,
+    savings: interactivePlan.savings,
+    total_overhead: totalOverhead,
+    mcp_regime: resolvedRegime,
+    cc_version: detectedCcVersion,
+  };
+
+  try {
+    await writeCheckpoint(checkpoint, resolveCheckpointPath());
+  } catch (err) {
+    console.error(`[ccaudit] Failed to write checkpoint: ${(err as Error).message}`);
+    process.exitCode = 2;
+    return;
+  }
+
+  // ── Open picker (D-02, D-09..D-13) ───────────────────────────────────────
+  const useAscii = shouldUseAscii(process.env, process.stdout, ttyCols);
+  // Only ghost-tier items go into the picker (D-11).
+  const pickerGhosts = interactiveProtection.filtered.filter((r) => r.tier !== 'used');
+  const pickOutcome = await selectGhosts({ ghosts: pickerGhosts, now: Date.now(), useAscii });
+
+  if (pickOutcome.kind === 'cancel') {
+    console.error('No changes made.');
+    return; // exit 0 (D-08)
+  }
+  if (pickOutcome.kind === 'empty-inventory') {
+    console.log('✅ No ghosts found. Your inventory is clean.');
+    return;
+  }
+
+  const selectedItems = pickOutcome.ids;
+  if (selectedItems.size === 0) {
+    console.error('No changes made.');
+    return;
+  }
+
+  // ── Confirmation screen + prompt (D-17..D-21, boolean-only per D-21) ──────
+  const filteredPlan = filterChangePlan(interactivePlan, selectedItems);
+  const estSavings = calculateDryRunSavings(filteredPlan);
+  const manifestDir = dirname(resolveManifestPath());
+
+  const confirmOutcome = await runConfirmationPrompt({
+    plan: filteredPlan,
+    estSavings,
+    manifestDir,
+    useAscii,
+  });
+
+  // v0.5: ConfirmationOutcome is { kind: 'proceed' } | { kind: 'cancel' } only (D-21).
+  if (confirmOutcome.kind === 'cancel') {
+    console.error('No changes made.');
+    return; // exit 0 (D-08)
+  }
+  // confirmOutcome.kind === 'proceed' — fall through to bust.
+
+  // ── Execute bust with ceremony skipped (D-19, D-20) ──────────────────────
+  const sinceMs = parseDuration(sinceStr);
+  const bustDeps: BustDeps = {
+    readCheckpoint,
+    checkpointPath: () => resolveCheckpointPath(),
+    scanAndEnrich: async () => {
+      const sessionFiles = await discoverSessionFiles({ sinceMs });
+      const invocations: InvocationRecord[] = [];
+      const projPaths = new Set<string>();
+      for (const file of sessionFiles) {
+        const r2 = await parseSession(file, sinceMs);
+        invocations.push(...r2.invocations);
+        if (r2.meta.projectPath) projPaths.add(r2.meta.projectPath);
+      }
+      const { results: scanResults } = await scanAll(invocations, {
+        projectPaths: [...projPaths],
+      });
+      const rawEnriched = await enrichScanResults(scanResults, {
+        regime: regimeFlag,
+        ccVersion: detectedCcVersion,
+      });
+      const protection = applyFrameworkProtection(rawEnriched, {
+        forcePartial,
+        groupFrameworks: mode.groupFrameworks,
+      });
+      return protection.filtered;
+    },
+    computeHash: (e) => computeGhostHash(e),
+    processDetector: defaultProcessDeps,
+    selfPid: process.pid,
+    // runCeremony is unused when skipCeremony=true, but the dep is required
+    // by BustDeps shape. Provide a no-op to satisfy the interface.
+    runCeremony: async () => ({ status: 'accepted' as const }),
+    renameFile: async (from, to) => {
+      await rename(from, to);
+    },
+    mkdirRecursive: async (dir, modeArg) => {
+      await mkdir(dir, { recursive: true, mode: modeArg });
+    },
+    readFileUtf8: (p) => readFile(p, 'utf8'),
+    patchMemoryFrontmatter: patchFrontmatter,
+    atomicWriteJson: (target, value) => atomicWriteJson(target, value),
+    pathExistsSync: existsSync,
+    createManifestWriter: (p) => new ManifestWriter(p),
+    manifestPath: () => resolveManifestPath(),
+    now: () => new Date(),
+    ccauditVersion: CCAUDIT_VERSION,
+    nodeVersion: process.version,
+    sinceWindow: sinceStr,
+    os: osPlatform(),
+  };
+
+  const result = await runBust({
+    yes: true,
+    deps: bustDeps,
+    selectedItems,
+    skipCeremony: true,
+  });
+
+  // ── D-26: hash-mismatch is terminal informational (no [y/N] prompt) ───────
+  if (result.status === 'hash-mismatch') {
+    console.error('Filesystem changed since scan. Re-run ccaudit ghost --interactive to re-scan.');
+    console.error('No changes made.');
+    return; // exit 0 — informational, not an error (D-26)
+  }
+
+  // ── Render outcome ────────────────────────────────────────────────────────
+  if (result.status === 'success' && !mode.quiet) {
+    console.log('');
+    console.log(
+      renderShareableBlock({
+        beforeTokens: result.summary.beforeTokens,
+        afterTokens: result.summary.afterTokens,
+        freedTokens: result.summary.freedTokens,
+        pctWindow: result.summary.pctWindow,
+        healthBefore: result.summary.healthBefore,
+        healthAfter: result.summary.healthAfter,
+        gradeBefore: result.summary.gradeBefore,
+        gradeAfter: result.summary.gradeAfter,
+        counts: {
+          archivedAgents: result.counts.archive.agents,
+          archivedSkills: result.counts.archive.skills,
+          disabledMcp: result.counts.disable.completed,
+          flaggedMemory: result.counts.flag.completed + (result.counts.flag.refreshed ?? 0),
+        },
+        manifestPath: result.manifestPath,
+        privacy: false,
+        beforeProvenance: { source: 'dry-run', at: result.summary.checkpointTimestamp },
+      }),
+    );
+    console.log('');
+  } else if (result.status === 'partial-success' && !mode.quiet) {
+    console.log('');
+    console.log(`Done with failures. ${result.failed} op(s) failed — see manifest for details.`);
+    console.log(`Manifest: ${result.manifestPath}`);
+  } else if (result.status !== 'success' && result.status !== 'partial-success') {
+    console.error(`[ccaudit] Interactive bust failed: ${result.status}`);
+    process.exitCode = 1;
+  }
+}
 
 export const ghostCommand = define({
   name: 'ghost',
@@ -172,6 +448,11 @@ export const ghostCommand = define({
       process.exitCode = 2;
       return;
     }
+
+    // D-07: effectiveDryRun is set to true when --interactive is passed but no TTY
+    // is available. The --interactive branch below sets this; the dry-run branch
+    // below checks it so the non-TTY fallback path runs correctly.
+    let effectiveDryRun = false;
 
     // historyResult accumulates structured result for the history entry.
     // Each branch populates this before returning.
@@ -305,10 +586,68 @@ export const ghostCommand = define({
           tier: r.tier,
         }));
 
+      // Step 3.55: Interactive branch (Phase 2, Plan 03)
+      // Placed BEFORE the dry-run branch so --interactive short-circuits here.
+      // Non-TTY path sets effectiveDryRun=true and falls through to Step 3.6.
+      if (ctx.values.interactive === true) {
+        const isTty = Boolean(process.stdout.isTTY) && Boolean(process.stdin.isTTY);
+        if (!isTty) {
+          // D-07: non-TTY + explicit --interactive → fall back to dry-run with notice.
+          console.error('No TTY detected — running in dry-run mode.');
+          effectiveDryRun = true;
+          // Fall through to the dry-run branch below.
+        } else {
+          // TTY path: delegate to the extracted interactive flow helper.
+          const ghosts = enriched.filter((r) => r.tier !== 'used');
+          // Pre-compute regime and worst-case overhead so the helper avoids duplicating
+          // the expensive resolveMcpRegime + groupGhostsByProject calls.
+          let interactiveResolvedRegime: McpRegime;
+          if (regimeFlag === 'auto') {
+            const eagerMcpTotal = enriched
+              .filter((r) => r.item.category === 'mcp-server')
+              .reduce((sum, r) => sum + (r.tokenEstimate?.tokens ?? 0), 0);
+            interactiveResolvedRegime = resolveMcpRegime({
+              totalMcpToolTokens: eagerMcpTotal,
+              contextWindow: CONTEXT_WINDOW_SIZE,
+              ccVersion: detectedCcVersion,
+              override: null,
+            }).regime;
+          } else {
+            interactiveResolvedRegime = regimeFlag;
+          }
+          const interactiveGhosts = enriched.filter((r) => r.tier !== 'used');
+          const { global: iGlobal, projects: iProjects } = groupGhostsByProject(
+            interactiveGhosts,
+            homedir(),
+          );
+          const { total: iWorstCase } = calculateWorstCaseOverhead(iGlobal, iProjects);
+          await runInteractiveGhostFlow({
+            enriched,
+            ghosts,
+            sinceStr,
+            regimeFlag,
+            detectedCcVersion,
+            mode: {
+              json: mode.json,
+              csv: mode.csv,
+              quiet: mode.quiet,
+              ci: ctx.values.ci === true,
+              groupFrameworks: mode.groupFrameworks,
+              verbose: mode.verbose,
+              privacy: mode.privacy,
+            },
+            forcePartial: ctx.values.forcePartial === true,
+            resolvedRegime: interactiveResolvedRegime,
+            totalOverhead: iWorstCase,
+          });
+          return;
+        }
+      }
+
       // Step 3.6: Dry-run branch (Phase 7, D-01 through D-20)
       // Lifted before the inventory rendering chain per RESEARCH §CLI Integration —
       // single decision point, four output modes per command mode (8 test cases total).
-      if (ctx.values.dryRun) {
+      if (ctx.values.dryRun || effectiveDryRun) {
         // v1.3.0 Phase 4: framework-as-unit bust protection (D-27).
         // Filter must run BEFORE buildChangePlan and BEFORE computeGhostHash so
         // both dry-run and bust paths see the same eligible set (hashes match).
