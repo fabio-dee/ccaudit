@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // bundle-smoke-test.mjs — D-03 verification: dist/index.js must load without unresolved imports.
 // Run after `pnpm -w build`. Part of `pnpm verify` chain.
-import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';

@@ -32,7 +32,9 @@ const baselineRaw = readFileSync(baselinePath, 'utf8').trim();
 const baseline = Number.parseInt(baselineRaw, 10);
 
 if (!Number.isFinite(baseline) || baseline <= 0) {
-  console.error(`[bundle-size] FAIL: could not parse baseline from ${baselinePath}: ${JSON.stringify(baselineRaw)}`);
+  console.error(
+    `[bundle-size] FAIL: could not parse baseline from ${baselinePath}: ${JSON.stringify(baselineRaw)}`,
+  );
   process.exit(1);
 }
 
