@@ -43,6 +43,7 @@
   "devDependencies": {
     "@ccaudit/internal": "workspace:*",
     "@ccaudit/terminal": "workspace:*",
+    "@clack/prompts": "catalog:",
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "gunshi": "catalog:",
