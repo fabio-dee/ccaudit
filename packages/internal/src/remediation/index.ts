@@ -1,7 +1,7 @@
 // @ccaudit/internal -- remediation module (Phase 7 + Phase 8)
 // Pure functions + checkpoint I/O for --dry-run and --dangerously-bust-ghosts.
 
-export { buildChangePlan } from './change-plan.ts';
+export { buildChangePlan, filterChangePlan } from './change-plan.ts';
 export type { ChangePlan, ChangePlanItem, ChangePlanAction } from './change-plan.ts';
 
 export { calculateDryRunSavings } from './savings.ts';
@@ -79,6 +79,7 @@ export type {
   RefreshOp,
   SkippedOp,
   ReadManifestResult,
+  SelectionFilter,
 } from './manifest.ts';
 
 // Phase 8: bust orchestrator -- the Wave 1 pipeline that wires Wave 0

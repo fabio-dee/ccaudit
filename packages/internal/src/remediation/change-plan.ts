@@ -1,6 +1,8 @@
 import type { TokenCostResult } from '../token/types.ts';
 import type { ItemCategory, ItemScope } from '../types.ts';
+import type { InventoryItem } from '../scanner/types.ts';
 import { calculateDryRunSavings } from './savings.ts';
+import { canonicalItemId } from './checkpoint.ts';
 
 /**
  * Action verbs grouping items in the change plan.
@@ -102,6 +104,61 @@ export function buildChangePlan(enriched: TokenCostResult[]): ChangePlan {
   const partial: ChangePlan = { archive, disable, flag, counts, savings: { tokens: 0 } };
   partial.savings.tokens = calculateDryRunSavings(partial);
   return partial;
+}
+
+/**
+ * Apply an optional subset filter to a ChangePlan (Phase 1 / D-03).
+ *
+ * - `selectedItems === undefined`  → return the plan unchanged
+ *   (full-inventory bust; v1.4.0 contract preserved byte-for-byte).
+ * - `selectedItems === new Set([...])` → return a new ChangePlan whose
+ *   archive/disable/flag arrays contain only items whose canonicalItemId
+ *   is in the set. Counts + savings are recomputed from the filtered
+ *   lists. Unknown ids in the set are silently ignored.
+ *
+ * The filter uses `canonicalItemId` (checkpoint.ts) for identity so the
+ * ids produced by `computeGhostHash`'s key derivation, the TUI picker,
+ * and the integration-test CCAUDIT_SELECT_IDS parser all line up.
+ */
+export function filterChangePlan(
+  plan: ChangePlan,
+  selectedItems: Set<string> | undefined,
+): ChangePlan {
+  if (selectedItems === undefined) {
+    return plan;
+  }
+
+  // Build a minimal InventoryItem-shaped object from a ChangePlanItem
+  // so we can call canonicalItemId (which accepts InventoryItem).
+  // ChangePlanItem has all fields canonicalItemId needs: name, path,
+  // scope, category, projectPath. The optional mtimeMs/framework fields
+  // are not used by canonicalItemId.
+  function toInventoryItemLike(i: ChangePlanItem): InventoryItem {
+    return {
+      name: i.name,
+      path: i.path,
+      scope: i.scope,
+      category: i.category,
+      projectPath: i.projectPath,
+    };
+  }
+
+  const keep = (i: ChangePlanItem): boolean => selectedItems.has(canonicalItemId(toInventoryItemLike(i)));
+
+  const archive = plan.archive.filter(keep);
+  const disable = plan.disable.filter(keep);
+  const flag = plan.flag.filter(keep);
+
+  const counts = {
+    agents: archive.filter((i) => i.category === 'agent').length,
+    skills: archive.filter((i) => i.category === 'skill').length,
+    mcp: disable.length,
+    memory: flag.length,
+  };
+
+  const filtered: ChangePlan = { archive, disable, flag, counts, savings: { tokens: 0 } };
+  filtered.savings.tokens = calculateDryRunSavings(filtered);
+  return filtered;
 }
 
 if (import.meta.vitest) {
@@ -221,6 +278,73 @@ if (import.meta.vitest) {
         makeResult({ category: 'memory', tier: 'likely-ghost', name: 'mem1' }),
       ]);
       expect(plan.counts).toEqual({ agents: 2, skills: 0, mcp: 2, memory: 1 });
+    });
+  });
+
+  describe('filterChangePlan', () => {
+    // Build a plan with 3 items: agent A, agent B, mcp C
+    function makePlan3() {
+      return buildChangePlan([
+        makeResult({ category: 'agent', tier: 'definite-ghost', name: 'agentA' }),
+        makeResult({ category: 'agent', tier: 'definite-ghost', name: 'agentB' }),
+        makeResult({ category: 'mcp-server', tier: 'definite-ghost', name: 'mcpC' }),
+      ]);
+    }
+
+    it('Test 1: undefined selectedItems returns the plan unchanged (reference-equal)', () => {
+      const plan = makePlan3();
+      const result = filterChangePlan(plan, undefined);
+      expect(result).toBe(plan);
+    });
+
+    it('Test 2: Set with 2 of 3 ids returns only those items', () => {
+      const plan = makePlan3();
+      // Build canonical ids for agentA and agentB (category|scope|projectPath|path)
+      const idA = `agent|global||/tmp/agentA`;
+      const idB = `agent|global||/tmp/agentB`;
+      const result = filterChangePlan(plan, new Set([idA, idB]));
+      expect(result.archive).toHaveLength(2);
+      expect(result.disable).toHaveLength(0);
+      expect(result.archive.map((i) => i.name).sort()).toEqual(['agentA', 'agentB']);
+    });
+
+    it('Test 3: filtered plan has recomputed counts and savings', () => {
+      const plan = buildChangePlan([
+        makeResult({ category: 'agent', tier: 'definite-ghost', name: 'a1', tokens: 100 }),
+        makeResult({ category: 'agent', tier: 'definite-ghost', name: 'a2', tokens: 200 }),
+        makeResult({ category: 'mcp-server', tier: 'definite-ghost', name: 'm1', tokens: 500 }),
+      ]);
+      const idA1 = `agent|global||/tmp/a1`;
+      // mcp-server canonical id: mcp-server|scope|projectPath|name|path
+      // makeResult produces: name='m1', path='/tmp/m1', scope='global', projectPath=null
+      const idM1 = `mcp-server|global||m1|/tmp/m1`;
+      const result = filterChangePlan(plan, new Set([idA1, idM1]));
+      // counts: 1 agent + 1 mcp
+      expect(result.counts.agents).toBe(1);
+      expect(result.counts.mcp).toBe(1);
+      expect(result.counts.agents + result.counts.mcp).toBe(2); // == set.size
+      // savings = archive(100) + disable(500) = 600
+      expect(result.savings.tokens).toBe(600);
+    });
+
+    it('Test 4: empty Set returns zero-item plan with counts=0 and savings=0', () => {
+      const plan = makePlan3();
+      const result = filterChangePlan(plan, new Set());
+      expect(result.archive).toHaveLength(0);
+      expect(result.disable).toHaveLength(0);
+      expect(result.flag).toHaveLength(0);
+      expect(result.counts).toEqual({ agents: 0, skills: 0, mcp: 0, memory: 0 });
+      expect(result.savings.tokens).toBe(0);
+    });
+
+    it('Test 5: unknown ids in the set are silently ignored (no throw)', () => {
+      const plan = makePlan3();
+      const unknownId = 'agent|global||/nonexistent/path';
+      // Should not throw; the unknown id just matches nothing
+      expect(() => filterChangePlan(plan, new Set([unknownId]))).not.toThrow();
+      const result = filterChangePlan(plan, new Set([unknownId]));
+      expect(result.archive).toHaveLength(0);
+      expect(result.disable).toHaveLength(0);
     });
   });
 }

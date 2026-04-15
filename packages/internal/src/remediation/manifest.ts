@@ -30,6 +30,20 @@ import { timestampSuffixForFilename } from './collisions.ts';
 
 export const MANIFEST_VERSION = 1 as const;
 
+/**
+ * Discriminated union describing the selection scope of a bust manifest.
+ * Written by buildHeader into every manifest; read by restore (Phase 8) and
+ * auditors to distinguish full-inventory busts from subset busts.
+ *
+ * - `{ mode: 'full' }` — full-inventory bust (selectedItems === undefined)
+ * - `{ mode: 'subset', ids: string[] }` — subset bust; ids are the
+ *   canonicalItemId values of the selected items, sorted ascending so
+ *   manifests diff deterministically.
+ */
+export type SelectionFilter =
+  | { mode: 'full' }
+  | { mode: 'subset'; ids: string[] };
+
 export interface ManifestHeader {
   record_type: 'header';
   manifest_version: typeof MANIFEST_VERSION;
@@ -40,6 +54,11 @@ export interface ManifestHeader {
   os: NodeJS.Platform;
   node_version: string;
   planned_ops: { archive: number; disable: number; flag: number };
+  /**
+   * Optional on reads (old manifests lack this field; default to { mode: 'full' }).
+   * Always present on writes — buildHeader always sets it.
+   */
+  selection_filter?: SelectionFilter;
 }
 
 // -- Op types (D-11) ---------------------------------------------
@@ -215,12 +234,24 @@ export async function discoverManifests(deps: DiscoverManifestsDeps): Promise<Ma
 // -- Header / Footer builders (D-12) ------------------------------
 
 export function buildHeader(
-  input: Omit<ManifestHeader, 'record_type' | 'manifest_version'>,
+  input: Omit<ManifestHeader, 'record_type' | 'manifest_version' | 'selection_filter'> & {
+    selection_filter?: SelectionFilter;
+  },
 ): ManifestHeader {
+  const sf = input.selection_filter ?? { mode: 'full' };
+  const normalized: SelectionFilter =
+    sf.mode === 'subset' ? { mode: 'subset', ids: [...sf.ids].sort() } : { mode: 'full' };
   return {
     record_type: 'header',
     manifest_version: MANIFEST_VERSION,
-    ...input,
+    ccaudit_version: input.ccaudit_version,
+    checkpoint_ghost_hash: input.checkpoint_ghost_hash,
+    checkpoint_timestamp: input.checkpoint_timestamp,
+    since_window: input.since_window,
+    os: input.os,
+    node_version: input.node_version,
+    planned_ops: input.planned_ops,
+    selection_filter: normalized,
   };
 }
 
@@ -913,6 +944,43 @@ if (import.meta.vitest) {
       expect(typeof entry.path).toBe('string');
       expect(entry.mtime).toBeInstanceOf(Date);
       expect(entry.mtime.getTime()).toBe(fakeMtime.getTime());
+    });
+  });
+
+  describe('buildHeader — selection_filter', () => {
+    function baseInput() {
+      return {
+        ccaudit_version: '0.0.1',
+        checkpoint_ghost_hash: 'sha256:abc',
+        checkpoint_timestamp: '2026-04-05T18:30:00.000Z',
+        since_window: '7d',
+        os: 'darwin' as NodeJS.Platform,
+        node_version: 'v22.20.0',
+        planned_ops: { archive: 1, disable: 0, flag: 0 },
+      };
+    }
+
+    it('Test 6: { mode: full } is stored as-is', () => {
+      const header = buildHeader({ ...baseInput(), selection_filter: { mode: 'full' } });
+      // buildHeader always sets selection_filter; non-null assertion is safe here
+      expect(header.selection_filter!.mode).toBe('full');
+    });
+
+    it('Test 7: { mode: subset, ids } sorts ids ascending', () => {
+      const header = buildHeader({
+        ...baseInput(),
+        selection_filter: { mode: 'subset', ids: ['b', 'a', 'c'] },
+      });
+      const sf = header.selection_filter!;
+      expect(sf.mode).toBe('subset');
+      if (sf.mode === 'subset') {
+        expect(sf.ids).toEqual(['a', 'b', 'c']);
+      }
+    });
+
+    it('Test 8: omitting selection_filter defaults to { mode: full }', () => {
+      const header = buildHeader(baseInput());
+      expect(header.selection_filter).toEqual({ mode: 'full' });
     });
   });
 }
