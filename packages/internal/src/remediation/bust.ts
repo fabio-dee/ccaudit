@@ -325,11 +325,12 @@ export async function runBust(opts: {
     // Record only the IDs that actually survived the filter and will be actioned.
     // This excludes IDs that were requested but matched nothing in the change plan
     // (e.g. typos, already-archived items, framework-protected items).
+    // ChangePlanItem satisfies CanonicalItemInput directly — no cast needed.
     const actionedIds = [
       ...filteredPlan.archive,
       ...filteredPlan.disable,
       ...filteredPlan.flag,
-    ].map((i) => canonicalItemId({ name: i.name, path: i.path, scope: i.scope, category: i.category, projectPath: i.projectPath }));
+    ].map((i) => canonicalItemId(i));
     selectionFilter = { mode: 'subset', ids: actionedIds }; // buildHeader sorts
   }
 

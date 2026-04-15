@@ -65,6 +65,17 @@ type HashRecord = AgentSkillHashRecord | McpHashRecord | MemoryHashRecord;
 // -- Canonical item identifier (Plan 01 extraction) ---------------
 
 /**
+ * Minimal structural type for what canonicalItemId actually needs.
+ * Using a Pick keeps the signature honest: any struct that provides
+ * these five fields (e.g. ChangePlanItem) can be passed directly
+ * without an intermediate cast to the full InventoryItem shape.
+ */
+export type CanonicalItemInput = Pick<
+  InventoryItem,
+  'name' | 'path' | 'scope' | 'category' | 'projectPath'
+>;
+
+/**
  * Canonical item identifier — the single source of truth for how an
  * InventoryItem is keyed inside computeGhostHash AND inside any
  * subset-selection Set<string>. This identifier is intentionally
@@ -77,7 +88,7 @@ type HashRecord = AgentSkillHashRecord | McpHashRecord | MemoryHashRecord;
  * Stability guarantee: the byte sequence computeGhostHash produces
  * for any given inventory is frozen by __fixtures__/ghost-hash-golden.json.
  */
-export function canonicalItemId(item: InventoryItem): string {
+export function canonicalItemId(item: CanonicalItemInput): string {
   switch (item.category) {
     case 'mcp-server':
       return `mcp-server|${item.scope}|${item.projectPath ?? ''}|${item.name}|${item.path}`;

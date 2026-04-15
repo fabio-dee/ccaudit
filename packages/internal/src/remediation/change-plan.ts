@@ -1,6 +1,5 @@
 import type { TokenCostResult } from '../token/types.ts';
 import type { ItemCategory, ItemScope } from '../types.ts';
-import type { InventoryItem } from '../scanner/types.ts';
 import { calculateDryRunSavings } from './savings.ts';
 import { canonicalItemId } from './checkpoint.ts';
 
@@ -128,23 +127,9 @@ export function filterChangePlan(
     return plan;
   }
 
-  // Build a minimal InventoryItem-shaped object from a ChangePlanItem
-  // so we can call canonicalItemId (which accepts InventoryItem).
-  // ChangePlanItem has all fields canonicalItemId needs: name, path,
-  // scope, category, projectPath. The optional mtimeMs/framework fields
-  // are not used by canonicalItemId.
-  function toInventoryItemLike(i: ChangePlanItem): InventoryItem {
-    return {
-      name: i.name,
-      path: i.path,
-      scope: i.scope,
-      category: i.category,
-      projectPath: i.projectPath,
-    };
-  }
-
-  const keep = (i: ChangePlanItem): boolean =>
-    selectedItems.has(canonicalItemId(toInventoryItemLike(i)));
+  // canonicalItemId now accepts CanonicalItemInput (a Pick of InventoryItem),
+  // so ChangePlanItem satisfies it directly — no intermediate cast needed.
+  const keep = (i: ChangePlanItem): boolean => selectedItems.has(canonicalItemId(i));
 
   const archive = plan.archive.filter(keep);
   const disable = plan.disable.filter(keep);

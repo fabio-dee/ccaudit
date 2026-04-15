@@ -13,7 +13,7 @@ export {
   writeCheckpoint,
   readCheckpoint,
 } from './checkpoint.ts';
-export type { Checkpoint, ReadCheckpointResult, StatFn } from './checkpoint.ts';
+export type { Checkpoint, ReadCheckpointResult, StatFn, CanonicalItemInput } from './checkpoint.ts';
 
 // Phase 8: atomic write primitive (D-18 extraction, reused by bust orchestrator)
 export { atomicWriteJson, renameWithRetry } from './atomic-write.ts';
