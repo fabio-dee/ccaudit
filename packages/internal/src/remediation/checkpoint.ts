@@ -579,6 +579,62 @@ if (import.meta.vitest) {
     });
   });
 
+  // -- Golden fixture: freeze computeGhostHash output bytes -----------
+
+  describe('computeGhostHash — golden fixture', () => {
+    it('Test 1: produces exactly the frozen expectedHash (byte-identical)', async () => {
+      const fixtureRaw = await readFile(
+        new URL('./__fixtures__/ghost-hash-golden.json', import.meta.url),
+        'utf8',
+      );
+      const fixture = JSON.parse(fixtureRaw) as {
+        input: TokenCostResult[];
+        expectedHash: string;
+      };
+
+      // Injected StatFn: returns fixed mtimeMs for the shared MCP sourcePath
+      const MCP_MTIME = 1700000002000;
+      const deterministicStat: StatFn = async () => ({ mtimeMs: MCP_MTIME });
+
+      const actual = await computeGhostHash(fixture.input, deterministicStat);
+      expect(actual).toBe(fixture.expectedHash);
+    });
+
+    it('Test 2 (sanity): mutating any mtime in fixture input changes the hash', async () => {
+      const fixtureRaw = await readFile(
+        new URL('./__fixtures__/ghost-hash-golden.json', import.meta.url),
+        'utf8',
+      );
+      const fixture = JSON.parse(fixtureRaw) as { input: TokenCostResult[]; expectedHash: string };
+      const MCP_MTIME = 1700000002000;
+      const deterministicStat: StatFn = async () => ({ mtimeMs: MCP_MTIME });
+
+      // Mutate the memory item's mtimeMs
+      const mutated = fixture.input.map((r) => {
+        if (r.item.category === 'memory') {
+          return { ...r, item: { ...r.item, mtimeMs: 9999999999999 } };
+        }
+        return r;
+      });
+      const mutatedHash = await computeGhostHash(mutated, deterministicStat);
+      expect(mutatedHash).not.toBe(fixture.expectedHash);
+    });
+
+    it('Test 3 (sanity): reordering fixture input items does NOT change the hash', async () => {
+      const fixtureRaw = await readFile(
+        new URL('./__fixtures__/ghost-hash-golden.json', import.meta.url),
+        'utf8',
+      );
+      const fixture = JSON.parse(fixtureRaw) as { input: TokenCostResult[]; expectedHash: string };
+      const MCP_MTIME = 1700000002000;
+      const deterministicStat: StatFn = async () => ({ mtimeMs: MCP_MTIME });
+
+      const reversed = [...fixture.input].reverse();
+      const reversedHash = await computeGhostHash(reversed, deterministicStat);
+      expect(reversedHash).toBe(fixture.expectedHash);
+    });
+  });
+
   // -- writeCheckpoint / readCheckpoint tests -----------------------
 
   describe('resolveCheckpointPath', () => {
