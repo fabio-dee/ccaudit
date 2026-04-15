@@ -146,6 +146,7 @@ export type {
 export {
   buildChangePlan,
   calculateDryRunSavings,
+  canonicalItemId,
   computeGhostHash,
   resolveCheckpointPath,
   writeCheckpoint,
