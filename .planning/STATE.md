@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Interactive Archive
 status: executing
-stopped_at: Completed 03.1-03-adapter-and-cli-wiring-PLAN.md
-last_updated: "2026-04-16T09:10:07.025Z"
+stopped_at: Completed 03.1-04-regression-and-invariant-tests-PLAN.md
+last_updated: "2026-04-16T09:30:49.659Z"
 last_activity: 2026-04-16
 progress:
   total_phases: 10
   completed_phases: 3
   total_plans: 16
-  completed_plans: 14
-  percent: 88
+  completed_plans: 15
+  percent: 94
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-15)
 ## Current Position
 
 Phase: 3.1 (Tabbed category view) — EXECUTING
-Plan: 4 of 5
+Plan: 5 of 5
 Status: Ready to execute
 Last activity: 2026-04-16
 
@@ -59,6 +59,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 03.1-tabbed-category-view P01-dep-posture-and-baseline | 2 | 2 tasks | 4 files |
 | Phase 03.1-tabbed-category-view P02-tabbed-picker-subclass | 11 | 3 tasks | 3 files |
 | Phase 03.1-tabbed-category-view P03-adapter-and-cli-wiring | 4 min | 3 tasks | 3 files |
+| Phase 03.1-tabbed-category-view P04-regression-and-invariant-tests | 16 min | 6 tasks tasks | 6 files files |
 
 ## Accumulated Context
 
@@ -93,6 +94,10 @@ Recent decisions affecting current work:
 - [Phase 03.1-tabbed-category-view]: [Phase 03.1 P03]: select-ghosts.ts is a thin adapter over openTabbedPicker; ghost.ts byte-unchanged; CATEGORY_ORDER/CATEGORY_LABEL/formatRowLabel consolidated to select-ghosts.ts single source
 - [Phase 03.1-tabbed-category-view]: [Phase 03.1 P03]: D3.1-16 terminal-too-short gate implemented as process.exit(1) at adapter entry; integration coverage deferred to Plan 04 per plan design
 - [Phase 03.1-tabbed-category-view]: [Phase 03.1 P03]: _clack test injection replaced by _picker: PickerDep seam; no production caller used _clack (grep-verified); tests rewritten atomically
+- [Phase 03.1-tabbed-category-view]: [Phase 03.1 P04]: CCAUDIT_TEST_STDOUT_ROWS env-only seam wired into select-ghosts.ts's D3.1-16 gate because Node does NOT honour LINES for non-TTY stdout; regex-guarded to numeric input, mirrors Phase 3 CCAUDIT_FORCE_TTY pattern
+- [Phase 03.1-tabbed-category-view]: [Phase 03.1 P04]: After interactive bust completes, tests MUST call child.stdin.end() — @clack/prompts leaves a keypress listener registered that pins the event loop; without end() the subprocess hangs indefinitely until SIGKILL
+- [Phase 03.1-tabbed-category-view]: [Phase 03.1 P04]: Cross-tab persistence test placed in-source (tabbed-picker.ts) not in apps/ccaudit/__tests__/ — plan explicitly preferred in-source; the class's public action methods (nextTab, prevTab, toggleCurrentRow, cursorDown) are the natural seam, no __testDispatchKey seam was required
+- [Phase 03.1-tabbed-category-view]: [Phase 03.1 P04]: Phase 3 INV-S2 + Phase 2 interactive-smoke tests byte-unchanged under the new TabbedGhostPicker class — the safety contract survives the Phase 3.1 rewrite
 
 ### Pending Todos
 
@@ -104,6 +109,6 @@ None yet. Phase 1's primary risk (`computeGhostHash` refactor drift) is mitigate
 
 ## Session Continuity
 
-Last session: 2026-04-16T09:10:07.023Z
-Stopped at: Completed 03.1-03-adapter-and-cli-wiring-PLAN.md
+Last session: 2026-04-16T09:30:49.656Z
+Stopped at: Completed 03.1-04-regression-and-invariant-tests-PLAN.md
 Resume file: None
