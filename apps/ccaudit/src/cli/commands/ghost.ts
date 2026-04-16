@@ -1705,6 +1705,27 @@ export const ghostCommand = define({
           console.log('');
           console.log(colorize.dim('Total includes hook upper-bound (worst case).'));
         }
+
+        // Phase 3.2 SC7: hook archival is deferred — surface the status once so
+        // users who came looking for hook support are not silently abandoned.
+        // Explicit D-23 suppression gate (all four modes — structurally we are
+        // already inside the text-mode arm of the json/csv/else branch, but we
+        // also check !mode.json && !mode.csv defensively to make the gate
+        // self-documenting and robust to future restructuring). --quiet is
+        // NOT absorbed into the outer text-mode branch — it gates per-line.
+        // --ci lives on ctx.values.ci, not on mode.
+        if (
+          hookItems.length > 0 &&
+          !mode.json &&
+          !mode.csv &&
+          !mode.quiet &&
+          ctx.values.ci !== true
+        ) {
+          console.log('');
+          console.log(
+            colorize.dim('Hook archival deferred — selectable archive coming in a future phase'),
+          );
+        }
       }
 
       // ── D-22 through D-25: auto-open interactive picker prompt ──────────────
