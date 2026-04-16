@@ -228,9 +228,8 @@ if (import.meta.vitest) {
   /** Build a fake ClackGroupDep for tests. */
   function makeClack(returnValue: string[] | symbol): ClackGroupDep & { fakeCancelSymbol: symbol } {
     const fakeCancelSymbol = Symbol('clack-cancel');
-    const resolvedValue = returnValue instanceof Symbol ? returnValue : returnValue;
     return {
-      groupMultiselect: vi.fn().mockResolvedValue(resolvedValue),
+      groupMultiselect: vi.fn().mockResolvedValue(returnValue),
       isCancel: vi.fn((v: unknown) => v === fakeCancelSymbol),
       fakeCancelSymbol,
     };
