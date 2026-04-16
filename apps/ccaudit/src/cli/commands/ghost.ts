@@ -619,10 +619,7 @@ export const ghostCommand = define({
           } else {
             interactiveResolvedRegime = regimeFlag;
           }
-          const { global: iGlobal, projects: iProjects } = groupGhostsByProject(
-            ghosts,
-            homedir(),
-          );
+          const { global: iGlobal, projects: iProjects } = groupGhostsByProject(ghosts, homedir());
           const { total: iWorstCase } = calculateWorstCaseOverhead(iGlobal, iProjects);
           await runInteractiveGhostFlow({
             enriched,
