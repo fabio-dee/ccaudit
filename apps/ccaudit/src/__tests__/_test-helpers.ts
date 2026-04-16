@@ -1,6 +1,7 @@
 /**
- * Shared test helpers for ccaudit integration tests (Phase 0 + Phase 3).
- * tmpHome scaffolding + subprocess runner + JSONL reader + Phase 3 fixtures.
+ * Shared test helpers for ccaudit integration tests (Phase 0 + Phase 3 + Phase 3.1).
+ * tmpHome scaffolding + subprocess runner + JSONL reader + Phase 3 fixtures +
+ * Phase 3.1 tabbed-picker key-injection helpers.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, mkdir, rm, readFile, writeFile, chmod, utimes, readdir } from 'node:fs/promises';
@@ -339,6 +340,97 @@ export function agentItemId(tmpHome: string, fileName: string): string {
     category: 'agent',
     projectPath: null,
   });
+}
+
+// ── Phase 3.1 helpers (tabbed-picker integration tests) ───────────────────
+
+/**
+ * Write key bytes to a spawned ccaudit picker's stdin with a small inter-key delay.
+ *
+ * The picker blocks on stdin inside @clack/core's readline loop; writes are processed
+ * asynchronously by the base class. A small delay between each keystroke lets the TUI
+ * re-render so the next key is applied to the post-render state.
+ *
+ * Key-byte reference:
+ *
+ *     Tab         → '\t'
+ *     Shift-Tab   → '\x1b[Z'
+ *     ArrowUp     → '\x1b[A'
+ *     ArrowDown   → '\x1b[B'
+ *     ArrowRight  → '\x1b[C'
+ *     ArrowLeft   → '\x1b[D'
+ *     Enter       → '\r'
+ *     Space       → ' '
+ *     Esc         → '\x1b'
+ *     Ctrl-C      → '\x03'
+ *     PageUp      → '\x1b[5~'
+ *     PageDown    → '\x1b[6~'
+ *     Home        → '\x1b[H'
+ *     End         → '\x1b[F'
+ *
+ * @param child   Live ChildProcess returned by {@link runCcauditGhost}.
+ * @param keys    Ordered key byte sequences to transmit.
+ * @param delayMs Per-keystroke delay in milliseconds (default 75).
+ */
+export async function sendKeys(
+  child: ChildProcess,
+  keys: readonly string[],
+  delayMs = 75,
+): Promise<void> {
+  for (const k of keys) {
+    if (!child.stdin || child.stdin.destroyed) {
+      throw new Error('sendKeys: child stdin is not available or already destroyed');
+    }
+    child.stdin.write(k);
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+}
+
+/**
+ * Scaffold N ghost agents under `<tmpHome>/.claude/agents/` named
+ * `agent-01.md` through `agent-NN.md` (zero-padded to 2 digits). Also seeds:
+ *   - empty `.claude.json`
+ *   - one minimal session jsonl (so discoverSessionFiles returns ≥1 file)
+ *
+ * Caller is responsible for {@link buildFakePs} if the subprocess needs the
+ * running-Claude preflight to pass.
+ *
+ * Note: callers needing >99 ghosts should pass count ≤ 99 OR swap the `padStart(2,'0')`
+ * for a wider width. The 60-ghost overflow regression test (Phase 3.1 Plan 04
+ * Task 2) uses 60, comfortably inside the two-digit range.
+ */
+export async function buildManyGhostsFixture(tmpHome: string, count: number): Promise<void> {
+  if (count < 1 || count > 99) {
+    throw new Error(`buildManyGhostsFixture: count must be 1..99 (got ${count})`);
+  }
+  const agentsDir = path.join(tmpHome, '.claude', 'agents');
+  await mkdir(agentsDir, { recursive: true });
+  await mkdir(path.join(tmpHome, '.config', 'claude'), { recursive: true });
+
+  // N agents named agent-01..agent-NN with minimal content.
+  for (let i = 1; i <= count; i++) {
+    const name = `agent-${String(i).padStart(2, '0')}`;
+    await writeFile(path.join(agentsDir, `${name}.md`), `# ${name}\nunused\n`, 'utf8');
+  }
+
+  // Empty .claude.json so the scanner doesn't fail loading MCP servers.
+  await writeFile(path.join(tmpHome, '.claude.json'), '{}', 'utf8');
+
+  // Minimal session jsonl — discoverSessionFiles requires ≥1 file.
+  const sessionDir = path.join(tmpHome, '.claude', 'projects', 'many-ghosts-project');
+  await mkdir(sessionDir, { recursive: true });
+  const recentTs = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  await writeFile(
+    path.join(sessionDir, 'session-1.jsonl'),
+    JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      cwd: '/fake/many-ghosts',
+      timestamp: recentTs,
+      sessionId: 'many-ghosts-session',
+    }) + '\n',
+    'utf8',
+  );
 }
 
 /**
