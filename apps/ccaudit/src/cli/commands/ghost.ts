@@ -322,6 +322,9 @@ async function runInteractiveGhostFlow(args: {
 
   // ── Render outcome ────────────────────────────────────────────────────────
   if (result.status === 'success' && !mode.quiet) {
+    const displayManifestPath = mode.privacy
+      ? result.manifestPath.replace(homedir(), '~')
+      : result.manifestPath;
     console.log('');
     console.log(
       renderShareableBlock({
@@ -339,8 +342,8 @@ async function runInteractiveGhostFlow(args: {
           disabledMcp: result.counts.disable.completed,
           flaggedMemory: result.counts.flag.completed + (result.counts.flag.refreshed ?? 0),
         },
-        manifestPath: result.manifestPath,
-        privacy: false,
+        manifestPath: displayManifestPath,
+        privacy: mode.privacy,
         beforeProvenance: { source: 'dry-run', at: result.summary.checkpointTimestamp },
       }),
     );
