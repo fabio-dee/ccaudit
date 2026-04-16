@@ -93,6 +93,56 @@ import { resolveOutputMode, buildJsonEnvelope } from '../_output-mode.ts';
 import { CCAUDIT_VERSION } from '../../_version.ts';
 
 // ---------------------------------------------------------------------------
+// TEST-ONLY: CCAUDIT_TEST_PREFLIGHT_DIRTY=<N> wraps ProcessDetectorDeps.runCommand
+// so the first N process-listing invocations (`ps -A ...` on Unix, `tasklist`
+// on Windows) return synthetic "one claude pid" output; subsequent calls
+// delegate to the real detector. Used by BOTH the interactive flow
+// (bustDeps.processDetector + CLI retry-loop detectFn) and the non-interactive
+// --dangerously-bust-ghosts bust path (runBust's internal preflight) so ONE
+// env value drives every preflight layer. Regex-guarded (/^\d+$/) — not
+// documented in --help, README, or CHANGELOG. Mirrors the CCAUDIT_FORCE_TTY
+// pattern.
+//
+// A per-invocation counter is required so that within a single subprocess
+// execution the first N calls fake and subsequent calls delegate; each CLI
+// invocation builds a fresh wrapper with a fresh counter.
+// ---------------------------------------------------------------------------
+function buildWrappedProcessDeps(): typeof defaultProcessDeps {
+  const dirtyRaw = process.env['CCAUDIT_TEST_PREFLIGHT_DIRTY'];
+  const dirtyCount = dirtyRaw && /^\d+$/.test(dirtyRaw) ? Number.parseInt(dirtyRaw, 10) : 0;
+  if (dirtyCount <= 0) return defaultProcessDeps;
+  let dirtyRemaining = dirtyCount;
+  return {
+    runCommand: async (cmd: string, args: string[], timeoutMs: number): Promise<string> => {
+      // Only fake the process-listing commands (`ps -A ...` on Unix,
+      // `tasklist /FO ...` on Windows). All other runCommand calls
+      // (e.g., `ps -o ppid=` used by getParentPid) delegate to the real
+      // runCommand so walkParentChain continues to work correctly against
+      // the real process tree.
+      const isListCmd =
+        (cmd === 'ps' && args[0] === '-A') || (cmd === 'tasklist' && args.includes('/FO'));
+      if (isListCmd && dirtyRemaining > 0) {
+        dirtyRemaining -= 1;
+        // Diagnostic marker (B2): proves the hook fired inside runBust's
+        // preflight. Integration test asserts this appears at least N times.
+        process.stderr.write(
+          `[PREFLIGHT_DIRTY] synthetic dirty #${dirtyCount - dirtyRemaining}\n`,
+        );
+        if (cmd === 'ps') {
+          // Unix ps -A -o pid=,comm= shape: "  <pid> <comm>"
+          return '  99999 claude\n';
+        }
+        // Windows tasklist /FO CSV /NH shape: quoted CSV row.
+        return '"claude.exe","99999","Console","1","45,000 K"\r\n';
+      }
+      return defaultProcessDeps.runCommand(cmd, args, timeoutMs);
+    },
+    getParentPid: defaultProcessDeps.getParentPid,
+    platform: defaultProcessDeps.platform,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // runInteractiveGhostFlow — private module helper (Plan 03, D-05..D-21, D-26)
 //
 // Orchestrates the full interactive archive flow on a TTY:
@@ -186,48 +236,15 @@ async function runInteractiveGhostFlow(args: {
       break;
   }
 
-  // TEST-ONLY: CCAUDIT_TEST_PREFLIGHT_DIRTY=<N> makes the preflight detector
-  // return a synthetic "one claude pid" ps/tasklist output for the first N
-  // invocations, then delegates to the real detector. This wraps
-  // ProcessDetectorDeps.runCommand (the one method both detectClaudeProcesses
-  // and the CLI-level runPreflightRetryLoop share — see processes.ts:46–50).
-  // Used by BOTH bustDeps.processDetector AND the CLI retry loop's detectFn
-  // so one env value drives both preflight layers. Regex-guarded (strict
-  // numeric match) to prevent accidental production leakage. Not documented
-  // in --help. Mirrors the CCAUDIT_FORCE_TTY pattern.
-  const dirtyRaw = process.env['CCAUDIT_TEST_PREFLIGHT_DIRTY'];
-  const dirtyCount = dirtyRaw && /^\d+$/.test(dirtyRaw) ? Number.parseInt(dirtyRaw, 10) : 0;
-  let dirtyRemaining = dirtyCount;
-  const wrappedProcessDeps =
-    dirtyCount > 0
-      ? {
-          runCommand: async (cmd: string, args: string[], timeoutMs: number): Promise<string> => {
-            // Only fake the process-listing commands (ps on Unix, tasklist on
-            // Windows). All other runCommand calls (e.g., `ps -o ppid=` used by
-            // getParentPid) delegate to the real runCommand so walkParentChain
-            // continues to work correctly against the real process tree.
-            const isListCmd =
-              (cmd === 'ps' && args[0] === '-A') || (cmd === 'tasklist' && args.includes('/FO'));
-            if (isListCmd && dirtyRemaining > 0) {
-              dirtyRemaining -= 1;
-              // Diagnostic marker (B2 fix): proves the hook fired inside runBust's
-              // preflight. Integration test asserts this appears at least N times.
-              process.stderr.write(
-                `[PREFLIGHT_DIRTY] synthetic dirty #${dirtyCount - dirtyRemaining}\n`,
-              );
-              if (cmd === 'ps') {
-                // Unix ps -A -o pid=,comm= shape: "  <pid> <comm>"
-                return '  99999 claude\n';
-              }
-              // Windows tasklist /FO CSV /NH shape: quoted CSV row.
-              return '"claude.exe","99999","Console","1","45,000 K"\r\n';
-            }
-            return defaultProcessDeps.runCommand(cmd, args, timeoutMs);
-          },
-          getParentPid: defaultProcessDeps.getParentPid,
-          platform: defaultProcessDeps.platform,
-        }
-      : defaultProcessDeps;
+  // TEST-ONLY wrapped detectors — see buildWrappedProcessDeps() docstring.
+  // CCAUDIT_TEST_PREFLIGHT_DIRTY=<N> gives EACH layer its own counter of N
+  // synthetic dirty calls. `entryProcessDeps` drives the entry preflight;
+  // `bustProcessDeps` drives bustDeps.processDetector AND the bust-time CLI
+  // retry loop's detectFn. Separate counters are required so exhausting the
+  // entry counter does not starve the bust-time layer — the SC5b integration
+  // test exercises BOTH layers in a single subprocess run.
+  const entryProcessDeps = buildWrappedProcessDeps();
+  const bustProcessDeps = buildWrappedProcessDeps();
 
   // ── Phase 3.2 SC4: running-Claude preflight BEFORE picker opens ───────
   // Mirrors the preflight that runBust runs at bust.ts:265, hoisted to run
@@ -235,7 +252,7 @@ async function runInteractiveGhostFlow(args: {
   // via walkParentChain (same logic as bust.ts:274) so the entry retry loop
   // can short-circuit cleanly when ccaudit is spawned from inside Claude.
   {
-    const detected = await detectClaudeProcesses(process.pid, wrappedProcessDeps);
+    const detected = await detectClaudeProcesses(process.pid, entryProcessDeps);
     let initialResult: RunningProcessInput | undefined;
     if (detected.status === 'spawn-failed') {
       // Fail-closed (D-02 invariant, matches bust.ts:268): cannot verify → refuse.
@@ -245,7 +262,7 @@ async function runInteractiveGhostFlow(args: {
       return;
     }
     if (detected.processes.length > 0) {
-      const chain = await walkParentChain(process.pid, wrappedProcessDeps);
+      const chain = await walkParentChain(process.pid, entryProcessDeps);
       const detectedPids = new Set(detected.processes.map((p) => p.pid));
       const selfInvocation = chain.some((p) => detectedPids.has(p));
       initialResult = {
@@ -255,7 +272,7 @@ async function runInteractiveGhostFlow(args: {
     }
     if (initialResult !== undefined) {
       const outcome = await runPreflightRetryLoop({
-        detectFn: () => detectClaudeProcesses(process.pid, wrappedProcessDeps),
+        detectFn: () => detectClaudeProcesses(process.pid, entryProcessDeps),
         phase: 'entry',
         initialResult,
       });
@@ -380,7 +397,7 @@ async function runInteractiveGhostFlow(args: {
       return protection.filtered;
     },
     computeHash: (e) => computeGhostHash(e),
-    processDetector: wrappedProcessDeps,
+    processDetector: bustProcessDeps,
     selfPid: process.pid,
     // runCeremony is unused when skipCeremony=true, but the dep is required
     // by BustDeps shape. Provide a no-op to satisfy the interface.
@@ -420,7 +437,7 @@ async function runInteractiveGhostFlow(args: {
   // runPreflightRetryLoop (closing the parent session would kill ccaudit).
   while (result.status === 'running-process') {
     const retryOutcome = await runPreflightRetryLoop({
-      detectFn: () => detectClaudeProcesses(process.pid, wrappedProcessDeps),
+      detectFn: () => detectClaudeProcesses(process.pid, bustProcessDeps),
       phase: 'bust',
       initialResult: { selfInvocation: result.selfInvocation, pids: result.pids },
     });
@@ -1188,7 +1205,7 @@ export const ghostCommand = define({
             return protection.filtered;
           },
           computeHash: (e) => computeGhostHash(e),
-          processDetector: defaultProcessDeps,
+          processDetector: buildWrappedProcessDeps(),
           selfPid: process.pid,
           runCeremony: async ({ plan, yes: ceremonyYes }) => {
             // Print the change plan to stdout BEFORE the prompts (D-15) so the
