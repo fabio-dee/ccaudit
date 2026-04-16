@@ -30,7 +30,6 @@ import { fileURLToPath } from 'node:url';
 import {
   makeTmpHome,
   cleanupTmpHome,
-  buildFakePs,
   runCcauditGhost,
   listManifestsDir,
 } from './_test-helpers.ts';
@@ -49,8 +48,15 @@ beforeAll(() => {
 });
 
 // ── Test ───────────────────────────────────────────────────────────────────
-// Windows: fake `ps` shell scripts require /bin/sh; skip on win32.
-describe.skipIf(process.platform === 'win32')(
+// Platform-portable: the D3.1-16 height gate returns exit 1 BEFORE
+// checkTuiGuards runs (see select-ghosts.ts: the `stdoutRows < 14` check
+// fires immediately after the empty-inventory short-circuit, upstream of
+// any `ps`-based running-Claude detection). No fake-ps shim is needed,
+// so this test runs on every platform — including Windows, which lacks
+// /bin/sh and could not execute the shell-based `buildFakePs` helper.
+// The other two integration tests (overflow, tab-nav-keys) still need
+// `buildFakePs` because their code paths reach checkTuiGuards.
+describe(
   'Phase 3.1 — Terminal-too-short gate (D3.1-16): rows < 14 exits 1 with exact stderr',
   () => {
     let tmpHome: string;
@@ -82,7 +88,9 @@ describe.skipIf(process.platform === 'win32')(
         '# short-agent\nNever invoked.\n',
         'utf8',
       );
-      await buildFakePs(tmpHome);
+      // Intentionally no `buildFakePs` call: the height gate exits before
+      // any `ps` lookup happens, so the shim is not needed. Dropping it
+      // unblocks Windows execution (no /bin/sh dependency in this test).
     });
 
     afterEach(async () => {
