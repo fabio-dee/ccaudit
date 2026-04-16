@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Interactive Archive
 status: executing
-stopped_at: Completed 03.1-02-tabbed-picker-subclass-PLAN.md
-last_updated: "2026-04-16T09:01:38.691Z"
+stopped_at: Completed 03.1-03-adapter-and-cli-wiring-PLAN.md
+last_updated: "2026-04-16T09:10:07.025Z"
 last_activity: 2026-04-16
 progress:
   total_phases: 10
   completed_phases: 3
   total_plans: 16
-  completed_plans: 13
-  percent: 81
+  completed_plans: 14
+  percent: 88
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-15)
 ## Current Position
 
 Phase: 3.1 (Tabbed category view) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Ready to execute
 Last activity: 2026-04-16
 
@@ -58,6 +58,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 03 P02 | 35 | 1 tasks | 6 files |
 | Phase 03.1-tabbed-category-view P01-dep-posture-and-baseline | 2 | 2 tasks | 4 files |
 | Phase 03.1-tabbed-category-view P02-tabbed-picker-subclass | 11 | 3 tasks | 3 files |
+| Phase 03.1-tabbed-category-view P03-adapter-and-cli-wiring | 4 min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -89,6 +90,9 @@ Recent decisions affecting current work:
 - [Phase 03.1-tabbed-category-view]: [Phase 03.1 P01]: @clack/core pinned as catalog devDep (D3.1-13). Zero-runtime-deps invariant holds: apps/ccaudit dependencies still empty.
 - [Phase 03.1-tabbed-category-view]: [Phase 03.1 P02]: TabbedGhostPicker extends @clack/core.MultiSelectPrompt with pure _viewport.ts and _tab-bar.ts helpers; viewport formula lives once in _viewport.ts; action methods extracted public (nextTab, toggleAllInActiveTab, etc.) for in-source unit testing; key-handler base class auto-renders so no explicit render calls needed.
 - [Phase 03.1-tabbed-category-view]: [Phase 03.1 P02]: 'a' scoped to active tab only (D3.1-15); cross-tab selection as single Set<string>; renderTokenCounter: () => string stub slotted for Phase 4 handshake with zero layout churn.
+- [Phase 03.1-tabbed-category-view]: [Phase 03.1 P03]: select-ghosts.ts is a thin adapter over openTabbedPicker; ghost.ts byte-unchanged; CATEGORY_ORDER/CATEGORY_LABEL/formatRowLabel consolidated to select-ghosts.ts single source
+- [Phase 03.1-tabbed-category-view]: [Phase 03.1 P03]: D3.1-16 terminal-too-short gate implemented as process.exit(1) at adapter entry; integration coverage deferred to Plan 04 per plan design
+- [Phase 03.1-tabbed-category-view]: [Phase 03.1 P03]: _clack test injection replaced by _picker: PickerDep seam; no production caller used _clack (grep-verified); tests rewritten atomically
 
 ### Pending Todos
 
@@ -100,6 +104,6 @@ None yet. Phase 1's primary risk (`computeGhostHash` refactor drift) is mitigate
 
 ## Session Continuity
 
-Last session: 2026-04-16T09:01:38.689Z
-Stopped at: Completed 03.1-02-tabbed-picker-subclass-PLAN.md
+Last session: 2026-04-16T09:10:07.023Z
+Stopped at: Completed 03.1-03-adapter-and-cli-wiring-PLAN.md
 Resume file: None

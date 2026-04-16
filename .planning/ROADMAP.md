@@ -99,7 +99,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 5 plans
 - [x] 03.1-01-dep-posture-and-baseline-PLAN.md — Pin @clack/core as explicit devDep of packages/terminal + capture pre-phase bundle baseline for Plan 05's <10 KB growth gate
 - [x] 03.1-02-tabbed-picker-subclass-PLAN.md — Build TabbedGhostPicker (extends @clack/core.MultiSelectPrompt) + pure helpers (_viewport.ts, _tab-bar.ts) with in-source tests for viewport math, tab-bar render, and all 13+ key handlers
-- [ ] 03.1-03-adapter-and-cli-wiring-PLAN.md — Refactor select-ghosts.ts into a thin adapter that calls openTabbedPicker, add <14-row terminal-too-short gate, keep SelectGhostsOutcome byte-identical so ghost.ts is unchanged
+- [x] 03.1-03-adapter-and-cli-wiring-PLAN.md — Refactor select-ghosts.ts into a thin adapter that calls openTabbedPicker, add <14-row terminal-too-short gate, keep SelectGhostsOutcome byte-identical so ghost.ts is unchanged
 - [ ] 03.1-04-regression-and-invariant-tests-PLAN.md — Add 4 integration tests: terminal-overflow regression, cross-tab selection persistence, both-bindings tab-nav (Tab + →), terminal-too-short exit-1 + re-verify Phase 3 INV-S2 (SIGINT→zero-writes) under the new picker class
 - [ ] 03.1-05-bundle-gate-and-verify-PLAN.md — Capture post-phase bundle size, enforce <10 KB phase-local growth gate + <15 KB aggregate v1.5 gate, run `pnpm verify` green end-to-end
 
