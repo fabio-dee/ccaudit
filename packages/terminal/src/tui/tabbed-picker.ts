@@ -533,6 +533,43 @@ if (import.meta.vitest) {
       expect(ids).toEqual(['agent', 'mcp-server', 'command']);
     });
 
+    it('Phase 3.2 SC6: hook-category items are filtered out of tabs entirely', () => {
+      // Input has 4 categories including hooks; tab list should exclude HOOKS.
+      const ghosts = [
+        makeGhost({ name: 'a1', category: 'agent', tokens: 100 }),
+        makeGhost({ name: 'mcp1', category: 'mcp-server', tokens: 500 }),
+        makeGhost({ name: 'cmd1', category: 'command', tokens: 30 }),
+        makeGhost({ name: 'hook1', category: 'hook', tokens: 2000 }),
+        makeGhost({ name: 'hook2', category: 'hook', tokens: 2500 }),
+      ];
+      const picker = makePicker(ghosts);
+      expect(picker.tabs.length).toBe(3);
+      const ids = picker.tabs.map((t) => t.categoryId);
+      expect(ids).not.toContain('hook');
+      expect(ids).toEqual(['agent', 'mcp-server', 'command']);
+    });
+
+    it('Phase 3.2 SC6: WR-02 exhaustiveness guard still fires for unknown categories', () => {
+      // A category that is NOT in CATEGORY_ORDER must still throw. This protects
+      // against a future typo where someone adds 'bookmark' (etc.) to the scanner
+      // without wiring the tab. The hook-skip does NOT loosen this guard — the
+      // skip is AFTER the knownCategories check.
+      const rogueGhost = makeGhost({
+        name: 'x1',
+        category: 'not-a-category',
+        tokens: 100,
+      });
+      expect(() => makePicker([rogueGhost])).toThrow(/unknown category/);
+    });
+
+    it('Phase 3.2 SC6: input of ONLY hook items throws the empty-tabs guard', () => {
+      const ghosts = [
+        makeGhost({ name: 'hook1', category: 'hook', tokens: 100 }),
+        makeGhost({ name: 'hook2', category: 'hook', tokens: 200 }),
+      ];
+      expect(() => makePicker(ghosts)).toThrow(/no non-empty categories/);
+    });
+
     it('Test 3: Space toggles current row canonical ID in selectedIds', () => {
       const ghost = makeGhost({ name: 'only', category: 'agent', tokens: 100 });
       const picker = makePicker([ghost]);
