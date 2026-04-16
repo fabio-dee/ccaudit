@@ -23,3 +23,4 @@ export {
   type ConfirmationOutcome,
   type ConfirmationInput,
 } from './confirmation.ts';
+export { promptAutoOpen, type AutoOpenOutcome } from './auto-open-prompt.ts';
