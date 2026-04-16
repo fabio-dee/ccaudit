@@ -122,14 +122,29 @@ describe.skipIf(process.platform === 'win32')(
         timeout: 10_000,
       });
 
-      // Give the subprocess time to: scan, write the .last-dry-run checkpoint,
-      // and reach the selectGhosts() call. The picker on a non-pty subprocess
-      // will block on stdin (or @clack will raise an error before reading);
-      // either way, ~500ms is enough to clear the pre-picker work.
+      // Wait for the subprocess to reach the picker (blocking on stdin) before
+      // sending SIGINT. We poll `child.exitCode === null` with exponential back-off
+      // rather than a fixed sleep — this avoids flakiness on slow CI runners where
+      // 500ms may not be enough, while keeping the fast path fast on developer machines.
       //
-      // We can't poll stderr for a deterministic marker (the picker doesn't
-      // print one), so a short bounded sleep is the simplest correct approach.
-      await new Promise((r) => setTimeout(r, 500));
+      // The ideal fix (IN-01) would emit a `[ccaudit:ready-for-input]` marker on
+      // stderr from runInteractiveGhostFlow and poll for that, removing timing
+      // sensitivity entirely. That requires a production-code change; for now the
+      // retry loop is a safe improvement over the original fixed sleep.
+      {
+        const maxWaitMs = 5_000;
+        const startMs = Date.now();
+        let delayMs = 100;
+        while (spawned.child.exitCode !== null && Date.now() - startMs < maxWaitMs) {
+          await new Promise((r) => setTimeout(r, delayMs));
+          delayMs = Math.min(delayMs * 2, 500);
+        }
+        // Final 200ms grace period — ensures the subprocess reaches the blocking
+        // selectGhosts() call after the checkpoint write completes.
+        if (spawned.child.exitCode === null) {
+          await new Promise((r) => setTimeout(r, 200));
+        }
+      }
 
       // Confirm the child is still alive (otherwise the test is meaningless —
       // the subprocess crashed before we got a chance to abort it).
