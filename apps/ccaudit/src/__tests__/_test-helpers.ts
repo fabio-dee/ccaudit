@@ -342,6 +342,25 @@ export function agentItemId(tmpHome: string, fileName: string): string {
   });
 }
 
+/**
+ * Compute the canonical id for a global command .md file at
+ * `<tmpHome>/.claude/commands/<relPath>`, matching the scanner's
+ * resolveCommandName behavior (namespace-separator `:`).
+ *
+ * Example:
+ *   commandItemId(tmpHome, 'sc/build.md', 'sc:build')
+ *   → canonical id for {category:'command', scope:'global', name:'sc:build', path:<abs>}
+ */
+export function commandItemId(tmpHome: string, relPath: string, name: string): string {
+  return canonicalItemId({
+    name,
+    path: path.join(tmpHome, '.claude', 'commands', relPath),
+    scope: 'global',
+    category: 'command',
+    projectPath: null,
+  });
+}
+
 // ── Phase 3.1 helpers (tabbed-picker integration tests) ───────────────────
 
 /**
