@@ -84,6 +84,12 @@ export type {
 
 // Phase 8: bust orchestrator -- the Wave 1 pipeline that wires Wave 0
 // primitives into the full --dangerously-bust-ghosts flow (D-01..D-18).
+//
+// NOTE: `patchMcpConfigText` is exported from bust.ts with `export function`
+// solely to enable the `if (import.meta.vitest)` in-source unit tests — it is
+// intentionally NOT re-exported here. External callers (e.g. restore.ts) should
+// NOT import it directly from the subpath; if a future use case requires it,
+// promote it to this barrel with a clear API contract first.
 export { runBust, runConfirmationCeremony } from './bust.ts';
 export type { BustResult, BustDeps, BustCounts, CeremonyResult, CeremonyIO } from './bust.ts';
 
