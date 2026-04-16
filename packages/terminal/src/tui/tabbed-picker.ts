@@ -338,6 +338,19 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
   // ---------------------------------------------------------------------------
 
   public _renderFrame(): string {
+    // WR-01 guard: @clack/core.MultiSelectPrompt installs its own `on('key', …)`
+    // and `on('cursor', …)` handlers in its constructor that mutate `this.value`
+    // via `toggleAll` / `toggleValue` using the flat-options list with `cursor`
+    // synced to the active tab's LOCAL cursor. Our subclass's handlers run
+    // AFTER the base, so `this.value` silently diverges from `this.selectedIds`
+    // between keypresses. The submit() path already overwrites `this.value`
+    // before state transitions, but any consumer that reads `this.value`
+    // mid-prompt (or any future @clack/core key binding we don't know about)
+    // would see incoherent state. Syncing at every render keeps `this.value`
+    // authoritative across the full lifetime of the prompt — it runs on every
+    // keypress and is cheap (Set → Array copy).
+    this.value = Array.from(this.selectedIds);
+
     const lines: string[] = [];
     const t = this.activeTab();
 
@@ -687,6 +700,43 @@ if (import.meta.vitest) {
         expect(picker.selectedIds.has('agent|global||/fake/a2')).toBe(true);
         expect(picker.selectedIds.has('skill|global||/fake/s1')).toBe(true);
       }
+    });
+
+    it('WR-01: picker.value stays coherent with selectedIds after render + submit', () => {
+      // Regression guard for the base-class double-dispatch footgun:
+      //   @clack/core.MultiSelectPrompt's key bindings mutate `this.value`
+      //   independently of our `this.selectedIds` set. `_renderFrame()` now
+      //   resynchronises `this.value` from `selectedIds` at every render so
+      //   the two never silently diverge. `submit()` still overwrites
+      //   `this.value` as a final safety net.
+      const ghosts = [
+        makeGhost({ name: 'a1', category: 'agent', tokens: 100 }),
+        makeGhost({ name: 'a2', category: 'agent', tokens: 80 }),
+        makeGhost({ name: 's1', category: 'skill', tokens: 200 }),
+      ];
+      const picker = makePicker(ghosts);
+
+      // Simulate toggling two items across two tabs via our subclass's
+      // own mutators (the fake "happy path" that does not trigger base
+      // bindings — but the render-time sync must still mirror the state).
+      picker.toggleCurrentRow(); // a1 (tab 0 cursor 0)
+      picker.cursorDown();
+      picker.toggleCurrentRow(); // a2 (tab 0 cursor 1)
+      picker.nextTab(); // tab 1
+      picker.toggleCurrentRow(); // s1
+
+      // Render once — this is the step that synchronises `this.value`.
+      picker._renderFrame();
+
+      const valueSorted = [...picker.value!].sort();
+      const selectedSorted = Array.from(picker.selectedIds).sort();
+      expect(valueSorted).toEqual(selectedSorted);
+      expect(valueSorted.length).toBe(3);
+
+      // Submit() also forces the sync as the final safety net.
+      picker.submit();
+      const submitValueSorted = [...picker.value!].sort();
+      expect(submitValueSorted).toEqual(selectedSorted);
     });
 
     it('WR-02: constructor throws on ghost whose category is not in CATEGORY_ORDER', () => {
