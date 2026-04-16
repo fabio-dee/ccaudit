@@ -155,18 +155,26 @@ export interface ReadManifestResult {
 /**
  * Resolve the canonical manifest path for a new bust (D-10).
  *
- * Per-bust file keyed by UTC ISO timestamp with colons replaced by dashes for
- * cross-platform filesystem safety (NTFS forbids `:` in filenames). Milliseconds
- * are stripped to keep the suffix human-readable and to match the Phase 8 archive
- * filename suffix format from collisions.ts.
+ * Per-bust file keyed by UTC ISO timestamp (millisecond precision) with colons
+ * and periods replaced by dashes for cross-platform filesystem safety (NTFS
+ * forbids `:` in filenames), plus a 4-character random base-36 suffix to make
+ * same-millisecond collisions vanishingly unlikely.
+ *
+ * Format: bust-<yyyy-MM-ddTHH-mm-ss-SSSZ>-<rand4>.jsonl
+ *
+ * The `bust-` prefix and `.jsonl` suffix are unchanged so `discoverManifests`
+ * continues to find both old-format (second-granularity) and new-format
+ * manifests transparently — the filter only checks `bust-*.jsonl`.
  *
  * @example
- *   resolveManifestPath(new Date('2026-04-05T18:30:00Z'))
- *   // -> '~/.claude/ccaudit/manifests/bust-2026-04-05T18-30-00Z.jsonl'
+ *   resolveManifestPath(new Date('2026-04-05T18:30:00.123Z'))
+ *   // -> '~/.claude/ccaudit/manifests/bust-2026-04-05T18-30-00-123Z-<rand>.jsonl'
  */
 export function resolveManifestPath(now: Date = new Date()): string {
-  const stamp = timestampSuffixForFilename(now);
-  return path.join(homedir(), '.claude', 'ccaudit', 'manifests', `bust-${stamp}.jsonl`);
+  // Millisecond-precision timestamp: keep ms digits, replace `:` and `.` with `-`
+  const stamp = now.toISOString().replace(/:/g, '-').replace(/\./g, '-');
+  const rand = Math.random().toString(36).slice(2, 6);
+  return path.join(homedir(), '.claude', 'ccaudit', 'manifests', `bust-${stamp}-${rand}.jsonl`);
 }
 
 // -- Manifest discovery (Phase 9) --------------------------------
@@ -514,12 +522,30 @@ if (import.meta.vitest) {
   const path = (await import('node:path')).default;
 
   describe('resolveManifestPath', () => {
-    it('returns ~/.claude/ccaudit/manifests/bust-<iso-dashed>.jsonl', () => {
-      const d = new Date('2026-04-05T18:30:00.000Z');
+    it('returns bust-<iso-ms-dashed>-<rand4>.jsonl with ms precision and random suffix', () => {
+      const d = new Date('2026-04-05T18:30:00.123Z');
       const p = resolveManifestPath(d);
+      // Timestamp part: 2026-04-05T18-30-00-123Z (colons and dot replaced with dash)
+      // Suffix: 4 base-36 characters
       expect(p).toMatch(
-        /[/\\]\.claude[/\\]ccaudit[/\\]manifests[/\\]bust-2026-04-05T18-30-00Z\.jsonl$/,
+        /[/\\]\.claude[/\\]ccaudit[/\\]manifests[/\\]bust-2026-04-05T18-30-00-123Z-[a-z0-9]{4}\.jsonl$/,
       );
+    });
+
+    it('two calls with the same Date produce different paths (random suffix)', () => {
+      const d = new Date('2026-04-05T18:30:00.000Z');
+      const p1 = resolveManifestPath(d);
+      const p2 = resolveManifestPath(d);
+      // With a 4-char base-36 suffix (36^4 = 1,679,616 combinations) collision
+      // probability per call pair is ~1/1.7M — safe to assert inequality in tests.
+      expect(p1).not.toBe(p2);
+    });
+
+    it('result starts with bust- and ends with .jsonl (discoverManifests compat)', () => {
+      const p = resolveManifestPath(new Date());
+      const filename = p.split(/[/\\]/).at(-1)!;
+      expect(filename.startsWith('bust-')).toBe(true);
+      expect(filename.endsWith('.jsonl')).toBe(true);
     });
   });
 

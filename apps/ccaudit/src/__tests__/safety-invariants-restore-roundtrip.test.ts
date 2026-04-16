@@ -137,10 +137,10 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(path.join(tmpHome, '.claude', 'agents', 'beta.md'))).toBe(false);
       expect(existsSync(path.join(tmpHome, '.claude', 'agents', 'gamma.md'))).toBe(true);
 
-      // Step 3: pause 1 second so the second bust gets a different manifest filename
-      // (resolveManifestPath uses second-level timestamp — two busts within the same
-      // second would collide to the same path, leaving only 1 manifest).
-      await new Promise((r) => setTimeout(r, 1_100));
+      // Step 3: (sleep removed) — resolveManifestPath now uses millisecond precision
+      // plus a 4-char random suffix, so same-second busts no longer collide on the
+      // manifest filename. The 1.1s sleep that used to work around the second-granularity
+      // bug (WR-03) is no longer needed. See fix(03-review): WR-03 commit.
 
       // Re-run dry-run so the next bust's checkpoint matches the
       // current inventory (only gamma remains).
@@ -175,7 +175,7 @@ describe.skipIf(process.platform === 'win32')(
       // The PATH override ensures the fake-ps shim is on PATH for the restore
       // preflight (which also runs the running-Claude check).
       const restore = await runCcauditCli(tmpHome, ['restore', '--json'], {
-        env: { PATH: path.join(tmpHome, 'bin') },
+        env: { PATH: `${path.join(tmpHome, 'bin')}:${process.env.PATH ?? ''}` },
       });
       expect(restore.exitCode, `restore stderr: ${restore.stderr}`).toBe(0);
 
