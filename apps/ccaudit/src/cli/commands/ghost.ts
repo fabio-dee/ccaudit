@@ -616,9 +616,8 @@ export const ghostCommand = define({
           } else {
             interactiveResolvedRegime = regimeFlag;
           }
-          const interactiveGhosts = enriched.filter((r) => r.tier !== 'used');
           const { global: iGlobal, projects: iProjects } = groupGhostsByProject(
-            interactiveGhosts,
+            ghosts,
             homedir(),
           );
           const { total: iWorstCase } = calculateWorstCaseOverhead(iGlobal, iProjects);
