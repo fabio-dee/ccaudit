@@ -46,4 +46,30 @@ if (delta > BUDGET_BYTES) {
   process.exit(1);
 }
 
+// Phase-local bundle gate (opt-in via CCAUDIT_PHASE_BASELINE=/path/to/baseline.txt env var).
+// Phase 3.1 uses a <10 KB growth budget (D3.1-16); callers can override via CCAUDIT_PHASE_BUDGET_BYTES.
+// Future phases can set their own baseline file + budget without touching this script.
+const phaseBaselinePath = process.env.CCAUDIT_PHASE_BASELINE;
+if (phaseBaselinePath && existsSync(phaseBaselinePath)) {
+  const phaseBaselineRaw = readFileSync(phaseBaselinePath, 'utf8').trim();
+  const phaseBaseline = Number.parseInt(phaseBaselineRaw, 10);
+  if (!Number.isFinite(phaseBaseline) || phaseBaseline <= 0) {
+    console.error(
+      `[bundle-size] FAIL: could not parse phase baseline from ${phaseBaselinePath}: ${JSON.stringify(phaseBaselineRaw)}`,
+    );
+    process.exit(1);
+  }
+  const phaseBudget = Number.parseInt(process.env.CCAUDIT_PHASE_BUDGET_BYTES ?? '10240', 10);
+  const phaseDelta = actual - phaseBaseline;
+  console.log(
+    `[bundle-size] phase-local baseline=${phaseBaseline}B delta=${phaseDelta}B budget=${phaseBudget}B`,
+  );
+  if (phaseDelta > phaseBudget) {
+    console.error(
+      `[bundle-size] FAIL: phase-local delta exceeds ${phaseBudget}B (${phaseDelta} > ${phaseBudget})`,
+    );
+    process.exit(1);
+  }
+}
+
 process.exit(0);
