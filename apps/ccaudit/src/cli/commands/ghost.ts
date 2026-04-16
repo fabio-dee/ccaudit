@@ -39,6 +39,8 @@ import {
   atomicWriteJson,
   atomicWriteText,
   defaultProcessDeps,
+  detectClaudeProcesses,
+  walkParentChain,
   applyFrameworkProtection,
   detectClaudeCodeVersion,
   resolveMcpRegime,
@@ -82,6 +84,9 @@ import {
   selectGhosts,
   runConfirmationPrompt,
   promptAutoOpen,
+  renderRunningProcessMessage,
+  runPreflightRetryLoop,
+  type RunningProcessInput,
 } from '@ccaudit/terminal';
 import { outputArgs } from '../_shared-args.ts';
 import { resolveOutputMode, buildJsonEnvelope } from '../_output-mode.ts';
@@ -180,6 +185,53 @@ async function runInteractiveGhostFlow(args: {
     case 'ok':
       break;
   }
+
+  // ── Phase 3.2 SC4: running-Claude preflight BEFORE picker opens ───────
+  // Mirrors the preflight that runBust runs at bust.ts:265, hoisted to run
+  // BEFORE the user invests selection time. Also determines self-invocation
+  // via walkParentChain (same logic as bust.ts:274) so the entry retry loop
+  // can short-circuit cleanly when ccaudit is spawned from inside Claude.
+  {
+    const detected = await detectClaudeProcesses(process.pid, defaultProcessDeps);
+    let initialResult: RunningProcessInput | undefined;
+    if (detected.status === 'spawn-failed') {
+      // Fail-closed (D-02 invariant, matches bust.ts:268): cannot verify → refuse.
+      console.error(`Could not verify Claude Code is stopped: ${detected.error}`);
+      console.error('Run from a clean shell where ps (Unix) or tasklist (Windows) is available.');
+      process.exitCode = 2;
+      return;
+    }
+    if (detected.processes.length > 0) {
+      const chain = await walkParentChain(process.pid, defaultProcessDeps);
+      const detectedPids = new Set(detected.processes.map((p) => p.pid));
+      const selfInvocation = chain.some((p) => detectedPids.has(p));
+      initialResult = {
+        selfInvocation,
+        pids: detected.processes.map((p) => p.pid),
+      };
+    }
+    if (initialResult !== undefined) {
+      const outcome = await runPreflightRetryLoop({
+        detectFn: () => detectClaudeProcesses(process.pid, defaultProcessDeps),
+        phase: 'entry',
+        initialResult,
+      });
+      if (outcome.status === 'cancelled') {
+        console.error('No changes made.');
+        return; // exit 0 — INV-S2 compatible: no checkpoint written yet
+      }
+      if (outcome.status === 'spawn-failed') {
+        console.error(`Could not verify Claude Code is stopped: ${outcome.error}`);
+        console.error('Run from a clean shell where ps (Unix) or tasklist (Windows) is available.');
+        process.exitCode = 2;
+        return;
+      }
+      // outcome.status === 'clear' → Claude was closed during the retry prompt.
+      // Fall through to normal flow.
+    }
+    // detected.processes.length === 0 → preflight clear; fall through.
+  }
+  // ────────────────────────────────────────────────────────────────────────
 
   // ── D-13: empty inventory → skip picker entirely ──────────────────────────
   if (ghosts.length === 0) {
@@ -310,12 +362,43 @@ async function runInteractiveGhostFlow(args: {
     os: osPlatform(),
   };
 
-  const result = await runBust({
+  let result = await runBust({
     yes: true,
     deps: bustDeps,
     selectedItems,
     skipCeremony: true,
   });
+
+  // ── Phase 3.2 SC5b: bust-time running-process retry loop ──────────────────
+  // runBust still runs the authoritative preflight at bust.ts:264-286; if it
+  // returns { status: 'running-process' }, we reuse the shared retry helper
+  // and re-invoke runBust with the SAME selectedItems Set — identity preserved
+  // across every retry, no picker re-open. Self-invocation short-circuits via
+  // runPreflightRetryLoop (closing the parent session would kill ccaudit).
+  while (result.status === 'running-process') {
+    const retryOutcome = await runPreflightRetryLoop({
+      detectFn: () => detectClaudeProcesses(process.pid, defaultProcessDeps),
+      phase: 'bust',
+      initialResult: { selfInvocation: result.selfInvocation, pids: result.pids },
+    });
+    if (retryOutcome.status === 'cancelled') {
+      console.error('No changes made.');
+      return; // exit 0 — no checkpoint mutation, selectedItems still valid
+    }
+    if (retryOutcome.status === 'spawn-failed') {
+      console.error(`Could not verify Claude Code is stopped: ${retryOutcome.error}`);
+      console.error('Run from a clean shell where ps (Unix) or tasklist (Windows) is available.');
+      process.exitCode = 2;
+      return;
+    }
+    // retryOutcome.status === 'clear' → re-invoke runBust with SAME selectedItems.
+    result = await runBust({
+      yes: true,
+      deps: bustDeps,
+      selectedItems, // <-- identity preserved (SC5b)
+      skipCeremony: true,
+    });
+  }
 
   // ── D-26: hash-mismatch is terminal informational (no [y/N] prompt) ───────
   if (result.status === 'hash-mismatch') {
@@ -357,6 +440,9 @@ async function runInteractiveGhostFlow(args: {
     console.log(`Done with failures. ${result.failed} op(s) failed — see manifest for details.`);
     console.log(`Manifest: ${result.manifestPath}`);
   } else if (result.status !== 'success' && result.status !== 'partial-success') {
+    // running-process was consumed by the retry loop above; this branch now
+    // handles checkpoint-missing / checkpoint-invalid / process-detection-failed /
+    // user-aborted / config-parse-error / config-write-error.
     console.error(`[ccaudit] Interactive bust failed: ${result.status}`);
     process.exitCode = bustResultToExitCode(result);
   }
@@ -1227,25 +1313,15 @@ export const ghostCommand = define({
               console.error('Run ccaudit --dry-run again to generate a fresh plan.');
               break;
             case 'running-process':
-              if (result.selfInvocation) {
-                console.error("You're running ccaudit from inside a Claude Code session.");
-                console.error('');
-                console.error('Open a separate terminal window and run the command from there.');
-                console.error(
-                  "ccaudit cannot modify Claude Code's configuration while Claude Code is reading it.",
-                );
-              } else {
-                console.error(`Claude Code is still running (pids: ${result.pids.join(', ')}).`);
-                console.error('');
-                console.error(colorize.red("Don't cross the streams!"));
-                console.error('');
-                console.error(
-                  'Close all Claude Code instances before running --dangerously-bust-ghosts.',
-                );
-                console.error(
-                  'Modifying configuration while Claude Code is active can corrupt session state.',
-                );
-              }
+              // Phase 3.2 SC5: single source of truth for the preflight copy.
+              // Byte-for-byte equal to the previous inline console.error block
+              // (locked by the SC5 inline-snapshot test in _preflight-copy.ts).
+              process.stderr.write(
+                renderRunningProcessMessage({
+                  selfInvocation: result.selfInvocation,
+                  pids: result.pids,
+                }),
+              );
               break;
             case 'process-detection-failed':
               console.error(`Could not verify Claude Code is stopped: ${result.error}`);
