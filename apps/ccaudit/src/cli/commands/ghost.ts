@@ -125,9 +125,7 @@ function buildWrappedProcessDeps(): typeof defaultProcessDeps {
         dirtyRemaining -= 1;
         // Diagnostic marker (B2): proves the hook fired inside runBust's
         // preflight. Integration test asserts this appears at least N times.
-        process.stderr.write(
-          `[PREFLIGHT_DIRTY] synthetic dirty #${dirtyCount - dirtyRemaining}\n`,
-        );
+        process.stderr.write(`[PREFLIGHT_DIRTY] synthetic dirty #${dirtyCount - dirtyRemaining}\n`);
         if (cmd === 'ps') {
           // Unix ps -A -o pid=,comm= shape: "  <pid> <comm>"
           return '  99999 claude\n';
