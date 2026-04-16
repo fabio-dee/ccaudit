@@ -687,8 +687,7 @@ function findCategoryRoot(
   sourcePath: string,
   category: 'agent' | 'skill' | 'command',
 ): string | null {
-  const segment =
-    category === 'agent' ? 'agents' : category === 'skill' ? 'skills' : 'commands';
+  const segment = category === 'agent' ? 'agents' : category === 'skill' ? 'skills' : 'commands';
   const parts = sourcePath.split(path.sep);
   for (let i = parts.length - 1; i >= 0; i--) {
     if (parts[i] === segment) {
