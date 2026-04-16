@@ -102,7 +102,11 @@ async function runGhostCommand(
     const timer = setTimeout(() => {
       killed = true;
       child.kill('SIGKILL');
-      reject(new Error(`runGhostCommand timed out after ${timeoutMs}ms\nstdout: ${stdout.slice(-500)}\nstderr: ${stderr.slice(-500)}`));
+      reject(
+        new Error(
+          `runGhostCommand timed out after ${timeoutMs}ms\nstdout: ${stdout.slice(-500)}\nstderr: ${stderr.slice(-500)}`,
+        ),
+      );
     }, timeoutMs);
 
     child.stdout.on('data', (c: Buffer) => {
