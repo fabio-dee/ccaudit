@@ -76,6 +76,7 @@ export function renderConfirmationScreen(input: ConfirmationInput): string {
   const nSkills = plan.archive.filter((i) => i.category === 'skill').length;
   const nMcp = plan.disable.length;
   const nMemory = plan.flag.length;
+  const nCommands = plan.archive.filter((i) => i.category === 'command').length;
   const mcpLabel = nMcp === 1 ? 'MCP server' : 'MCP servers';
 
   // Lines building blocks
@@ -91,6 +92,9 @@ export function renderConfirmationScreen(input: ConfirmationInput): string {
     }
     if (nSkills > 0) {
       lines.push(`  ${nSkills} skills     -> moved to ${archivedDir}/`);
+    }
+    if (nCommands > 0) {
+      lines.push(`  ${nCommands} commands   -> moved to ${archivedDir}/`);
     }
     if (nMcp > 0) {
       lines.push(`  ${nMcp} ${mcpLabel} -> key-renamed in ~/.claude/mcp_servers.json`);
@@ -127,6 +131,9 @@ export function renderConfirmationScreen(input: ConfirmationInput): string {
     }
     if (nSkills > 0) {
       lines.push(boxLine(`   ${nSkills} skills     → moved to ${archivedDir}/`));
+    }
+    if (nCommands > 0) {
+      lines.push(boxLine(`   ${nCommands} commands   → moved to ${archivedDir}/`));
     }
     if (nMcp > 0) {
       lines.push(boxLine(`   ${nMcp} ${mcpLabel} → key-renamed in ~/.claude/mcp_servers.json`));
@@ -215,6 +222,7 @@ if (import.meta.vitest) {
       skills?: number;
       mcp?: number;
       memory?: number;
+      commands?: number;
     } = {},
   ): ChangePlan {
     const archive = [];
@@ -239,6 +247,18 @@ if (import.meta.vitest) {
         projectPath: null,
         path: `/s/${i}`,
         tokens: 50,
+        tier: 'definite-ghost' as const,
+      });
+    }
+    for (let i = 0; i < (parts.commands ?? 0); i++) {
+      archive.push({
+        action: 'archive' as const,
+        category: 'command' as const,
+        scope: 'global' as const,
+        name: `cmd${i}`,
+        projectPath: null,
+        path: `/c/${i}`,
+        tokens: 30,
         tier: 'definite-ghost' as const,
       });
     }
@@ -277,6 +297,7 @@ if (import.meta.vitest) {
         skills: parts.skills ?? 0,
         mcp: parts.mcp ?? 0,
         memory: parts.memory ?? 0,
+        commands: parts.commands ?? 0,
       },
       savings: { tokens: 0 },
     };
@@ -391,6 +412,52 @@ if (import.meta.vitest) {
       });
       expect(out).toContain('Estimated savings:');
       expect(out).toContain('1,234 tokens / session');
+    });
+
+    it('renders "1 commands" line for a command-only plan (useAscii=true)', () => {
+      const plan = makePlan({ commands: 1 });
+      const out = renderConfirmationScreen({
+        plan,
+        estSavings: 30,
+        manifestDir: defaultManifestDir,
+        useAscii: true,
+      });
+      expect(out).toContain('1 commands');
+      expect(out).toContain('-> moved to');
+    });
+
+    it('renders "1 commands" line with Unicode arrow (useAscii=false)', () => {
+      const plan = makePlan({ commands: 1 });
+      const out = renderConfirmationScreen({
+        plan,
+        estSavings: 30,
+        manifestDir: defaultManifestDir,
+        useAscii: false,
+      });
+      expect(out).toContain('1 commands');
+      expect(out).toContain('→ moved to');
+    });
+
+    it('renders BOTH agents AND commands rows when both counts > 0', () => {
+      const plan = makePlan({ agents: 1, commands: 1 });
+      const outAscii = renderConfirmationScreen({
+        plan,
+        estSavings: 130,
+        manifestDir: defaultManifestDir,
+        useAscii: true,
+      });
+      const outUnicode = renderConfirmationScreen({
+        plan,
+        estSavings: 130,
+        manifestDir: defaultManifestDir,
+        useAscii: false,
+      });
+      expect(outAscii).toContain('1 agents');
+      expect(outAscii).toContain('1 commands');
+      expect(outUnicode).toContain('1 agents');
+      expect(outUnicode).toContain('1 commands');
+      expect(outAscii).toContain('Archiving 2 items:');
+      expect(outUnicode).toContain('Archiving 2 items:');
     });
   });
 
