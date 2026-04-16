@@ -19,7 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Selection plumbing** — Thread optional selection filter through `runBust` without UI; byte-identical hash refactor (completed 2026-04-15)
 - [x] **Phase 2: TUI picker v0.5** — First working `ccaudit ghost --interactive` with `@clack/prompts.groupMultiselect` + auto-open prompt (D7) (completed 2026-04-16)
 - [x] **Phase 3: Safety-invariant integration tests** — Fixture-based tests for INV-S1…S6 locking the contract before polish (v1.5-beta ship gate) (completed 2026-04-16)
-- [ ] **Phase 3.1: Tabbed category view (INSERTED)** — Fix long-list viewport-overflow bug from Phase 2 QA; custom `@clack/core.MultiSelectPrompt` subclass with tabbed categories + bounded viewport
+- [x] **Phase 3.1: Tabbed category view (INSERTED)** — Fix long-list viewport-overflow bug from Phase 2 QA; custom `@clack/core.MultiSelectPrompt` subclass with tabbed categories + bounded viewport (completed 2026-04-16)
 - [ ] **Phase 4: Live token counter** — Add live-updating counter to the tabbed picker footer (custom subclass already exists from Phase 3.1; scope reduced)
 - [ ] **Phase 5: Keyboard model completeness** — Filter, sort cycle, help overlay, framework-group toggle (group-collapse dropped — tabs from Phase 3.1 replace it)
 - [ ] **Phase 6: Framework protection UX + MCP multi-project warning** — Surface existing protection in the picker; warn on multi-config MCPs
@@ -101,7 +101,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] 03.1-02-tabbed-picker-subclass-PLAN.md — Build TabbedGhostPicker (extends @clack/core.MultiSelectPrompt) + pure helpers (_viewport.ts, _tab-bar.ts) with in-source tests for viewport math, tab-bar render, and all 13+ key handlers
 - [x] 03.1-03-adapter-and-cli-wiring-PLAN.md — Refactor select-ghosts.ts into a thin adapter that calls openTabbedPicker, add <14-row terminal-too-short gate, keep SelectGhostsOutcome byte-identical so ghost.ts is unchanged
 - [x] 03.1-04-regression-and-invariant-tests-PLAN.md — Add 4 integration tests: terminal-overflow regression, cross-tab selection persistence, both-bindings tab-nav (Tab + →), terminal-too-short exit-1 + re-verify Phase 3 INV-S2 (SIGINT→zero-writes) under the new picker class
-- [ ] 03.1-05-bundle-gate-and-verify-PLAN.md — Capture post-phase bundle size, enforce <10 KB phase-local growth gate + <15 KB aggregate v1.5 gate, run `pnpm verify` green end-to-end
+- [x] 03.1-05-bundle-gate-and-verify-PLAN.md — Capture post-phase bundle size, enforce <10 KB phase-local growth gate + <15 KB aggregate v1.5 gate, run `pnpm verify` green end-to-end
 
 ### Phase 4: Live token counter
 **Goal**: Add the live-updating token counter to the tabbed picker footer: `X of Y · ≈ Zk tokens saved` recomputed on every Space / `a` toggle. The custom `@clack/core.MultiSelectPrompt` subclass already exists from Phase 3.1 — this phase adds the counter render hook, terminal-resize handling, and per-tab + global totals.
