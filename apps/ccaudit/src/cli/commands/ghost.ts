@@ -80,6 +80,7 @@ import {
   shouldUseAscii,
   selectGhosts,
   runConfirmationPrompt,
+  promptAutoOpen,
 } from '@ccaudit/terminal';
 import { outputArgs } from '../_shared-args.ts';
 import { resolveOutputMode, buildJsonEnvelope } from '../_output-mode.ts';
@@ -1694,6 +1695,63 @@ export const ghostCommand = define({
           console.log('');
           console.log(colorize.dim('Total includes hook upper-bound (worst case).'));
         }
+      }
+
+      // ── D-22 through D-25: auto-open interactive picker prompt ──────────────
+      // Triggered only when:
+      //   - no --interactive (that branch ran earlier and returned)
+      //   - no --dry-run, no --dangerously-bust-ghosts (enforced by D-23 mode suppressors)
+      //   - report mode is human (not --json/--csv/--quiet/--ci)
+      //   - stdin + stdout are TTY
+      //   - ≥1 ghost was found (hasGhosts)
+      //   - terminal ≥ 60 cols
+      //
+      // Uses checkTuiGuards with isExplicitInteractive=false to apply D-23's full
+      // 6-flag suppression matrix (json/csv/quiet/ci/dryRun/dangerouslyBustGhosts).
+      if (hasGhosts) {
+        const guardAutoOpen = checkTuiGuards({
+          mode: {
+            json: mode.json,
+            csv: mode.csv,
+            quiet: mode.quiet,
+            ci: ctx.values.ci === true,
+            dryRun: Boolean(ctx.values.dryRun),
+            dangerouslyBustGhosts: Boolean(ctx.values.dangerouslyBustGhosts),
+          },
+          isTty: Boolean(process.stdout.isTTY) && Boolean(process.stdin.isTTY),
+          ttyCols: process.stdout.columns,
+          isExplicitInteractive: false,
+        });
+        if (guardAutoOpen.kind === 'ok') {
+          const autoOpenOutcome = await promptAutoOpen();
+          if (autoOpenOutcome === 'open') {
+            // 2nd call site of runInteractiveGhostFlow (Plan 03 defined it; Plan 04 reuses it).
+            // Reuse the same enriched array — do NOT re-scan.
+            const autoOpenGhosts = enriched.filter((r) => r.tier !== 'used');
+            await runInteractiveGhostFlow({
+              enriched,
+              ghosts: autoOpenGhosts,
+              sinceStr,
+              regimeFlag,
+              detectedCcVersion,
+              mode: {
+                json: mode.json,
+                csv: mode.csv,
+                quiet: mode.quiet,
+                ci: ctx.values.ci === true,
+                groupFrameworks: mode.groupFrameworks,
+                verbose: mode.verbose,
+                privacy: mode.privacy,
+              },
+              forcePartial: ctx.values.forcePartial === true,
+              resolvedRegime: resolvedRegimeForOverhead,
+              totalOverhead: worstCaseTotal,
+            });
+            return;
+          }
+          // autoOpenOutcome === 'decline' → fall through and exit 0 normally (report already printed)
+        }
+        // guardAutoOpen.kind === 'suppress-auto-open' → do nothing, exit normally (D-23)
       }
 
       // Set exit code: ghost/inventory/mcp exit 1 when ghosts found (per D-01, D-02, D-03)
