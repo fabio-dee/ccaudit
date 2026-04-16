@@ -152,7 +152,18 @@ export async function selectGhosts(input: SelectGhostsInput): Promise<SelectGhos
 
   // D3.1-16: terminal-too-short gate. Refuse to open the picker when
   // the terminal is shorter than 14 rows (floor viewport 8 + chrome ~5).
-  const stdoutRows = process.stdout.rows;
+  //
+  // TEST-ONLY escape hatch: CCAUDIT_TEST_STDOUT_ROWS overrides the
+  // process.stdout.rows read so the Plan 04 integration test can exercise
+  // this gate from a subprocess whose stdout is a pipe (where rows is
+  // always undefined). The LINES env var is NOT honoured by Node's
+  // readline/tty for non-TTY stdout, so this override is the simplest
+  // way to drive the gate deterministically. NEVER documented in --help.
+  // Mirrors the CCAUDIT_FORCE_TTY pattern in ghost.ts (Phase 3 D-21).
+  const envOverride = process.env['CCAUDIT_TEST_STDOUT_ROWS'];
+  const overrideRows =
+    envOverride !== undefined && /^\d+$/.test(envOverride) ? Number(envOverride) : undefined;
+  const stdoutRows = overrideRows ?? process.stdout.rows;
   if (stdoutRows !== undefined && stdoutRows < 14) {
     process.stderr.write(
       `Terminal too short (need ≥14 rows, got ${stdoutRows}). ` +
