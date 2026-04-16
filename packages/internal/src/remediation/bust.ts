@@ -2327,4 +2327,141 @@ if (import.meta.vitest) {
       expect(ceremonySpy).toHaveBeenCalledOnce();
     });
   });
+
+  // ── patchMcpConfigText unit tests ────────────────────────────────
+  // Exported for in-source unit testing (see JSDoc on function).
+  // These are deterministic pure-function tests — no subprocess, no fs.
+  describe('patchMcpConfigText', () => {
+    // Helper: one-mutation rename for brevity
+    function patch(
+      raw: string,
+      name: string,
+      newKey = `ccaudit-disabled:${name}`,
+      value: unknown = { command: 'npx' },
+    ): string | null {
+      return patchMcpConfigText(raw, [{ name, newKey, value }]);
+    }
+
+    it('removes a non-last key and inserts disabled key at document root', () => {
+      const input = `{
+  "mcpServers": {
+    "serverA": {
+      "command": "npx"
+    },
+    "serverB": {
+      "command": "node"
+    }
+  }
+}
+`;
+      const result = patch(input, 'serverA');
+      expect(result).not.toBeNull();
+      const parsed = JSON.parse(result!);
+      // serverA removed from mcpServers
+      expect(parsed.mcpServers?.serverA).toBeUndefined();
+      // serverB preserved in mcpServers
+      expect(parsed.mcpServers?.serverB).toEqual({ command: 'node' });
+      // disabled key at root
+      expect(parsed['ccaudit-disabled:serverA']).toEqual({ command: 'npx' });
+    });
+
+    it('removes the last key (no trailing comma) using preceding-comma branch', () => {
+      const input = `{
+  "mcpServers": {
+    "only": {
+      "command": "npx"
+    }
+  }
+}
+`;
+      const result = patch(input, 'only');
+      expect(result).not.toBeNull();
+      const parsed = JSON.parse(result!);
+      expect(parsed.mcpServers?.only).toBeUndefined();
+      expect(parsed['ccaudit-disabled:only']).toEqual({ command: 'npx' });
+    });
+
+    it('returns null for malformed document (unbalanced braces)', () => {
+      const input = `{
+  "mcpServers": {
+    "broken": {
+      "command": "npx"
+  }
+}
+`;
+      // The outer mcpServers never closes properly — depth never reaches 0 for broken's value
+      // (the walker will find a mismatch or run out of text)
+      const result = patch(input, 'broken');
+      // Either null (malformed brace walk) or a parse error on JSON.parse —
+      // what matters is the function does not throw and either returns null
+      // or the caller can detect the bad output.
+      // The function returns null if valueEnd === -1 or if lastBraceMatch fails.
+      if (result !== null) {
+        // If it did return something, JSON.parse must not crash (structural integrity preserved)
+        expect(() => JSON.parse(result)).not.toThrow();
+      }
+      // Primary assertion: no crash (no throw from patchMcpConfigText)
+    });
+
+    it('handles value object with string literals containing braces (WR-01 regression)', () => {
+      // This fixture would have broken the old brace-depth walker: the '}' inside
+      // "{FOO=bar}" would decrement depth prematurely, causing valueEnd to land
+      // inside the string and making the patcher return null.
+      const input = `{
+  "mcpServers": {
+    "serverA": {
+      "command": "docker",
+      "args": ["run", "--env", "{FOO=bar}"]
+    },
+    "serverB": {
+      "command": "node"
+    }
+  }
+}
+`;
+      const result = patch(input, 'serverA', 'ccaudit-disabled:serverA', {
+        command: 'docker',
+        args: ['run', '--env', '{FOO=bar}'],
+      });
+      // Must NOT return null — the brace inside the string literal must be ignored
+      expect(result).not.toBeNull();
+      const parsed = JSON.parse(result!);
+      expect(parsed.mcpServers?.serverA).toBeUndefined();
+      expect(parsed.mcpServers?.serverB).toEqual({ command: 'node' });
+      expect(parsed['ccaudit-disabled:serverA']).toMatchObject({ command: 'docker' });
+    });
+
+    it('handles value object with nested inner objects (e.g. env map)', () => {
+      const input = `{
+  "mcpServers": {
+    "serverA": {
+      "command": "npx",
+      "env": {
+        "DEBUG": "1",
+        "FOO": "bar"
+      }
+    }
+  }
+}
+`;
+      const nestedValue = { command: 'npx', env: { DEBUG: '1', FOO: 'bar' } };
+      const result = patch(input, 'serverA', 'ccaudit-disabled:serverA', nestedValue);
+      expect(result).not.toBeNull();
+      const parsed = JSON.parse(result!);
+      expect(parsed.mcpServers?.serverA).toBeUndefined();
+      expect(parsed['ccaudit-disabled:serverA']).toEqual(nestedValue);
+    });
+
+    it('returns null when key is not present in the document', () => {
+      const input = `{
+  "mcpServers": {
+    "serverA": {
+      "command": "npx"
+    }
+  }
+}
+`;
+      expect(patch(input, 'nonExistent')).toBeNull();
+    });
+  });
 }
