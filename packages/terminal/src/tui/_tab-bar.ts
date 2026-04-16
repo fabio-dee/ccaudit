@@ -26,13 +26,6 @@ export interface TabDescriptor {
   label: string;
 }
 
-const ANSI_RE = /\x1b\[[0-9;]*m/g;
-
-/** Strip ANSI escape codes and return the visible-character length. */
-function visibleLength(s: string): number {
-  return s.replace(ANSI_RE, '').length;
-}
-
 /**
  * Render the tab bar as a single styled string.
  *
@@ -118,6 +111,9 @@ export function renderTabBar(input: {
 if (import.meta.vitest) {
   const { describe, it, expect } = import.meta.vitest;
 
+  // ANSI SGR escape pattern used to strip picocolors styling for width math.
+  // The control character \x1b is intentional.
+  // eslint-disable-next-line no-control-regex
   const ANSI_STRIP = /\x1b\[[0-9;]*m/g;
   const stripAnsi = (s: string): string => s.replace(ANSI_STRIP, '');
 
@@ -209,11 +205,7 @@ if (import.meta.vitest) {
       // 3 x 8-char labels + 3-col separators = 8 + 3 + 8 + 3 + 8 = 30 cols for all.
       // With terminalCols=20, we can only fit AAAAAAAA (8) + ' | ' (3) + BBBBBBBB (8) = 19.
       // Next tab doesn't fit; emit " ..." suffix if it fits within budget.
-      const tabs = [
-        { label: 'AAAAAAAA' },
-        { label: 'BBBBBBBB' },
-        { label: 'CCCCCCCC' },
-      ];
+      const tabs = [{ label: 'AAAAAAAA' }, { label: 'BBBBBBBB' }, { label: 'CCCCCCCC' }];
       const out = renderTabBar({ tabs, activeIndex: 0, useAscii: true, terminalCols: 20 });
       expect(stripAnsi(out).length).toBeLessThanOrEqual(20);
       expect(out).toContain('AAAAAAAA');
