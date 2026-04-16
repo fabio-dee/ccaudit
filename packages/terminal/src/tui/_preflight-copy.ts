@@ -360,9 +360,9 @@ if (import.meta.vitest) {
         expect(iter1).toBeDefined();
         expect(iter2).toBeDefined();
         // Crucially: after retry, NO render should still reference the stale 999.
-        const staleAfterRetry = writes.slice(writes.indexOf(iter1!) + 1).some(
-          (w) => w.includes('pids: 999'),
-        );
+        const staleAfterRetry = writes
+          .slice(writes.indexOf(iter1!) + 1)
+          .some((w) => w.includes('pids: 999'));
         expect(staleAfterRetry).toBe(false);
       } finally {
         stderrSpy.mockRestore();
