@@ -1,9 +1,10 @@
 /**
- * Shared test helpers for ccaudit integration tests (Phase 0).
- * tmpHome scaffolding + subprocess runner + JSONL reader.
+ * Shared test helpers for ccaudit integration tests (Phase 0 + Phase 3).
+ * tmpHome scaffolding + subprocess runner + JSONL reader + Phase 3 fixtures.
  */
-import { spawn } from 'node:child_process';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { mkdtemp, mkdir, rm, readFile, writeFile, chmod, utimes, readdir } from 'node:fs/promises';
+import { canonicalItemId } from '@ccaudit/internal';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -105,4 +106,253 @@ export async function readJsonl(filePath: string): Promise<unknown[]> {
     .split('\n')
     .filter((line) => line.trim().length > 0)
     .map((line) => JSON.parse(line) as unknown);
+}
+
+// ── Phase 3 helpers ────────────────────────────────────────────────────────
+
+const FAKE_PS_SCRIPT = `#!/bin/sh
+# Fake ps used by ccaudit Phase 3 safety-invariant tests.
+# Handles both \`ps -A -o pid=,comm=\` (system listing) and
+# \`ps -o ppid= -p <pid>\` (parent chain walk).
+case "$*" in
+  *-A*)
+    echo "    1 init"
+    ;;
+  *-o\\ ppid=*)
+    echo "1"
+    ;;
+  *)
+    echo "    1 init"
+    ;;
+esac
+`;
+
+/** Install a fake \`ps\` shim into <tmpHome>/bin/ps. Returns the binDir path. */
+export async function buildFakePs(tmpHome: string): Promise<string> {
+  const binDir = path.join(tmpHome, 'bin');
+  await mkdir(binDir, { recursive: true });
+  const psPath = path.join(binDir, 'ps');
+  await writeFile(psPath, FAKE_PS_SCRIPT, 'utf8');
+  await chmod(psPath, 0o755);
+  return binDir;
+}
+
+/** Result type returned by the live ChildProcess from runCcauditGhost. */
+export interface SpawnedGhost {
+  child: ChildProcess;
+  /** Resolves when the child exits or is killed. */
+  done: Promise<CliResult>;
+}
+
+/**
+ * Spawn `ccaudit ghost <flags>` as a subprocess. Unlike runCcauditCli (which
+ * resolves only after exit), this returns the live ChildProcess so callers
+ * can send signals (SIGINT for INV-S2). The `done` promise resolves with the
+ * usual {stdout, stderr, exitCode, durationMs} once the child exits.
+ *
+ * Default env: HOME, USERPROFILE, XDG_CONFIG_HOME, NO_COLOR=1, TZ=UTC,
+ * PATH=<tmpHome>/bin (the fake-ps dir). Caller can overlay extra vars via opts.env.
+ */
+export function runCcauditGhost(
+  tmpHome: string,
+  flags: string[],
+  opts: RunOpts = {},
+): SpawnedGhost {
+  const start = Date.now();
+  const child = spawn(process.execPath, [ccauditBin, 'ghost', ...flags], {
+    env: {
+      HOME: tmpHome,
+      USERPROFILE: tmpHome,
+      XDG_CONFIG_HOME: path.join(tmpHome, '.config'),
+      NO_COLOR: '1',
+      TZ: 'UTC',
+      PATH: path.join(tmpHome, 'bin'),
+      ...opts.env,
+    },
+    cwd: opts.cwd ?? tmpHome,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  let stdout = '';
+  let stderr = '';
+  let killed = false;
+  const ms = opts.timeout ?? 30_000;
+
+  const done = new Promise<CliResult>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      killed = true;
+      child.kill('SIGKILL');
+      reject(
+        new Error(
+          `runCcauditGhost timed out after ${ms}ms\nstdout:\n${stdout.slice(-500)}\nstderr:\n${stderr.slice(-500)}`,
+        ),
+      );
+    }, ms);
+    child.stdout!.on('data', (c: Buffer) => {
+      stdout += c.toString();
+    });
+    child.stderr!.on('data', (c: Buffer) => {
+      stderr += c.toString();
+    });
+    child.on('error', (err: Error) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.on('close', (code: number | null) => {
+      clearTimeout(timer);
+      // Resolve in both killed and non-killed cases so callers always get output.
+      void killed;
+      resolve({ stdout, stderr, exitCode: code, durationMs: Date.now() - start });
+    });
+  });
+  // Do NOT end stdin automatically — INV-S2 test may want to send signals first.
+  return { child, done };
+}
+
+/**
+ * Write a `~/.claude.json` containing exactly two MCP servers (serverA, serverB)
+ * under the global `mcpServers` nested schema. The serialized JSON deliberately
+ * uses 2-space indentation, a specific key order (serverA before serverB), and
+ * a trailing newline — so the byte-preservation invariant (INV-S1) is testable:
+ * a naive JSON.parse → JSON.stringify round-trip would NOT produce byte-identical
+ * output (key order / trailing newline differ).
+ *
+ * Returns the absolute path to the .claude.json file written.
+ */
+export async function createMcpFixture(tmpHome: string): Promise<string> {
+  // Hand-crafted JSON with deliberate formatting:
+  //  - 2-space indent
+  //  - serverA defined BEFORE serverB (key order matters for byte-identity)
+  //  - file ends with a newline (JSON.stringify omits this by default)
+  const body =
+    '{\n' +
+    '  "mcpServers": {\n' +
+    '    "serverA": {\n' +
+    '      "command": "npx",\n' +
+    '      "args": ["server-a"]\n' +
+    '    },\n' +
+    '    "serverB": {\n' +
+    '      "command": "npx",\n' +
+    '      "args": ["server-b", "--port", "9999"]\n' +
+    '    }\n' +
+    '  }\n' +
+    '}\n';
+  const target = path.join(tmpHome, '.claude.json');
+  await writeFile(target, body, 'utf8');
+  return target;
+}
+
+/**
+ * Build a fixture where the GSD framework is "partially-used":
+ *  - 1 USED gsd-planner.md (recent mtime + session JSONL Task tool invocation)
+ *  - 2 GHOST gsd-*.md (mtime 60 days ago → definite-ghost)
+ *  - empty .claude.json
+ *  - minimal session JSONL with a Task subagent_type='gsd-planner' invocation
+ *
+ * This setup makes the GSD framework's status='partially-used' so
+ * applyFrameworkProtection() locks the 2 ghosts unless --force-partial.
+ *
+ * Caller must invoke `await buildFakePs(tmpHome)` separately if subprocess
+ * tests need the running-Claude preflight to pass.
+ */
+export async function createFrameworkFixture(tmpHome: string): Promise<void> {
+  const agentsDir = path.join(tmpHome, '.claude', 'agents');
+  const xdgDir = path.join(tmpHome, '.config', 'claude');
+  await mkdir(agentsDir, { recursive: true });
+  await mkdir(xdgDir, { recursive: true });
+
+  // 1 USED gsd-planner — recent mtime
+  await writeFile(path.join(agentsDir, 'gsd-planner.md'), '# gsd-planner agent\n', 'utf8');
+
+  // 2 GHOST gsd-* — 60-day-old mtime
+  const sixtyDaysAgo = new Date(Date.now() - 60 * 86_400_000);
+  for (const name of ['gsd-researcher.md', 'gsd-verifier.md']) {
+    const p = path.join(agentsDir, name);
+    await writeFile(p, `# ${name}\n`, 'utf8');
+    await utimes(p, sixtyDaysAgo, sixtyDaysAgo);
+  }
+
+  // Empty .claude.json
+  await writeFile(path.join(tmpHome, '.claude.json'), '{}', 'utf8');
+
+  // Session JSONL with a Task subagent_type='gsd-planner' invocation
+  const sessionDir = path.join(tmpHome, '.claude', 'projects', 'fake-project');
+  await mkdir(sessionDir, { recursive: true });
+  const recentTs = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const sessionLines = [
+    JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      cwd: '/fake/project',
+      timestamp: recentTs,
+      sessionId: 'phase3-fwk',
+    }),
+    JSON.stringify({
+      type: 'assistant',
+      timestamp: recentTs,
+      sessionId: 'phase3-fwk',
+      message: {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: 't1',
+            name: 'Task',
+            input: { subagent_type: 'gsd-planner', prompt: 'plan something' },
+          },
+        ],
+      },
+    }),
+  ];
+  await writeFile(path.join(sessionDir, 'session-1.jsonl'), sessionLines.join('\n') + '\n', 'utf8');
+}
+
+/**
+ * Return the sorted basenames inside <tmpHome>/.claude/ccaudit/manifests/.
+ * Returns [] if the directory does not exist (INV-S2 baseline + post-abort check).
+ */
+export async function listManifestsDir(tmpHome: string): Promise<string[]> {
+  const dir = path.join(tmpHome, '.claude', 'ccaudit', 'manifests');
+  try {
+    const entries = await readdir(dir);
+    return entries.sort();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Read <tmpHome>/.claude.json as raw bytes (NOT JSON.parse). INV-S1 asserts
+ * that the unselected MCP server's key + surrounding formatting are
+ * byte-identical post-bust, so the test must compare bytes, not parsed JSON.
+ */
+export function readMcpConfigBytes(tmpHome: string): Promise<Buffer> {
+  return readFile(path.join(tmpHome, '.claude.json'));
+}
+
+/** Compute the canonical id for a global agent at <tmpHome>/.claude/agents/<fileName>. */
+export function agentItemId(tmpHome: string, fileName: string): string {
+  return canonicalItemId({
+    name: path.basename(fileName, '.md'),
+    path: path.join(tmpHome, '.claude', 'agents', fileName),
+    scope: 'global',
+    category: 'agent',
+    projectPath: null,
+  });
+}
+
+/**
+ * Compute the canonical id for a GLOBAL MCP server defined in <tmpHome>/.claude.json
+ * under `mcpServers.<serverName>`. Mirrors the scanner's MCP InventoryItem shape:
+ *   path = <tmpHome>/.claude.json (the source config file)
+ *   scope = 'global', projectPath = null, name = serverName.
+ */
+export function mcpItemId(tmpHome: string, serverName: string): string {
+  return canonicalItemId({
+    name: serverName,
+    path: path.join(tmpHome, '.claude.json'),
+    scope: 'global',
+    category: 'mcp-server',
+    projectPath: null,
+  });
 }
