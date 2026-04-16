@@ -193,19 +193,11 @@ describe.skipIf(process.platform === 'win32')(
       expect(existsSync(path.join(tmpHome, '.claude', 'agents', 'gamma.md'))).toBe(true);
 
       // Step 8: assert archived/agents/ no longer contains any of the three.
-      const archivedAgentsDir = path.join(
-        tmpHome,
-        '.claude',
-        'ccaudit',
-        'archived',
-        'agents',
+      const archivedAgentsDir = path.join(tmpHome, '.claude', 'ccaudit', 'archived', 'agents');
+      const archivedFiles = (await readdir(archivedAgentsDir).catch(() => [] as string[])).filter(
+        (f) => ['alpha.md', 'beta.md', 'gamma.md'].includes(f),
       );
-      const archivedFiles = (
-        await readdir(archivedAgentsDir).catch(() => [] as string[])
-      ).filter((f) => ['alpha.md', 'beta.md', 'gamma.md'].includes(f));
-      expect(archivedFiles, `archived dir still contains: ${archivedFiles.join(', ')}`).toEqual(
-        [],
-      );
+      expect(archivedFiles, `archived dir still contains: ${archivedFiles.join(', ')}`).toEqual([]);
     });
   },
 );
