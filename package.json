@@ -18,7 +18,7 @@
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "typecheck": "pnpm -r typecheck",
-    "verify": "pnpm -w typecheck && pnpm -w lint && pnpm -w build && node apps/ccaudit/scripts/bundle-smoke-test.mjs && node apps/ccaudit/scripts/bundle-size-check.mjs && pnpm -w test && pnpm format:check"
+    "verify": "pnpm -w typecheck && pnpm -w lint && pnpm -w build && node apps/ccaudit/scripts/bundle-smoke-test.mjs && CCAUDIT_PHASE_BASELINE=apps/ccaudit/scripts/bundle-baseline-03.2.txt CCAUDIT_PHASE_BUDGET_BYTES=10240 node apps/ccaudit/scripts/bundle-size-check.mjs && pnpm -w test && pnpm format:check"
   },
   "devDependencies": {
     "@eslint/js": "catalog:",
