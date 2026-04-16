@@ -28,7 +28,7 @@ if (import.meta.vitest) {
       archive: [],
       disable: [],
       flag: [],
-      counts: { agents: 0, skills: 0, mcp: 0, memory: 0 },
+      counts: { agents: 0, skills: 0, mcp: 0, memory: 0, commands: 0 },
       savings: { tokens: 0 },
       ...parts,
     };

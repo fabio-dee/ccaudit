@@ -5,7 +5,7 @@ import { canonicalItemId } from './checkpoint.ts';
 
 /**
  * Action verbs grouping items in the change plan.
- * - archive: agents + skills (definite-ghost) -> moved to ccaudit/archived/ in Phase 8
+ * - archive: agents + skills + commands (definite-ghost) -> moved to ccaudit/archived/ in Phase 8
  * - disable: MCP servers (definite-ghost OR likely-ghost per D-11a) -> key-renamed in Phase 8
  * - flag:    memory files (any stale tier) -> frontmatter added in Phase 8
  */
@@ -40,6 +40,7 @@ export interface ChangePlan {
     skills: number;
     mcp: number;
     memory: number;
+    commands: number;
   };
   savings: {
     tokens: number;
@@ -78,6 +79,12 @@ export function buildChangePlan(enriched: TokenCostResult[]): ChangePlan {
       }
       continue;
     }
+    if (r.item.category === 'command') {
+      if (r.tier === 'definite-ghost') {
+        archive.push({ action: 'archive', ...base });
+      }
+      continue;
+    }
     if (r.item.category === 'mcp-server') {
       if (r.tier !== 'used') {
         disable.push({ action: 'disable', ...base });
@@ -97,6 +104,7 @@ export function buildChangePlan(enriched: TokenCostResult[]): ChangePlan {
     skills: archive.filter((i) => i.category === 'skill').length,
     mcp: disable.length,
     memory: flag.length,
+    commands: archive.filter((i) => i.category === 'command').length,
   };
 
   // Compute savings AFTER lists are built -- delegates to savings.ts
@@ -140,6 +148,7 @@ export function filterChangePlan(
     skills: archive.filter((i) => i.category === 'skill').length,
     mcp: disable.length,
     memory: flag.length,
+    commands: archive.filter((i) => i.category === 'command').length,
   };
 
   const filtered: ChangePlan = { archive, disable, flag, counts, savings: { tokens: 0 } };
@@ -190,6 +199,20 @@ if (import.meta.vitest) {
       const plan = buildChangePlan([makeResult({ category: 'skill', tier: 'definite-ghost' })]);
       expect(plan.archive).toHaveLength(1);
       expect(plan.counts.skills).toBe(1);
+    });
+
+    it('archives definite-ghost commands', () => {
+      const plan = buildChangePlan([makeResult({ category: 'command', tier: 'definite-ghost' })]);
+      expect(plan.archive).toHaveLength(1);
+      expect(plan.counts.commands).toBe(1);
+      expect(plan.archive[0]!.action).toBe('archive');
+      expect(plan.archive[0]!.category).toBe('command');
+    });
+
+    it('excludes likely-ghost commands', () => {
+      const plan = buildChangePlan([makeResult({ category: 'command', tier: 'likely-ghost' })]);
+      expect(plan.archive).toHaveLength(0);
+      expect(plan.counts.commands).toBe(0);
     });
 
     it('excludes likely-ghost agents (Phase 5 D-12 monitor-only)', () => {
@@ -262,8 +285,9 @@ if (import.meta.vitest) {
         makeResult({ category: 'mcp-server', tier: 'definite-ghost', name: 'm1' }),
         makeResult({ category: 'mcp-server', tier: 'definite-ghost', name: 'm2' }),
         makeResult({ category: 'memory', tier: 'likely-ghost', name: 'mem1' }),
+        makeResult({ category: 'command', tier: 'definite-ghost', name: 'cmd1' }),
       ]);
-      expect(plan.counts).toEqual({ agents: 2, skills: 0, mcp: 2, memory: 1 });
+      expect(plan.counts).toEqual({ agents: 2, skills: 0, mcp: 2, memory: 1, commands: 1 });
     });
   });
 
@@ -319,7 +343,7 @@ if (import.meta.vitest) {
       expect(result.archive).toHaveLength(0);
       expect(result.disable).toHaveLength(0);
       expect(result.flag).toHaveLength(0);
-      expect(result.counts).toEqual({ agents: 0, skills: 0, mcp: 0, memory: 0 });
+      expect(result.counts).toEqual({ agents: 0, skills: 0, mcp: 0, memory: 0, commands: 0 });
       expect(result.savings.tokens).toBe(0);
     });
 
