@@ -177,6 +177,8 @@ export interface BustDeps {
   readFileUtf8: (p: string) => Promise<string>;
   patchMemoryFrontmatter: (filePath: string, nowIso: string) => Promise<FrontmatterPatchResult>;
   atomicWriteJson: <T>(targetPath: string, value: T) => Promise<void>;
+  /** Write pre-formatted text atomically. Used by surgical MCP disable (INV-S1). */
+  atomicWriteText: (targetPath: string, text: string) => Promise<void>;
   pathExistsSync: (p: string) => boolean;
 
   // Manifest
@@ -684,6 +686,101 @@ function findCategoryRoot(sourcePath: string, category: 'agent' | 'skill'): stri
   return null;
 }
 
+// -- Surgical MCP config text patcher (INV-S1 byte-preservation) -
+
+/**
+ * Apply surgical text-level mutations to a JSON config string so that
+ * unmodified keys are byte-identical in the output (INV-S1).
+ *
+ * Each mutation removes a named key from the first matching `"<name>":` in
+ * the text (which is inside the relevant mcpServers block) and appends a new
+ * root-level `"newKey": <value>` before the document's closing `}`.
+ *
+ * Returns null if any mutation target is not found or the text is malformed,
+ * signalling the caller to fall back to atomicWriteJson (non-byte-preserving).
+ *
+ * Exported for in-source unit testing.
+ */
+export function patchMcpConfigText(
+  raw: string,
+  mutations: Array<{ name: string; newKey: string; value: unknown }>,
+): string | null {
+  let text = raw;
+
+  for (const { name, newKey, value } of mutations) {
+    const needle = `"${name}":`;
+    const keyStart = text.indexOf(needle);
+    if (keyStart === -1) return null;
+
+    // Find the opening `{` of the value object.
+    let i = keyStart + needle.length;
+    while (i < text.length && (text[i] === ' ' || text[i] === '\n' || text[i] === '\t')) i++;
+    if (text[i] !== '{') return null;
+
+    // Walk to the matching closing `}`.
+    let depth = 0;
+    let valueEnd = -1;
+    for (let j = i; j < text.length; j++) {
+      if (text[j] === '{') depth++;
+      else if (text[j] === '}') {
+        depth--;
+        if (depth === 0) {
+          valueEnd = j + 1;
+          break;
+        }
+      }
+    }
+    if (valueEnd === -1) return null;
+
+    // Determine the bytes to excise, including surrounding comma + whitespace.
+    // Case A: trailing comma exists → remove key+value+comma (+ leading \n+indent).
+    // Case B: no trailing comma (last key) → remove preceding comma+whitespace.
+    let removeStart = keyStart;
+    let removeEnd = valueEnd;
+
+    const afterValue = text.slice(valueEnd);
+    const trailingCommaMatch = /^(\s*,)/.exec(afterValue);
+    if (trailingCommaMatch) {
+      removeEnd = valueEnd + trailingCommaMatch[1].length;
+      // Also remove the leading newline + indent before the key.
+      const beforeKey = text.slice(0, removeStart);
+      const leadingWsMatch = /\n[ \t]*$/.exec(beforeKey);
+      if (leadingWsMatch) removeStart -= leadingWsMatch[0].length;
+    } else {
+      // Last key: remove the preceding comma + any whitespace.
+      const beforeKey = text.slice(0, removeStart);
+      const precedingCommaMatch = /,(\s*)$/.exec(beforeKey);
+      if (precedingCommaMatch) removeStart -= precedingCommaMatch[0].length;
+    }
+
+    text = text.slice(0, removeStart) + text.slice(removeEnd);
+
+    // Detect root-level indentation from the document's first property.
+    const indentMatch = /^{\n([ \t]+)/.exec(text);
+    const indent = indentMatch ? indentMatch[1] : '  ';
+
+    // Serialize the new value, re-indenting continuation lines.
+    const serializedValue = JSON.stringify(value, null, 2)
+      .split('\n')
+      .map((line, idx) => (idx === 0 ? line : indent + line))
+      .join('\n');
+
+    // Insert before the document's final `}` (preserving any trailing newline).
+    const lastBraceMatch = /\n?}(\n?)$/.exec(text);
+    if (!lastBraceMatch) return null;
+    const insertAt = text.length - lastBraceMatch[0].length;
+    const needsComma = !/,\s*$/.test(text.slice(0, insertAt));
+    const prefix = needsComma ? ',' : '';
+    const trailingNl = lastBraceMatch[1] ?? '';
+    text =
+      text.slice(0, insertAt) +
+      `${prefix}\n${indent}"${newKey}": ${serializedValue}` +
+      `\n}${trailingNl}`;
+  }
+
+  return text;
+}
+
 // -- Disable MCP (dual-schema transactional mutator) --------------
 
 /** Internal result of the Disable MCP step. Mapped to BustResult by runBust. */
@@ -767,6 +864,13 @@ async function disableMcpTransactional(
     const existingKeys = new Set(Object.keys(config));
 
     const planOps: ManifestOp[] = [];
+    // Surgical text mutations for byte-preserving write (INV-S1).
+    // Only populated for flat-schema and global-scope cases where the key
+    // removal + root insertion can be expressed as a position-independent
+    // text substitution. Project-scope mutations fall back to atomicWriteJson.
+    const surgicalMutations: Array<{ name: string; newKey: string; value: unknown }> = [];
+    let hasSurgicalFallback = false; // set true if any item requires full JSON rewrite
+
     for (const item of configItems) {
       if (isFlatMcpJson) {
         // FLAT `.mcp.json` schema. Mutate top-level `mcpServers`, write
@@ -782,6 +886,7 @@ async function disableMcpTransactional(
         (config as Record<string, unknown>)[newKey] = originalValue;
         delete mcpServers[item.name];
         config.mcpServers = mcpServers;
+        surgicalMutations.push({ name: item.name, newKey, value: originalValue });
         planOps.push(
           buildDisableOp({
             config_path: configPath,
@@ -802,6 +907,7 @@ async function disableMcpTransactional(
         (config as Record<string, unknown>)[newKey] = originalValue;
         delete mcpServers[item.name];
         config.mcpServers = mcpServers;
+        surgicalMutations.push({ name: item.name, newKey, value: originalValue });
         planOps.push(
           buildDisableOp({
             config_path: configPath,
@@ -817,6 +923,9 @@ async function disableMcpTransactional(
         // `projects.<projectPath>.mcpServers`. The disabled key is stored at
         // the project level (sibling of the project's own `mcpServers`) so
         // Phase 9 can restore it by locating the matching project path.
+        // Project-scope mutations use full JSON rewrite (surgical patcher
+        // would need to navigate nested paths — not yet implemented).
+        hasSurgicalFallback = true;
         const projects = (config.projects ?? {}) as Record<
           string,
           { mcpServers?: Record<string, unknown> }
@@ -851,8 +960,23 @@ async function disableMcpTransactional(
     // outer ops array; if the write throws, the file's planOps are discarded
     // and the caller returns {status:'write-error'} without writing any of
     // them to the manifest (fail-fast per D-14).
+    //
+    // Byte-preserving write (INV-S1): attempt surgical text patch first for
+    // flat-schema and global-scope items. Falls back to atomicWriteJson when
+    // any project-scope item is present (hasSurgicalFallback) or when the
+    // patcher returns null (malformed/unexpected file structure).
     try {
-      await deps.atomicWriteJson(configPath, config);
+      let wrote = false;
+      if (!hasSurgicalFallback && surgicalMutations.length > 0) {
+        const patched = patchMcpConfigText(raw, surgicalMutations);
+        if (patched !== null) {
+          await deps.atomicWriteText(configPath, patched);
+          wrote = true;
+        }
+      }
+      if (!wrote) {
+        await deps.atomicWriteJson(configPath, config);
+      }
     } catch (err) {
       return { status: 'write-error', path: configPath, error: (err as Error).message };
     }
@@ -1007,6 +1131,9 @@ if (import.meta.vitest) {
       patchMemoryFrontmatter: patchFrontmatter,
       atomicWriteJson: async (target, value) => {
         await wf(target, JSON.stringify(value, null, 2), 'utf8');
+      },
+      atomicWriteText: async (target, text) => {
+        await wf(target, text, 'utf8');
       },
       pathExistsSync: () => false,
       createManifestWriter: (p) => new ManifestWriter(p),

@@ -94,6 +94,40 @@ export async function atomicWriteJson<T>(
   }
 }
 
+/**
+ * Atomically write a pre-formatted text string to `targetPath` via a tmp file
+ * + rename, with the same Windows EPERM retry semantics as `atomicWriteJson`.
+ *
+ * Use this instead of `atomicWriteJson` when the caller has already produced
+ * the final serialized content and must preserve exact byte formatting (e.g.
+ * surgical MCP key renames in `~/.claude.json` that must leave unmodified keys
+ * byte-identical to the original — INV-S1).
+ */
+export async function atomicWriteText(
+  targetPath: string,
+  text: string,
+  options: AtomicWriteOptions = {},
+): Promise<void> {
+  const opts = { ...DEFAULTS, ...options };
+  const dir = path.dirname(targetPath);
+  const rand = Math.random().toString(36).slice(2, 10).padEnd(8, '0');
+  const tmpPath = `${targetPath}.tmp-${process.pid}-${rand}`;
+
+  await mkdir(dir, { recursive: true, mode: opts.dirMode });
+
+  try {
+    await writeFile(tmpPath, text, { mode: opts.mode, encoding: 'utf8' });
+    await renameWithRetry(tmpPath, targetPath, opts);
+  } catch (err) {
+    try {
+      await unlink(tmpPath);
+    } catch {
+      /* swallow */
+    }
+    throw err;
+  }
+}
+
 // -- renameWithRetry ---------------------------------------------
 
 /**
