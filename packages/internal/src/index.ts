@@ -173,6 +173,12 @@ export {
   atomicWriteJson,
   atomicWriteText,
   defaultProcessDeps,
+  // Phase 3.2 Plan 04 — entry-time preflight in runInteractiveGhostFlow needs
+  // the detector + parent-chain walker to mirror bust.ts:264-286 BEFORE the
+  // picker opens. Already re-exported from remediation/index.ts; surfaced
+  // here so the CLI can import alongside runBust without subpath reach-in.
+  detectClaudeProcesses,
+  walkParentChain,
 } from './remediation/index.ts';
 export type {
   BustResult,
