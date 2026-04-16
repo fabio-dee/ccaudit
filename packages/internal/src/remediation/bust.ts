@@ -724,11 +724,17 @@ export function patchMcpConfigText(
     for (let j = i; j < text.length; j++) {
       const ch = text[j];
       if (inString) {
-        if (ch === '\\') { j++; continue; } // skip escaped char
+        if (ch === '\\') {
+          j++;
+          continue;
+        } // skip escaped char
         if (ch === '"') inString = false;
         continue;
       }
-      if (ch === '"') { inString = true; continue; }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
       if (ch === '{') depth++;
       else if (ch === '}') {
         depth--;
@@ -2381,26 +2387,17 @@ if (import.meta.vitest) {
       expect(parsed['ccaudit-disabled:only']).toEqual({ command: 'npx' });
     });
 
-    it('returns null for malformed document (unbalanced braces)', () => {
+    it('returns null for malformed document (value object never closes)', () => {
+      // The `broken` value object opens a `{` but never closes — depth never reaches 0.
+      // patchMcpConfigText must return null rather than crash or produce corrupt output.
       const input = `{
   "mcpServers": {
     "broken": {
       "command": "npx"
-  }
-}
 `;
-      // The outer mcpServers never closes properly — depth never reaches 0 for broken's value
-      // (the walker will find a mismatch or run out of text)
+      // Walker runs off the end of the string without depth reaching 0 → valueEnd === -1 → null
       const result = patch(input, 'broken');
-      // Either null (malformed brace walk) or a parse error on JSON.parse —
-      // what matters is the function does not throw and either returns null
-      // or the caller can detect the bad output.
-      // The function returns null if valueEnd === -1 or if lastBraceMatch fails.
-      if (result !== null) {
-        // If it did return something, JSON.parse must not crash (structural integrity preserved)
-        expect(() => JSON.parse(result)).not.toThrow();
-      }
-      // Primary assertion: no crash (no throw from patchMcpConfigText)
+      expect(result).toBeNull();
     });
 
     it('handles value object with string literals containing braces (WR-01 regression)', () => {

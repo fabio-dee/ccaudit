@@ -134,11 +134,17 @@ describe.skipIf(process.platform === 'win32')(
         for (; i < text.length; i++) {
           const ch = text[i];
           if (inString) {
-            if (ch === '\\') { i++; continue; } // skip escaped char
+            if (ch === '\\') {
+              i++;
+              continue;
+            } // skip escaped char
             if (ch === '"') inString = false;
             continue;
           }
-          if (ch === '"') { inString = true; continue; }
+          if (ch === '"') {
+            inString = true;
+            continue;
+          }
           if (ch === '{') depth++;
           else if (ch === '}') {
             depth--;

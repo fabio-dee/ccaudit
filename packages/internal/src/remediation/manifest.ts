@@ -24,7 +24,6 @@ import { open, mkdir, chmod, readFile, type FileHandle } from 'node:fs/promises'
 import path from 'node:path';
 import { homedir } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
-import { timestampSuffixForFilename } from './collisions.ts';
 
 // -- Header type (D-12) ------------------------------------------
 
