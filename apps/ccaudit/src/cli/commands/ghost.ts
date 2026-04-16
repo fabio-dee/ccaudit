@@ -598,7 +598,7 @@ export const ghostCommand = define({
       // Placed BEFORE the dry-run branch so --interactive short-circuits here.
       // Non-TTY path sets effectiveDryRun=true and falls through to Step 3.6.
       if (ctx.values.interactive === true) {
-        // TEST-ONLY: CCAUDIT_FORCE_TTY=1 lets the Phase 3 INV-S2 integration test
+        // Site A: TEST-ONLY: CCAUDIT_FORCE_TTY=1 lets the Phase 3 INV-S2 integration test
         // exercise the runInteractiveGhostFlow path from a non-pty subprocess
         // (Phase 3 D-21 / CONTEXT.md). NEVER document in --help. This env var has
         // no effect on production usage because users on a real terminal already
