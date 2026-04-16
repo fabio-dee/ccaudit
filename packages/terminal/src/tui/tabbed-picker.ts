@@ -750,9 +750,7 @@ if (import.meta.vitest) {
         category: 'nonexistent-category',
         tokens: 100,
       });
-      expect(() => makePicker([rogueGhost])).toThrow(
-        /unknown category 'nonexistent-category'/,
-      );
+      expect(() => makePicker([rogueGhost])).toThrow(/unknown category 'nonexistent-category'/);
     });
 
     it('_renderFrame produces non-empty output with tab bar, header, rows, hints, and global count', () => {

@@ -27,12 +27,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  makeTmpHome,
-  cleanupTmpHome,
-  runCcauditGhost,
-  listManifestsDir,
-} from './_test-helpers.ts';
+import { makeTmpHome, cleanupTmpHome, runCcauditGhost, listManifestsDir } from './_test-helpers.ts';
 
 // ── Dist guard ─────────────────────────────────────────────────────────────
 
@@ -56,86 +51,83 @@ beforeAll(() => {
 // /bin/sh and could not execute the shell-based `buildFakePs` helper.
 // The other two integration tests (overflow, tab-nav-keys) still need
 // `buildFakePs` because their code paths reach checkTuiGuards.
-describe(
-  'Phase 3.1 — Terminal-too-short gate (D3.1-16): rows < 14 exits 1 with exact stderr',
-  () => {
-    let tmpHome: string;
+describe('Phase 3.1 — Terminal-too-short gate (D3.1-16): rows < 14 exits 1 with exact stderr', () => {
+  let tmpHome: string;
 
-    beforeEach(async () => {
-      tmpHome = await makeTmpHome();
-      // Standard scaffold.
-      await mkdir(path.join(tmpHome, '.claude', 'agents'), { recursive: true });
-      await mkdir(path.join(tmpHome, '.config', 'claude'), { recursive: true });
-      await writeFile(path.join(tmpHome, '.claude.json'), '{}', 'utf8');
-      // Session jsonl so discoverSessionFiles returns ≥1.
-      const sessionDir = path.join(tmpHome, '.claude', 'projects', 'short-term-project');
-      await mkdir(sessionDir, { recursive: true });
-      await writeFile(
-        path.join(sessionDir, 'session-1.jsonl'),
-        JSON.stringify({
-          type: 'system',
-          subtype: 'init',
-          cwd: '/fake/short',
-          timestamp: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-          sessionId: 'short-session',
-        }) + '\n',
-        'utf8',
-      );
-      // ≥1 ghost so the adapter does not early-exit via
-      // { kind: 'empty-inventory' } before reaching the height gate.
-      await writeFile(
-        path.join(tmpHome, '.claude', 'agents', 'short-agent.md'),
-        '# short-agent\nNever invoked.\n',
-        'utf8',
-      );
-      // Intentionally no `buildFakePs` call: the height gate exits before
-      // any `ps` lookup happens, so the shim is not needed. Dropping it
-      // unblocks Windows execution (no /bin/sh dependency in this test).
+  beforeEach(async () => {
+    tmpHome = await makeTmpHome();
+    // Standard scaffold.
+    await mkdir(path.join(tmpHome, '.claude', 'agents'), { recursive: true });
+    await mkdir(path.join(tmpHome, '.config', 'claude'), { recursive: true });
+    await writeFile(path.join(tmpHome, '.claude.json'), '{}', 'utf8');
+    // Session jsonl so discoverSessionFiles returns ≥1.
+    const sessionDir = path.join(tmpHome, '.claude', 'projects', 'short-term-project');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      path.join(sessionDir, 'session-1.jsonl'),
+      JSON.stringify({
+        type: 'system',
+        subtype: 'init',
+        cwd: '/fake/short',
+        timestamp: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+        sessionId: 'short-session',
+      }) + '\n',
+      'utf8',
+    );
+    // ≥1 ghost so the adapter does not early-exit via
+    // { kind: 'empty-inventory' } before reaching the height gate.
+    await writeFile(
+      path.join(tmpHome, '.claude', 'agents', 'short-agent.md'),
+      '# short-agent\nNever invoked.\n',
+      'utf8',
+    );
+    // Intentionally no `buildFakePs` call: the height gate exits before
+    // any `ps` lookup happens, so the shim is not needed. Dropping it
+    // unblocks Windows execution (no /bin/sh dependency in this test).
+  });
+
+  afterEach(async () => {
+    await cleanupTmpHome(tmpHome);
+  });
+
+  it('exits 1 with the exact D3.1-16 stderr message and writes no manifest when rows=10', async () => {
+    // Baseline manifest directory — should remain empty throughout.
+    const baselineManifests = await listManifestsDir(tmpHome);
+
+    const spawned = runCcauditGhost(tmpHome, ['--interactive'], {
+      env: {
+        CCAUDIT_FORCE_TTY: '1',
+        // LINES is set too so the intent is visible to a reader even
+        // though Node's non-TTY stdout ignores it.
+        LINES: '10',
+        COLUMNS: '80',
+        CCAUDIT_TEST_STDOUT_ROWS: '10',
+      },
+      timeout: 5_000,
     });
 
-    afterEach(async () => {
-      await cleanupTmpHome(tmpHome);
-    });
+    const result = await spawned.done;
 
-    it('exits 1 with the exact D3.1-16 stderr message and writes no manifest when rows=10', async () => {
-      // Baseline manifest directory — should remain empty throughout.
-      const baselineManifests = await listManifestsDir(tmpHome);
+    // Assertion 1: exit code is 1.
+    expect(
+      result.exitCode,
+      `expected exitCode=1, got ${result.exitCode}\nstderr:\n${result.stderr}`,
+    ).toBe(1);
 
-      const spawned = runCcauditGhost(tmpHome, ['--interactive'], {
-        env: {
-          CCAUDIT_FORCE_TTY: '1',
-          // LINES is set too so the intent is visible to a reader even
-          // though Node's non-TTY stdout ignores it.
-          LINES: '10',
-          COLUMNS: '80',
-          CCAUDIT_TEST_STDOUT_ROWS: '10',
-        },
-        timeout: 5_000,
-      });
+    // Assertion 2a: first half of the exact D3.1-16 message (including "need ≥14 rows").
+    expect(result.stderr).toContain('Terminal too short (need ≥14 rows, got 10)');
 
-      const result = await spawned.done;
+    // Assertion 2b: second half (resize/bust hint).
+    expect(result.stderr).toContain(
+      'Resize your terminal or use `--dangerously-bust-ghosts` non-interactively.',
+    );
 
-      // Assertion 1: exit code is 1.
-      expect(
-        result.exitCode,
-        `expected exitCode=1, got ${result.exitCode}\nstderr:\n${result.stderr}`,
-      ).toBe(1);
-
-      // Assertion 2a: first half of the exact D3.1-16 message (including "need ≥14 rows").
-      expect(result.stderr).toContain('Terminal too short (need ≥14 rows, got 10)');
-
-      // Assertion 2b: second half (resize/bust hint).
-      expect(result.stderr).toContain(
-        'Resize your terminal or use `--dangerously-bust-ghosts` non-interactively.',
-      );
-
-      // Assertion 3: no manifest was written.
-      const postManifests = await listManifestsDir(tmpHome);
-      const newManifests = postManifests.filter((m) => !baselineManifests.includes(m));
-      expect(
-        newManifests,
-        `terminal-too-short gate violation: new manifest(s) appeared: ${newManifests.join(', ')}`,
-      ).toEqual([]);
-    });
-  },
-);
+    // Assertion 3: no manifest was written.
+    const postManifests = await listManifestsDir(tmpHome);
+    const newManifests = postManifests.filter((m) => !baselineManifests.includes(m));
+    expect(
+      newManifests,
+      `terminal-too-short gate violation: new manifest(s) appeared: ${newManifests.join(', ')}`,
+    ).toEqual([]);
+  });
+});
