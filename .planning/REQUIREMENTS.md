@@ -19,7 +19,7 @@ Requirements for the v1.5 milestone — "interactive archive" response to Reddit
 
 ### SAFETY (new invariants S1–S6)
 
-- [ ] **SAFETY-01** (INV-S1): Unselected MCP server keys are byte-preserved in `~/.claude.json` after subset bust. Verified by fixture test — serverA + serverB; select A; assert B's key is byte-identical post-bust.
+- [x] **SAFETY-01** (INV-S1): Unselected MCP server keys are byte-preserved in `~/.claude.json` after subset bust. Verified by fixture test — serverA + serverB; select A; assert B's key is byte-identical post-bust.
 - [x] **SAFETY-02** (INV-S2): Ctrl+C / SIGINT during TUI produces zero disk writes. Verified by subprocess test — spawn TUI, send SIGINT, assert exit 0 and empty `~/.claude/ccaudit/manifests/`.
 - [ ] **SAFETY-03** (INV-S3): Subset manifests + full manifests round-trip through `ccaudit restore`. Verified by test — subset bust {A, B}, full bust {C}, `restore` restores all three.
 - [ ] **SAFETY-04** (INV-S4): `manifest.header.planned_ops` counts reflect the filtered plan, not the full plan. Verified by test — N-of-M subset bust; assert `header.planned_ops.archive + disable + flag === N` and exactly `N+2` JSONL lines.
@@ -85,7 +85,7 @@ Which phases cover which requirements. Filled by roadmapper during ROADMAP.md cr
 | TUI-05 | Phase 6 | Pending |
 | TUI-06 | Phase 2 | Pending |
 | TUI-07 | Phase 2 | Complete |
-| SAFETY-01 | Phase 3 | Pending |
+| SAFETY-01 | Phase 3 | Complete |
 | SAFETY-02 | Phase 3 | Complete |
 | SAFETY-03 | Phase 3 | Pending |
 | SAFETY-04 | Phase 1 | Pending |
