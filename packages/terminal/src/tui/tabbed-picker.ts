@@ -104,6 +104,11 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
           `TabbedGhostPicker: unknown category '${cat}' — update CATEGORY_ORDER in select-ghosts.ts`,
         );
       }
+      // Phase 3.2 SC6: hooks are advisory-only until archival semantics are designed.
+      // Skip them here so the HOOKS tab never appears in the picker. WR-02 exhaustiveness
+      // guard still fires for any truly unknown category (checked above). Hooks stay in
+      // the ghost report and in the token totals under --include-hooks.
+      if (cat === 'hook') continue;
       if (!grouped[cat]) grouped[cat] = [];
       grouped[cat].push(g);
     }
@@ -509,15 +514,16 @@ if (import.meta.vitest) {
       const ghosts = [
         makeGhost({ name: 'a1', category: 'agent', tokens: 100 }),
         makeGhost({ name: 's1', category: 'skill', tokens: 200 }),
-        makeGhost({ name: 'h1', category: 'hook', tokens: 50 }),
+        makeGhost({ name: 'c1', category: 'command', tokens: 50 }),
       ];
       const picker = makePicker(ghosts);
       expect(picker.tabs.length).toBe(3);
       // CATEGORY_ORDER is agent, skill, mcp-server, memory, command, hook — so
-      // the three non-empty categories render in that order.
+      // the three non-empty categories render in that order (hook would be
+      // filtered out by the Phase 3.2 SC6 skip even if present).
       expect(picker.tabs[0]!.label).toBe('AGENTS');
       expect(picker.tabs[1]!.label).toBe('SKILLS');
-      expect(picker.tabs[2]!.label).toBe('HOOKS');
+      expect(picker.tabs[2]!.label).toBe('COMMANDS');
     });
 
     it('Test 2: empty categories are dropped (input has 6 requested cats but only 3 have items)', () => {
@@ -607,7 +613,7 @@ if (import.meta.vitest) {
       const ghosts = [
         makeGhost({ name: 'a1', category: 'agent', tokens: 100 }),
         makeGhost({ name: 's1', category: 'skill', tokens: 200 }),
-        makeGhost({ name: 'h1', category: 'hook', tokens: 50 }),
+        makeGhost({ name: 'c1', category: 'command', tokens: 50 }),
       ];
       const picker = makePicker(ghosts);
       expect(picker.activeTabIndex).toBe(0);
@@ -623,7 +629,7 @@ if (import.meta.vitest) {
       const ghosts = [
         makeGhost({ name: 'a1', category: 'agent', tokens: 100 }),
         makeGhost({ name: 's1', category: 'skill', tokens: 200 }),
-        makeGhost({ name: 'h1', category: 'hook', tokens: 50 }),
+        makeGhost({ name: 'c1', category: 'command', tokens: 50 }),
       ];
       const picker = makePicker(ghosts);
       expect(picker.activeTabIndex).toBe(0);
@@ -637,7 +643,7 @@ if (import.meta.vitest) {
       const ghosts = [
         makeGhost({ name: 'a1', category: 'agent', tokens: 100 }),
         makeGhost({ name: 's1', category: 'skill', tokens: 200 }),
-        makeGhost({ name: 'h1', category: 'hook', tokens: 50 }),
+        makeGhost({ name: 'c1', category: 'command', tokens: 50 }),
       ];
       const picker = makePicker(ghosts);
       picker.nextTab(); // move off default 0
