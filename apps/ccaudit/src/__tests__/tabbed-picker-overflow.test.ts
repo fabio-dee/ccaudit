@@ -59,15 +59,14 @@ beforeAll(() => {
 // cursor movement and line erase (`\x1b[NA`, `\x1b[NB`, `\x1b[K`, `\x1b[2K`,
 // `\x1b[F`, `\x1b[G`, `\x1b[H`). Keeps the printable content intact so
 // `.includes('agent-01')` and `.match(/agent-\d\d/g)` work on the result.
+/* eslint-disable no-control-regex -- ANSI stripping requires literal \x1b */
 function stripAnsi(s: string): string {
-  // eslint-disable-next-line no-control-regex
   return s
     .replace(/\x1b\[\?25[lh]/g, '') // cursor show/hide
-    // eslint-disable-next-line no-control-regex
     .replace(/\x1b\[[0-9;]*[mGKHFABCD]/g, '') // common CSI codes
-    // eslint-disable-next-line no-control-regex
     .replace(/\x1b\[\d*[JST]/g, ''); // erase display / scroll
 }
+/* eslint-enable no-control-regex */
 
 // ── Test ───────────────────────────────────────────────────────────────────
 // Windows: fake `ps` shell scripts require /bin/sh; skip on win32.

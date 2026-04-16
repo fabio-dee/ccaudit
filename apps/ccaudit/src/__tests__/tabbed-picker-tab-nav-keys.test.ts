@@ -210,35 +210,33 @@ describe.skipIf(process.platform === 'win32')(
       await cleanupTmpHome(tmpHome);
     });
 
-    it(
-      'Tab key (\'\\t\') cycles tabs forward and produces a manifest with exactly 2 planned ops',
-      async () => {
-        const { exitCode, manifest, stderr } = await runPickerWithTabKey(tmpHome, '\t');
+    it("Tab key ('\\t') cycles tabs forward and produces a manifest with exactly 2 planned ops", async () => {
+      const { exitCode, manifest, stderr } = await runPickerWithTabKey(tmpHome, '\t');
 
-        expect(exitCode, `stderr:\n${stderr.slice(-500)}`).toBe(0);
-        expect(manifest.header).not.toBeNull();
-        expect(manifest.header?.planned_ops.archive).toBe(2);
-        // Defensive: the actual op records should also number 2.
-        expect(manifest.ops.length).toBe(2);
-        const cats = manifest.ops.map((o) => o.category).sort();
-        expect(cats).toEqual(['agent', 'skill']);
-      },
-      25_000,
-    );
+      expect(exitCode, `stderr:\n${stderr.slice(-500)}`).toBe(0);
+      expect(manifest.header).not.toBeNull();
+      expect(manifest.header?.planned_ops.archive).toBe(2);
+      // Defensive: the actual op records should also number 2.
+      expect(manifest.ops.length).toBe(2);
+      // Narrow to archive ops (only ArchiveOp + SkippedOp have `category`);
+      // both planned ops are archives in this fixture.
+      const archiveOps = manifest.ops.filter((o) => o.op_type === 'archive');
+      expect(archiveOps.length).toBe(2);
+      const cats = archiveOps.map((o) => o.category).sort();
+      expect(cats).toEqual(['agent', 'skill']);
+    }, 25_000);
 
-    it(
-      "ArrowRight key ('\\x1b[C') cycles tabs forward and produces a manifest with exactly 2 planned ops",
-      async () => {
-        const { exitCode, manifest, stderr } = await runPickerWithTabKey(tmpHome, '\x1b[C');
+    it("ArrowRight key ('\\x1b[C') cycles tabs forward and produces a manifest with exactly 2 planned ops", async () => {
+      const { exitCode, manifest, stderr } = await runPickerWithTabKey(tmpHome, '\x1b[C');
 
-        expect(exitCode, `stderr:\n${stderr.slice(-500)}`).toBe(0);
-        expect(manifest.header).not.toBeNull();
-        expect(manifest.header?.planned_ops.archive).toBe(2);
-        expect(manifest.ops.length).toBe(2);
-        const cats = manifest.ops.map((o) => o.category).sort();
-        expect(cats).toEqual(['agent', 'skill']);
-      },
-      25_000,
-    );
+      expect(exitCode, `stderr:\n${stderr.slice(-500)}`).toBe(0);
+      expect(manifest.header).not.toBeNull();
+      expect(manifest.header?.planned_ops.archive).toBe(2);
+      expect(manifest.ops.length).toBe(2);
+      const archiveOps = manifest.ops.filter((o) => o.op_type === 'archive');
+      expect(archiveOps.length).toBe(2);
+      const cats = archiveOps.map((o) => o.category).sort();
+      expect(cats).toEqual(['agent', 'skill']);
+    }, 25_000);
   },
 );
