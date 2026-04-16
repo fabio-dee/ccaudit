@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Interactive Archive
 status: verifying
-stopped_at: Completed 03.2-04-cli-preflight-wiring-PLAN.md
-last_updated: "2026-04-16T15:46:53.897Z"
+stopped_at: Completed 03.2-05-integration-tests-and-bundle-gate-PLAN.md
+last_updated: "2026-04-16T16:19:32.844Z"
 last_activity: 2026-04-16
 progress:
   total_phases: 10
@@ -61,6 +61,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 03.1-tabbed-category-view P03-adapter-and-cli-wiring | 4 min | 3 tasks | 3 files |
 | Phase 03.1-tabbed-category-view P04-regression-and-invariant-tests | 16 min | 6 tasks tasks | 6 files files |
 | Phase 03.2 P04 | 7min | 1 tasks | 3 files |
+| Phase 03.2 P05 | 27 min | 5 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -102,6 +103,8 @@ Recent decisions affecting current work:
 - [Phase 03.2]: Surface detectClaudeProcesses + walkParentChain at @ccaudit/internal barrel — Rule 3 prereq for plan 04 entry preflight wiring
 - [Phase 03.2]: SC5b selectedItems identity preservation via single const + while-loop wrapping runBust — no picker re-open, no selection loss across retries
 - [Phase 03.2]: Phase 3.1 tabbed-picker-terminal-too-short.test.ts now requires buildFakePs + skipIf(win32) because entry preflight runs ps BEFORE the D3.1-16 height gate inside selectGhosts
+- [Phase 03.2]: Plan 05: Module-scope buildWrappedProcessDeps helper with per-layer counters (entry vs bust) — deviation from plan text's single-counter design, required to exercise both retry layers in SC5b integration test
+- [Phase 03.2]: Plan 05: @clack/prompts.confirm resolves on 'y'/'n' character alone — NEVER send '\r' afterward (leaks Enter to next prompt, commits default value); drive subprocess integration tests with marker-counting on ◆ active-prompt glyph, not full-line phrase regex (clack repaints on every key input)
 
 ### Pending Todos
 
@@ -113,6 +116,6 @@ None yet. Phase 1's primary risk (`computeGhostHash` refactor drift) is mitigate
 
 ## Session Continuity
 
-Last session: 2026-04-16T15:46:53.895Z
-Stopped at: Completed 03.2-04-cli-preflight-wiring-PLAN.md
+Last session: 2026-04-16T16:19:32.842Z
+Stopped at: Completed 03.2-05-integration-tests-and-bundle-gate-PLAN.md
 Resume file: None
