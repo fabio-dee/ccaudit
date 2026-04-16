@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Interactive Archive
 status: executing
-stopped_at: Completed 03.1-01-dep-posture-and-baseline-PLAN.md
-last_updated: "2026-04-16T08:46:28.986Z"
+stopped_at: Completed 03.1-02-tabbed-picker-subclass-PLAN.md
+last_updated: "2026-04-16T09:01:38.691Z"
 last_activity: 2026-04-16
 progress:
   total_phases: 10
   completed_phases: 3
   total_plans: 16
-  completed_plans: 12
-  percent: 75
+  completed_plans: 13
+  percent: 81
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-15)
 ## Current Position
 
 Phase: 3.1 (Tabbed category view) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 Last activity: 2026-04-16
 
@@ -57,6 +57,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 03 P01 | 10 | 2 tasks | 2 files |
 | Phase 03 P02 | 35 | 1 tasks | 6 files |
 | Phase 03.1-tabbed-category-view P01-dep-posture-and-baseline | 2 | 2 tasks | 4 files |
+| Phase 03.1-tabbed-category-view P02-tabbed-picker-subclass | 11 | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -86,6 +87,8 @@ Recent decisions affecting current work:
 - [Phase 03]: patchMcpConfigText exported from bust.ts for in-source unit testing. It returns null on malformed input, triggering atomicWriteJson fallback.
 - [Phase 03.1-tabbed-category-view]: [Phase 03.1 P01]: Baseline captured AFTER @clack/core pin — delta gate in Plan 05 measures only TabbedGhostPicker growth, not dep-posture bump itself.
 - [Phase 03.1-tabbed-category-view]: [Phase 03.1 P01]: @clack/core pinned as catalog devDep (D3.1-13). Zero-runtime-deps invariant holds: apps/ccaudit dependencies still empty.
+- [Phase 03.1-tabbed-category-view]: [Phase 03.1 P02]: TabbedGhostPicker extends @clack/core.MultiSelectPrompt with pure _viewport.ts and _tab-bar.ts helpers; viewport formula lives once in _viewport.ts; action methods extracted public (nextTab, toggleAllInActiveTab, etc.) for in-source unit testing; key-handler base class auto-renders so no explicit render calls needed.
+- [Phase 03.1-tabbed-category-view]: [Phase 03.1 P02]: 'a' scoped to active tab only (D3.1-15); cross-tab selection as single Set<string>; renderTokenCounter: () => string stub slotted for Phase 4 handshake with zero layout churn.
 
 ### Pending Todos
 
@@ -97,6 +100,6 @@ None yet. Phase 1's primary risk (`computeGhostHash` refactor drift) is mitigate
 
 ## Session Continuity
 
-Last session: 2026-04-16T08:46:28.983Z
-Stopped at: Completed 03.1-01-dep-posture-and-baseline-PLAN.md
+Last session: 2026-04-16T09:01:38.689Z
+Stopped at: Completed 03.1-02-tabbed-picker-subclass-PLAN.md
 Resume file: None
