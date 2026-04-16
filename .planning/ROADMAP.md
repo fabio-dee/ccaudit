@@ -18,9 +18,10 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Selection plumbing** — Thread optional selection filter through `runBust` without UI; byte-identical hash refactor (completed 2026-04-15)
 - [x] **Phase 2: TUI picker v0.5** — First working `ccaudit ghost --interactive` with `@clack/prompts.groupMultiselect` + auto-open prompt (D7) (completed 2026-04-16)
-- [ ] **Phase 3: Safety-invariant integration tests** — Fixture-based tests for INV-S1…S6 locking the contract before polish (v1.5-beta ship gate)
-- [ ] **Phase 4: Live token counter** — Footer updates on every Space press via `@clack/core.MultiSelectPrompt` subclass
-- [ ] **Phase 5: Keyboard model completeness** — Group collapse, filter, sort cycle, help overlay, framework-group toggle
+- [x] **Phase 3: Safety-invariant integration tests** — Fixture-based tests for INV-S1…S6 locking the contract before polish (v1.5-beta ship gate) (completed 2026-04-16)
+- [ ] **Phase 3.1: Tabbed category view (INSERTED)** — Fix long-list viewport-overflow bug from Phase 2 QA; custom `@clack/core.MultiSelectPrompt` subclass with tabbed categories + bounded viewport
+- [ ] **Phase 4: Live token counter** — Add live-updating counter to the tabbed picker footer (custom subclass already exists from Phase 3.1; scope reduced)
+- [ ] **Phase 5: Keyboard model completeness** — Filter, sort cycle, help overlay, framework-group toggle (group-collapse dropped — tabs from Phase 3.1 replace it)
 - [ ] **Phase 6: Framework protection UX + MCP multi-project warning** — Surface existing protection in the picker; warn on multi-config MCPs
 - [ ] **Phase 7: JSON envelope contract + docs** — Document additive fields, CHANGELOG entries, README section, CLAUDE.md invariants
 - [ ] **Phase 8: `restore --interactive` (v1.5 core ship gate)** — Mirror picker UX for restore; `--name` fuzzy match; `--all-matching` bulk
@@ -71,32 +72,60 @@ Decimal phases appear between their surrounding integers in numeric order.
   5. `pnpm verify` + new interactive tests green; manual QA on at least 3 terminal emulators (iTerm2, kitty, Gnome Terminal).
 **Plans**: 4 plans
 - [x] 03-01-test-infra-PLAN.md — Add CCAUDIT_FORCE_TTY=1 test hook to ghost.ts + extend _test-helpers.ts with shared helpers (buildFakePs, runCcauditGhost, createMcpFixture, createFrameworkFixture, listManifestsDir, readMcpConfigBytes, agentItemId, mcpItemId)
-- [ ] 03-02-mcp-byte-preservation-PLAN.md — INV-S1 byte-preservation of unselected MCP keys + INV-S4/S5 cross-path equivalence (3 tests)
-- [ ] 03-03-tui-abort-restore-roundtrip-PLAN.md — INV-S2 SIGINT-during-picker = zero disk writes + INV-S3 subset+full manifest restore round-trip (2 tests in 2 files)
-- [ ] 03-04-framework-protection-PLAN.md — INV-S6 framework-protected items not selectable without --force-partial (2 tests + 1 it.todo Phase 6 pointer) + 03-QA-CHECKLIST.md manual QA matrix
+- [x] 03-02-mcp-byte-preservation-PLAN.md — INV-S1 byte-preservation of unselected MCP keys + INV-S4/S5 cross-path equivalence (3 tests)
+- [x] 03-03-tui-abort-restore-roundtrip-PLAN.md — INV-S2 SIGINT-during-picker = zero disk writes + INV-S3 subset+full manifest restore round-trip (2 tests in 2 files)
+- [x] 03-04-framework-protection-PLAN.md — INV-S6 framework-protected items not selectable without --force-partial (2 tests + 1 it.todo Phase 6 pointer) + 03-QA-CHECKLIST.md manual QA matrix
+
+### Phase 3.1: Tabbed category view (INSERTED)
+
+**Goal**: Replace the flat `@clack/prompts.groupMultiselect` picker with a tabbed category view that fixes the long-list terminal-viewport overflow bug discovered during Phase 2 manual QA. Each of the 6 categories (agents / skills / MCP / memory / commands / hooks) becomes its own tab; within a tab, a bounded-viewport multi-select scrolls without overflowing the terminal. Implemented via a custom `@clack/core.MultiSelectPrompt` subclass (pulled forward from Phase 4's original scope — no new runtime dep). Preserves cross-tab selection state, ASCII fallback, and the existing confirmation-screen flow.
+
+**Depends on**: Phase 3
+
+**Requirements**: TUI-01 (refined), TUI-04 (refined) — fixes regression surfaced by manual QA on long inventories
+
+**Inserted because**: Phase 2 manual QA found that `groupMultiselect` renders all options inline; when item count exceeds terminal rows, the terminal auto-anchors to the bottom and the highlighted cursor disappears above the viewport with no way to scroll back. Root cause verified via clack source inspection: `GroupMultiSelectOptions` does not accept `maxItems`, and the render path calls `this.options.map(...).join('\n')` with no windowing. Fix requires a custom prompt subclass (which Phase 4 already planned to introduce for the live token counter). Pulling that subclass forward, adding tabs on top, and bundling both in this phase. Net milestone cost is roughly neutral (Phase 4 scope reduces by ~1.5–2d; Phase 5 scope trims ~25% since tabs replace `g`/`G` group collapse).
+
+**Success Criteria** (what must be TRUE):
+  1. `ccaudit ghost --interactive` opens a tabbed picker with 6 tabs (agents / skills / MCP / memory / commands / hooks); empty categories are hidden and `1–6` direct-jump keys re-index over visible tabs.
+  2. `Tab` / `Shift-Tab` cycles forward/back through visible tabs with wrap; active tab is visually indicated in both Unicode and ASCII (`CCAUDIT_ASCII_ONLY=1`) modes.
+  3. Each tab shows per-category header `{Name} (N/M)` where N = selected in this tab, M = total items in this tab. Cross-tab selection persists when switching tabs.
+  4. Within a tab the visible rows are capped at `Math.max(8, (process.stdout.rows ?? 24) - 10)` with scroll indicators (`↑ N more` / `↓ N more`) when clipped — no more terminal overflow regardless of inventory size.
+  5. `Space` toggles, `a` toggles-all within the active tab, `Enter` confirms global selection across tabs, `q` / `Esc` / `Ctrl-C` cancels with "No changes made." exit 0.
+  6. `dependencies: {}` stays empty in every `package.json` (zero-runtime-deps invariant). Bundle delta from baseline is still within the Phase 2 budget (+<15 KB gzip total for v1.5 — Phase 2 used ~10.9 KB; Phase 3.1 has ~4 KB of headroom).
+  7. Existing Phase 2 confirmation screen and `runBust({ selectedItems, skipCeremony: true, yes: true })` flow remain unchanged — the `SelectGhostsOutcome` shape from `select-ghosts.ts` stays backward-compatible with the Phase 2 caller.
+  8. `pnpm verify` exits 0; existing Phase 2 smoke tests and Phase 3 INV-S tests continue to pass.
+
+**Plans**: 5 plans
+- [x] 03.1-01-dep-posture-and-baseline-PLAN.md — Pin @clack/core as explicit devDep of packages/terminal + capture pre-phase bundle baseline for Plan 05's <10 KB growth gate
+- [ ] 03.1-02-tabbed-picker-subclass-PLAN.md — Build TabbedGhostPicker (extends @clack/core.MultiSelectPrompt) + pure helpers (_viewport.ts, _tab-bar.ts) with in-source tests for viewport math, tab-bar render, and all 13+ key handlers
+- [ ] 03.1-03-adapter-and-cli-wiring-PLAN.md — Refactor select-ghosts.ts into a thin adapter that calls openTabbedPicker, add <14-row terminal-too-short gate, keep SelectGhostsOutcome byte-identical so ghost.ts is unchanged
+- [ ] 03.1-04-regression-and-invariant-tests-PLAN.md — Add 4 integration tests: terminal-overflow regression, cross-tab selection persistence, both-bindings tab-nav (Tab + →), terminal-too-short exit-1 + re-verify Phase 3 INV-S2 (SIGINT→zero-writes) under the new picker class
+- [ ] 03.1-05-bundle-gate-and-verify-PLAN.md — Capture post-phase bundle size, enforce <10 KB phase-local growth gate + <15 KB aggregate v1.5 gate, run `pnpm verify` green end-to-end
 
 ### Phase 4: Live token counter
-**Goal**: Footer on the picker updates on every Space press, showing `X of Y · ≈ Zk tokens saved` in real time. Switches from `groupMultiselect` to a custom `@clack/core.MultiSelectPrompt` subclass; all existing keybinds preserved.
-**Depends on**: Phase 3
+**Goal**: Add the live-updating token counter to the tabbed picker footer: `X of Y · ≈ Zk tokens saved` recomputed on every Space / `a` toggle. The custom `@clack/core.MultiSelectPrompt` subclass already exists from Phase 3.1 — this phase adds the counter render hook, terminal-resize handling, and per-tab + global totals.
+**Depends on**: Phase 3.1
 **Requirements**: (polish on TUI behavior — no new REQ; live counter is a refinement of TUI-01/TUI-04's user experience)
+**Scope adjustment (post Phase 3.1)**: Custom-prompt subclass work was pulled forward into Phase 3.1 to fix the viewport-overflow bug. Phase 4 is reduced to ~0.5d: just wire the counter.
 **Success Criteria** (what must be TRUE):
-  1. Footer value updates correctly on single-item toggle, `a` (select all), `n` (select none), `i` (invert), and framework-group toggle.
+  1. Footer value updates correctly on single-item toggle and `a` (toggle-all within active tab); global total across tabs stays accurate.
   2. Footer re-renders on terminal resize (`SIGWINCH`) at the new width without losing cursor position.
-  3. All Phase 2 keybinds continue to work (no regression); Phase 3 safety-invariant tests still pass.
+  3. All Phase 3.1 keybinds continue to work (no regression); Phase 3 safety-invariant tests still pass.
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 5: Keyboard model completeness
-**Goal**: Deliver the full keyboard model from design doc §5.4 — group collapse, filter, sort cycle, help overlay, framework-group toggle. Completes TUI-02.
-**Depends on**: Phase 3
+**Goal**: Deliver the remaining keyboard model from design doc §5.4 — filter (`/`), sort cycle (`s`), help overlay (`?`), framework-group toggle. Completes TUI-02. (Group collapse `g`/`G` is obsolete — Phase 3.1 tabs replace it; scope trimmed ~25%.)
+**Depends on**: Phase 3.1
 **Requirements**: TUI-02
+**Scope adjustment (post Phase 3.1)**: Group collapse (`g`/`G`) was obsoleted by tabs — an inactive tab IS a collapsed category. Removed from this phase. Filter / sort / help remain.
 **Success Criteria** (what must be TRUE):
-  1. User presses `g` on a focused group to collapse it; collapsed header shows "(N selected of M)". `G` collapses all groups.
-  2. User presses `/` to open a filter; typing narrows visible items by case-insensitive substring; footer shows "Filtered: M of N visible · X selected (incl. hidden)"; selection state is preserved across filter on/off.
-  3. User presses `s` to cycle sort order: staleness desc → tokens desc → name asc; order is stable on subsequent cycles.
-  4. User presses `?` to open the help overlay listing every keybind; `Esc` closes the overlay.
-  5. User presses Space on a framework sub-group header and every item within the framework toggles as a unit.
-  6. All keybinds work end-to-end on a 50-item fixture without layout breakage.
+  1. User presses `/` to open a filter; typing narrows visible items within the active tab by case-insensitive substring; footer shows "Filtered: M of N visible · X selected (incl. hidden)"; selection state is preserved across filter on/off and tab switches.
+  2. User presses `s` to cycle sort order within the active tab: staleness desc → tokens desc → name asc; order is stable on subsequent cycles.
+  3. User presses `?` to open the help overlay listing every keybind (including tab navigation from Phase 3.1); `Esc` closes the overlay.
+  4. User presses Space on a framework sub-group header (if any are rendered within a tab) and every item within the framework toggles as a unit. (If Phase 3.1 flattens framework sub-groups inside tabs, this criterion becomes n/a — revisit during Phase 5 planning.)
+  5. All keybinds work end-to-end on a 50-item fixture without layout breakage.
 **Plans**: TBD
 **UI hint**: yes
 
@@ -159,7 +188,7 @@ Phases execute in numeric order. Phases 4, 5, 6, 7 may run in parallel after Pha
 |-------|----------------|--------|-----------|
 | 1. Selection plumbing | 3/3 | Complete   | 2026-04-15 |
 | 2. TUI picker v0.5 | 4/4 | Complete   | 2026-04-16 |
-| 3. Safety-invariant integration tests | 2/4 | In Progress|  |
+| 3. Safety-invariant integration tests | 4/4 | Complete   | 2026-04-16 |
 | 4. Live token counter | 0/TBD | Not started | - |
 | 5. Keyboard model completeness | 0/TBD | Not started | - |
 | 6. Framework protection UX + MCP multi-project | 0/TBD | Not started | - |

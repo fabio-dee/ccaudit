@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Interactive Archive
-status: verifying
-stopped_at: Completed 03-02-mcp-byte-preservation-PLAN.md
-last_updated: "2026-04-16T06:22:23.623Z"
+status: executing
+stopped_at: Completed 03.1-01-dep-posture-and-baseline-PLAN.md
+last_updated: "2026-04-16T08:46:28.986Z"
 last_activity: 2026-04-16
 progress:
-  total_phases: 9
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 2
-  percent: 0
+  total_phases: 10
+  completed_phases: 3
+  total_plans: 16
+  completed_plans: 12
+  percent: 75
 ---
 
 # Project State
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-15)
 
 **Core value:** Quantify and reversibly cull Claude Code's ghost inventory without ever destroying user data. Nothing deletes; everything restores.
-**Current focus:** Phase 1 — Selection plumbing
+**Current focus:** Phase 3.1 — Tabbed category view
 
 ## Current Position
 
-Phase: 1 (Selection plumbing) — EXECUTING
-Plan: 3 of 3
-Status: Phase complete — ready for verification
+Phase: 3.1 (Tabbed category view) — EXECUTING
+Plan: 2 of 5
+Status: Ready to execute
 Last activity: 2026-04-16
 
 Progress: [░░░░░░░░░░] 0%
@@ -56,8 +56,13 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 02-tui-picker-v0.5 P04 | 75 | 4 tasks | 4 files |
 | Phase 03 P01 | 10 | 2 tasks | 2 files |
 | Phase 03 P02 | 35 | 1 tasks | 6 files |
+| Phase 03.1-tabbed-category-view P01-dep-posture-and-baseline | 2 | 2 tasks | 4 files |
 
 ## Accumulated Context
+
+### Roadmap Evolution
+
+- 2026-04-16: Phase 3.1 inserted after Phase 3 — Tabbed category view (URGENT). Phase 2 manual QA surfaced a long-list viewport-overflow bug: `@clack/prompts.groupMultiselect` renders all options inline with no windowing; cursor disappears above viewport when the list exceeds terminal rows. Root cause verified via clack source inspection — `GroupMultiSelectOptions` does not accept `maxItems`. Fix requires a custom `@clack/core.MultiSelectPrompt` subclass (which Phase 4 already planned). Phase 3.1 pulls that subclass forward and adds a tabbed category view on top. Phase 4 scope reduced to ~0.5d (just add live-counter hook). Phase 5 scope trimmed ~25% (group-collapse `g`/`G` obsoleted by tabs). Net milestone cost: roughly neutral.
 
 ### Decisions
 
@@ -79,6 +84,8 @@ Recent decisions affecting current work:
 - [Phase 03]: Rule 1 (auto-fix): disableMcpTransactional used atomicWriteJson (JSON.stringify) which reformatted all bytes including unselected server values. Fixed with surgical text patcher (patchMcpConfigText) that preserves byte identity for flat-schema and global-scope mutations.
 - [Phase 03]: atomicWriteText added as a required dep to BustDeps; makeDeps test helper updated accordingly. Project-scope mutations still fall back to atomicWriteJson (text surgery for nested paths deferred as out-of-scope for this plan).
 - [Phase 03]: patchMcpConfigText exported from bust.ts for in-source unit testing. It returns null on malformed input, triggering atomicWriteJson fallback.
+- [Phase 03.1-tabbed-category-view]: [Phase 03.1 P01]: Baseline captured AFTER @clack/core pin — delta gate in Plan 05 measures only TabbedGhostPicker growth, not dep-posture bump itself.
+- [Phase 03.1-tabbed-category-view]: [Phase 03.1 P01]: @clack/core pinned as catalog devDep (D3.1-13). Zero-runtime-deps invariant holds: apps/ccaudit dependencies still empty.
 
 ### Pending Todos
 
@@ -90,6 +97,6 @@ None yet. Phase 1's primary risk (`computeGhostHash` refactor drift) is mitigate
 
 ## Session Continuity
 
-Last session: 2026-04-16T06:22:23.621Z
-Stopped at: Completed 03-02-mcp-byte-preservation-PLAN.md
+Last session: 2026-04-16T08:46:28.983Z
+Stopped at: Completed 03.1-01-dep-posture-and-baseline-PLAN.md
 Resume file: None
