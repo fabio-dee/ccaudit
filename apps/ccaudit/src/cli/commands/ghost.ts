@@ -351,7 +351,7 @@ async function runInteractiveGhostFlow(args: {
     console.log(`Manifest: ${result.manifestPath}`);
   } else if (result.status !== 'success' && result.status !== 'partial-success') {
     console.error(`[ccaudit] Interactive bust failed: ${result.status}`);
-    process.exitCode = 1;
+    process.exitCode = bustResultToExitCode(result);
   }
 }
 
