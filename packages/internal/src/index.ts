@@ -171,6 +171,7 @@ export {
   resolveManifestPath,
   patchFrontmatter,
   atomicWriteJson,
+  atomicWriteText,
   defaultProcessDeps,
 } from './remediation/index.ts';
 export type {

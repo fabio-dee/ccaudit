@@ -159,7 +159,7 @@ Phases execute in numeric order. Phases 4, 5, 6, 7 may run in parallel after Pha
 |-------|----------------|--------|-----------|
 | 1. Selection plumbing | 3/3 | Complete   | 2026-04-15 |
 | 2. TUI picker v0.5 | 4/4 | Complete   | 2026-04-16 |
-| 3. Safety-invariant integration tests | 1/4 | In Progress|  |
+| 3. Safety-invariant integration tests | 2/4 | In Progress|  |
 | 4. Live token counter | 0/TBD | Not started | - |
 | 5. Keyboard model completeness | 0/TBD | Not started | - |
 | 6. Framework protection UX + MCP multi-project | 0/TBD | Not started | - |

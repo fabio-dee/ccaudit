@@ -37,6 +37,7 @@ import {
   resolveManifestPath,
   patchFrontmatter,
   atomicWriteJson,
+  atomicWriteText,
   defaultProcessDeps,
   applyFrameworkProtection,
   detectClaudeCodeVersion,
@@ -298,6 +299,7 @@ async function runInteractiveGhostFlow(args: {
     readFileUtf8: (p) => readFile(p, 'utf8'),
     patchMemoryFrontmatter: patchFrontmatter,
     atomicWriteJson: (target, value) => atomicWriteJson(target, value),
+    atomicWriteText: (target, text) => atomicWriteText(target, text),
     pathExistsSync: existsSync,
     createManifestWriter: (p) => new ManifestWriter(p),
     manifestPath: () => resolveManifestPath(),
@@ -602,8 +604,7 @@ export const ghostCommand = define({
         // no effect on production usage because users on a real terminal already
         // have isTTY === true, and CI/non-TTY users would never set it.
         const forceTty = process.env['CCAUDIT_FORCE_TTY'] === '1';
-        const isTty =
-          forceTty || (Boolean(process.stdout.isTTY) && Boolean(process.stdin.isTTY));
+        const isTty = forceTty || (Boolean(process.stdout.isTTY) && Boolean(process.stdin.isTTY));
         if (!isTty) {
           // D-07: non-TTY + explicit --interactive → fall back to dry-run with notice.
           console.error('No TTY detected — running in dry-run mode.');
@@ -1093,6 +1094,7 @@ export const ghostCommand = define({
           readFileUtf8: (p) => readFile(p, 'utf8'),
           patchMemoryFrontmatter: patchFrontmatter,
           atomicWriteJson: (target, value) => atomicWriteJson(target, value),
+          atomicWriteText: (target, text) => atomicWriteText(target, text),
           pathExistsSync: existsSync,
           createManifestWriter: (p) => new ManifestWriter(p),
           manifestPath: () => resolveManifestPath(),

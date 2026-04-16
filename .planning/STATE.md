@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Interactive Archive
 status: verifying
-stopped_at: Completed 03-01-test-infra-PLAN.md
-last_updated: "2026-04-16T06:00:59.265Z"
+stopped_at: Completed 03-02-mcp-byte-preservation-PLAN.md
+last_updated: "2026-04-16T06:22:23.623Z"
 last_activity: 2026-04-16
 progress:
   total_phases: 9
-  completed_phases: 2
-  total_plans: 11
-  completed_plans: 8
-  percent: 73
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 2
+  percent: 0
 ---
 
 # Project State
@@ -55,6 +55,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 02-tui-picker-v0.5 P03 | 240 | 3 tasks | 3 files |
 | Phase 02-tui-picker-v0.5 P04 | 75 | 4 tasks | 4 files |
 | Phase 03 P01 | 10 | 2 tasks | 2 files |
+| Phase 03 P02 | 35 | 1 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -75,6 +76,9 @@ Recent decisions affecting current work:
 - [Phase 02-tui-picker-v0.5]: D-24: 'open' outcome calls runInteractiveGhostFlow as 2nd call site; 'decline' exits 0 normally
 - [Phase 02-tui-picker-v0.5]: D-31: smoke tests cover only non-TTY guards; full picker E2E deferred to Phase 3
 - [Phase 03]: CCAUDIT_FORCE_TTY is env-only test hook at two isTty sites in ghost.ts; absent from --help; runCcauditGhost returns live ChildProcess for SIGINT tests
+- [Phase 03]: Rule 1 (auto-fix): disableMcpTransactional used atomicWriteJson (JSON.stringify) which reformatted all bytes including unselected server values. Fixed with surgical text patcher (patchMcpConfigText) that preserves byte identity for flat-schema and global-scope mutations.
+- [Phase 03]: atomicWriteText added as a required dep to BustDeps; makeDeps test helper updated accordingly. Project-scope mutations still fall back to atomicWriteJson (text surgery for nested paths deferred as out-of-scope for this plan).
+- [Phase 03]: patchMcpConfigText exported from bust.ts for in-source unit testing. It returns null on malformed input, triggering atomicWriteJson fallback.
 
 ### Pending Todos
 
@@ -86,6 +90,6 @@ None yet. Phase 1's primary risk (`computeGhostHash` refactor drift) is mitigate
 
 ## Session Continuity
 
-Last session: 2026-04-16T06:00:59.263Z
-Stopped at: Completed 03-01-test-infra-PLAN.md
+Last session: 2026-04-16T06:22:23.621Z
+Stopped at: Completed 03-02-mcp-byte-preservation-PLAN.md
 Resume file: None
