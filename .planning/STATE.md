@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Interactive Archive
-status: executing
-stopped_at: Completed 03.1-04-regression-and-invariant-tests-PLAN.md
-last_updated: "2026-04-16T09:30:49.659Z"
+status: verifying
+stopped_at: Completed 03.2-04-cli-preflight-wiring-PLAN.md
+last_updated: "2026-04-16T15:46:53.897Z"
 last_activity: 2026-04-16
 progress:
   total_phases: 10
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 16
-  completed_plans: 15
-  percent: 94
+  completed_plans: 16
+  percent: 100
 ---
 
 # Project State
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-04-15)
 
 Phase: 3.1 (Tabbed category view) — EXECUTING
 Plan: 5 of 5
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-04-16
 
 Progress: [░░░░░░░░░░] 0%
@@ -60,6 +60,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 03.1-tabbed-category-view P02-tabbed-picker-subclass | 11 | 3 tasks | 3 files |
 | Phase 03.1-tabbed-category-view P03-adapter-and-cli-wiring | 4 min | 3 tasks | 3 files |
 | Phase 03.1-tabbed-category-view P04-regression-and-invariant-tests | 16 min | 6 tasks tasks | 6 files files |
+| Phase 03.2 P04 | 7min | 1 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -98,6 +99,9 @@ Recent decisions affecting current work:
 - [Phase 03.1-tabbed-category-view]: [Phase 03.1 P04]: After interactive bust completes, tests MUST call child.stdin.end() — @clack/prompts leaves a keypress listener registered that pins the event loop; without end() the subprocess hangs indefinitely until SIGKILL
 - [Phase 03.1-tabbed-category-view]: [Phase 03.1 P04]: Cross-tab persistence test placed in-source (tabbed-picker.ts) not in apps/ccaudit/__tests__/ — plan explicitly preferred in-source; the class's public action methods (nextTab, prevTab, toggleCurrentRow, cursorDown) are the natural seam, no __testDispatchKey seam was required
 - [Phase 03.1-tabbed-category-view]: [Phase 03.1 P04]: Phase 3 INV-S2 + Phase 2 interactive-smoke tests byte-unchanged under the new TabbedGhostPicker class — the safety contract survives the Phase 3.1 rewrite
+- [Phase 03.2]: Surface detectClaudeProcesses + walkParentChain at @ccaudit/internal barrel — Rule 3 prereq for plan 04 entry preflight wiring
+- [Phase 03.2]: SC5b selectedItems identity preservation via single const + while-loop wrapping runBust — no picker re-open, no selection loss across retries
+- [Phase 03.2]: Phase 3.1 tabbed-picker-terminal-too-short.test.ts now requires buildFakePs + skipIf(win32) because entry preflight runs ps BEFORE the D3.1-16 height gate inside selectGhosts
 
 ### Pending Todos
 
@@ -109,6 +113,6 @@ None yet. Phase 1's primary risk (`computeGhostHash` refactor drift) is mitigate
 
 ## Session Continuity
 
-Last session: 2026-04-16T09:30:49.656Z
-Stopped at: Completed 03.1-04-regression-and-invariant-tests-PLAN.md
+Last session: 2026-04-16T15:46:53.895Z
+Stopped at: Completed 03.2-04-cli-preflight-wiring-PLAN.md
 Resume file: None
