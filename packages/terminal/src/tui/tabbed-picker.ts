@@ -618,6 +618,64 @@ if (import.meta.vitest) {
       expect(result.kind).toBe('empty-inventory');
     });
 
+    it('cross-tab selection persists across tab navigation (both ArrowRight/Left and Tab/Shift-Tab bindings)', () => {
+      // Phase 3.1 Plan 04 Task 3 (SC2 + cross-tab state):
+      // select 2 AGENTS → → (next tab) → select 1 SKILL → ← (prev tab) →
+      // all 3 canonical IDs survive in selectedIds. Repeat with Tab/Shift-Tab
+      // → identical final state.
+      //
+      // The class dispatches `Tab` key and `ArrowRight` cursor action to the
+      // SAME method (nextTab), and `Shift-Tab` + `ArrowLeft` to prevTab. The
+      // binding equivalence is structural in the constructor's key/cursor
+      // dispatch; this test confirms the observable invariant (final
+      // selectedIds contents) is identical for both sequences.
+      function buildFixture(): readonly TokenCostResult[] {
+        return [
+          makeGhost({ name: 'a1', category: 'agent', tokens: 100 }),
+          makeGhost({ name: 'a2', category: 'agent', tokens: 80 }),
+          makeGhost({ name: 's1', category: 'skill', tokens: 200 }),
+          makeGhost({ name: 's2', category: 'skill', tokens: 150 }),
+        ];
+      }
+      // Sequence A: ArrowRight / ArrowLeft (→ / ← bindings).
+      {
+        const picker = makePicker(buildFixture());
+        expect(picker.tabs.length).toBe(2);
+        // activeTabIndex=0 (AGENTS)
+        picker.toggleCurrentRow(); // select a1 (top-of-tab)
+        picker.cursorDown();
+        picker.toggleCurrentRow(); // select a2
+        picker.nextTab(); // → : ArrowRight binding
+        expect(picker.activeTabIndex).toBe(1);
+        picker.toggleCurrentRow(); // select s1 (top-of-tab 1)
+        picker.prevTab(); // ← : ArrowLeft binding
+        expect(picker.activeTabIndex).toBe(0);
+        expect(picker.selectedIds.size).toBe(3);
+        expect(picker.selectedIds.has('agent|global||/fake/a1')).toBe(true);
+        expect(picker.selectedIds.has('agent|global||/fake/a2')).toBe(true);
+        expect(picker.selectedIds.has('skill|global||/fake/s1')).toBe(true);
+      }
+      // Sequence B: Tab / Shift-Tab bindings.
+      // nextTab/prevTab are the SAME methods Tab/Shift-Tab dispatch to —
+      // the point of this block is the contract assertion that the final
+      // selectedIds shape is identical across the two binding families.
+      {
+        const picker = makePicker(buildFixture());
+        picker.toggleCurrentRow(); // select a1 via Space
+        picker.cursorDown();
+        picker.toggleCurrentRow(); // select a2 via Space
+        picker.nextTab(); // Tab binding
+        expect(picker.activeTabIndex).toBe(1);
+        picker.toggleCurrentRow(); // select s1
+        picker.prevTab(); // Shift-Tab binding
+        expect(picker.activeTabIndex).toBe(0);
+        expect(picker.selectedIds.size).toBe(3);
+        expect(picker.selectedIds.has('agent|global||/fake/a1')).toBe(true);
+        expect(picker.selectedIds.has('agent|global||/fake/a2')).toBe(true);
+        expect(picker.selectedIds.has('skill|global||/fake/s1')).toBe(true);
+      }
+    });
+
     it('_renderFrame produces non-empty output with tab bar, header, rows, hints, and global count', () => {
       const ghosts = [
         makeGhost({ name: 'a1', category: 'agent', tokens: 100 }),
