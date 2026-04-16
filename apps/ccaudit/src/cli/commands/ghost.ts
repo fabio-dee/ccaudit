@@ -250,6 +250,9 @@ async function runInteractiveGhostFlow(args: {
   // via walkParentChain (same logic as bust.ts:274) so the entry retry loop
   // can short-circuit cleanly when ccaudit is spawned from inside Claude.
   {
+    // DIRTY-counter accounting (CCAUDIT_TEST_PREFLIGHT_DIRTY): this initial
+    // detectClaudeProcesses call consumes ONE counter tick on entryProcessDeps;
+    // each user-confirmed retry inside runPreflightRetryLoop consumes one more.
     const detected = await detectClaudeProcesses(process.pid, entryProcessDeps);
     let initialResult: RunningProcessInput | undefined;
     if (detected.status === 'spawn-failed') {
