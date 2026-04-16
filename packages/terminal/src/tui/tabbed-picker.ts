@@ -87,10 +87,23 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
   constructor(input: TabbedPickerInput) {
     // Partition ghosts into per-category tabs (CATEGORY_ORDER) with descending
     // token sort (D-12). Empty categories are dropped (D3.1-04).
+    //
+    // WR-02 exhaustiveness guard: refuse ghosts whose category is not in
+    // CATEGORY_ORDER. The static TypeScript union rules this out today, but
+    // relying on the union alone means a future domain-type expansion (or an
+    // `as` cast upstream) would silently drop items from every tab — a
+    // data-loss regression. Failing loud here surfaces the mismatch in tests
+    // and during development.
     const grouped: Record<string, TokenCostResult[]> = {};
     for (const cat of CATEGORY_ORDER) grouped[cat] = [];
+    const knownCategories = new Set<string>(CATEGORY_ORDER);
     for (const g of input.ghosts) {
       const cat = g.item.category;
+      if (!knownCategories.has(cat)) {
+        throw new Error(
+          `TabbedGhostPicker: unknown category '${cat}' — update CATEGORY_ORDER in select-ghosts.ts`,
+        );
+      }
       if (!grouped[cat]) grouped[cat] = [];
       grouped[cat].push(g);
     }
@@ -674,6 +687,22 @@ if (import.meta.vitest) {
         expect(picker.selectedIds.has('agent|global||/fake/a2')).toBe(true);
         expect(picker.selectedIds.has('skill|global||/fake/s1')).toBe(true);
       }
+    });
+
+    it('WR-02: constructor throws on ghost whose category is not in CATEGORY_ORDER', () => {
+      // Exhaustiveness guard against a future domain-type expansion landing
+      // without updating CATEGORY_ORDER — silently dropping the category
+      // would be a data-loss regression. makeGhost's `category` param is
+      // typed `string` and then cast to the union internally, so we can
+      // exercise a runtime value the static union rules out.
+      const rogueGhost = makeGhost({
+        name: 'rogue',
+        category: 'nonexistent-category',
+        tokens: 100,
+      });
+      expect(() => makePicker([rogueGhost])).toThrow(
+        /unknown category 'nonexistent-category'/,
+      );
     });
 
     it('_renderFrame produces non-empty output with tab bar, header, rows, hints, and global count', () => {
