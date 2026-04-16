@@ -6,6 +6,9 @@ settings:
 
 catalogs:
   default:
+    '@clack/core':
+      specifier: ^1.2.0
+      version: 1.2.0
     '@clack/prompts':
       specifier: ^1.2.0
       version: 1.2.0
@@ -149,6 +152,9 @@ importers:
       '@ccaudit/internal':
         specifier: workspace:*
         version: link:../internal
+      '@clack/core':
+        specifier: 'catalog:'
+        version: 1.2.0
       '@clack/prompts':
         specifier: 'catalog:'
         version: 1.2.0
