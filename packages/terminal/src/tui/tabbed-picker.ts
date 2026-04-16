@@ -26,55 +26,7 @@ import type { TokenCostResult } from '@ccaudit/internal';
 import pc from 'picocolors';
 import { computeViewportHeight, windowRows } from './_viewport.ts';
 import { renderTabBar, type TabDescriptor } from './_tab-bar.ts';
-
-// ---------------------------------------------------------------------------
-// Category order + labels — copied verbatim from select-ghosts.ts.
-// Plan 03 will refactor to a single shared source.
-// ---------------------------------------------------------------------------
-
-const CATEGORY_ORDER = ['agent', 'skill', 'mcp-server', 'memory', 'command', 'hook'] as const;
-
-const CATEGORY_LABEL: Record<string, string> = {
-  agent: 'AGENTS',
-  skill: 'SKILLS',
-  'mcp-server': 'MCP SERVERS',
-  memory: 'MEMORY',
-  command: 'COMMANDS',
-  hook: 'HOOKS',
-};
-
-// ---------------------------------------------------------------------------
-// Row label formatter — copied verbatim from select-ghosts.ts.
-// ---------------------------------------------------------------------------
-
-function truncatePath(p: string): string {
-  if (p.length <= 40) return p;
-  return `${p.slice(0, 39)}…`;
-}
-
-function formatRowLabel(item: TokenCostResult, useAscii: boolean, now: number): string {
-  const { name, category, path, framework } = item.item;
-  const tokens = item.tokenEstimate?.tokens ?? 0;
-  const tokenStr = `${tokens} tok`;
-
-  let glyph = '';
-  if (category === 'memory' && item.item.mtimeMs !== undefined) {
-    const ageDays = (now - item.item.mtimeMs) / 86_400_000;
-    const isStale = ageDays > 60;
-    if (useAscii) {
-      glyph = isStale ? '[s] ' : '[r] ';
-    } else {
-      glyph = isStale ? '[≈] ' : '[~] ';
-    }
-  }
-
-  const frameworkPrefix = framework ? `{${framework}} ` : '';
-  const pathDisplay = path ? truncatePath(path) : '';
-  const referencedConfigs = (item.item as { referencedConfigs?: string[] }).referencedConfigs;
-  const warn = referencedConfigs && referencedConfigs.length > 1 ? (useAscii ? ' !' : ' ⚠') : '';
-
-  return `${glyph}${frameworkPrefix}${name}  ${tokenStr}  ${pathDisplay}${warn}`.trim();
-}
+import { CATEGORY_ORDER, CATEGORY_LABEL, formatRowLabel } from './select-ghosts.ts';
 
 // ---------------------------------------------------------------------------
 // Public types

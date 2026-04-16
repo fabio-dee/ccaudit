@@ -1,18 +1,22 @@
 /**
- * groupMultiselect wrapper for the interactive ghost picker (D-02, D-09..D-13).
+ * Thin adapter for the interactive ghost picker (D3.1-14).
  *
- * Wraps @clack/prompts.groupMultiselect to produce a tagged-union outcome.
- * Empty inventory short-circuits without opening any prompt (D-13).
- * Cancellation (Ctrl+C / Esc / q) returns { kind: 'cancel' }.
- * Successful selection returns a Set<string> of canonicalItemId strings
- * ready for runBust (Phase 1 plumbing).
+ * Phase 2 implemented this as a direct `groupMultiselect` wrapper. Phase 3.1
+ * replaces the flat picker with a tabbed category view — this module becomes
+ * a thin adapter that delegates to `openTabbedPicker` (from `tabbed-picker.ts`)
+ * while preserving the public `SelectGhostsOutcome` contract so `ghost.ts`
+ * callers remain untouched (Phase 2 SC7 invariant).
  *
- * v0.5 keybinds: Space/Enter/q/Esc/Ctrl-C only (groupMultiselect native).
- * Phase 5 will add: group collapse (g/G), filter (/), sort (s), help (?).
+ * Responsibilities of this file:
+ *  - Define the public `SelectGhostsOutcome` tagged union and `SelectGhostsInput`.
+ *  - Own the authoritative `CATEGORY_ORDER`, `CATEGORY_LABEL`, and `formatRowLabel`
+ *    (shared with `tabbed-picker.ts`).
+ *  - Enforce D3.1-16: refuse to open the picker on terminals with fewer than
+ *    14 rows, with the exact stderr message and exit 1 before any prompt.
+ *  - Delegate selection UX to `openTabbedPicker` — no clack UX lives here anymore.
  */
-import { groupMultiselect, isCancel } from '@clack/prompts';
-import { canonicalItemId } from '@ccaudit/internal';
 import type { TokenCostResult } from '@ccaudit/internal';
+import { openTabbedPicker } from './tabbed-picker.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -24,16 +28,12 @@ export type SelectGhostsOutcome =
   | { kind: 'empty-inventory' };
 
 /**
- * Injectable clack dependency — uses a looser isCancel signature so vi.fn()
- * mocks in in-source tests satisfy the type without requiring a type predicate.
+ * Injectable picker dependency — test seam replacing the Phase 2 `_clack`
+ * injection. Tests pass a `{ openTabbedPicker }` stub; production uses the
+ * real `openTabbedPicker` imported above.
  */
-interface ClackGroupDep {
-  groupMultiselect: (opts: {
-    message: string;
-    options: Record<string, Array<{ value: string; label: string }>>;
-    required?: boolean;
-  }) => Promise<symbol | string[]>;
-  isCancel: (value: unknown) => boolean;
+export interface PickerDep {
+  openTabbedPicker: typeof openTabbedPicker;
 }
 
 export interface SelectGhostsInput {
@@ -44,19 +44,28 @@ export interface SelectGhostsInput {
   /** From shouldUseAscii() at CLI entry. */
   useAscii: boolean;
   /**
-   * Optional clack dependency injection for tests.
-   * In production the real @clack/prompts functions are used.
+   * Optional picker dependency injection for tests.
+   * In production the real openTabbedPicker is used.
    */
-  _clack?: ClackGroupDep;
+  _picker?: PickerDep;
 }
 
 // ---------------------------------------------------------------------------
 // Category label mapping (D-09 — stable order matches design doc §5.2)
+// Exported so tabbed-picker.ts (and any future consumer) shares a single
+// authoritative source.
 // ---------------------------------------------------------------------------
 
-const CATEGORY_ORDER = ['agent', 'skill', 'mcp-server', 'memory', 'command', 'hook'] as const;
+export const CATEGORY_ORDER = [
+  'agent',
+  'skill',
+  'mcp-server',
+  'memory',
+  'command',
+  'hook',
+] as const;
 
-const CATEGORY_LABEL: Record<string, string> = {
+export const CATEGORY_LABEL: Record<string, string> = {
   agent: 'AGENTS',
   skill: 'SKILLS',
   'mcp-server': 'MCP SERVERS',
@@ -115,78 +124,48 @@ export function formatRowLabel(item: TokenCostResult, useAscii: boolean, now: nu
 }
 
 // ---------------------------------------------------------------------------
-// Real clack adapter (bridges the looser ClackGroupDep to the real @clack API)
-// ---------------------------------------------------------------------------
-
-const realClack: ClackGroupDep = {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  groupMultiselect: (opts) => groupMultiselect(opts as any) as Promise<symbol | string[]>,
-  isCancel: (v) => isCancel(v),
-};
-
-// ---------------------------------------------------------------------------
 // Main exported function
 // ---------------------------------------------------------------------------
 
 /**
- * Opens the groupMultiselect picker for the provided ghost items.
+ * Opens the tabbed ghost picker for the provided ghost items.
  *
  * Returns:
  *  - { kind: 'empty-inventory' }  if ghosts.length === 0 (no prompt opened)
  *  - { kind: 'cancel' }           if user pressed Ctrl+C / Esc / q
  *  - { kind: 'selected', ids }    on Enter with 0..N items selected
+ *
+ * Terminal-too-short gate (D3.1-16): on terminals with < 14 rows, writes a
+ * helpful message to stderr and `process.exit(1)` BEFORE opening any prompt.
+ * The floor is derived from the viewport formula
+ * `Math.max(8, (stdoutRows ?? 24) - 10)` — at 13 rows the chrome budget
+ * collapses and the tab bar / hints / row list cannot coexist.
  */
 export async function selectGhosts(input: SelectGhostsInput): Promise<SelectGhostsOutcome> {
-  const { ghosts, now: nowParam, useAscii, _clack } = input;
+  const { ghosts, now: nowParam, useAscii, _picker } = input;
   const now = nowParam ?? Date.now();
 
-  // D-13: Empty state — caller should skip picker
+  // D-13: Empty state — caller should skip picker.
   if (ghosts.length === 0) {
     return { kind: 'empty-inventory' };
   }
 
-  // Build grouped options
-  const grouped: Record<string, TokenCostResult[]> = {};
-  for (const cat of CATEGORY_ORDER) {
-    grouped[cat] = [];
-  }
-  for (const g of ghosts) {
-    const cat = g.item.category;
-    if (!grouped[cat]) grouped[cat] = [];
-    grouped[cat].push(g);
-  }
-
-  // D-12: Sort within each category by tokens desc
-  for (const cat of CATEGORY_ORDER) {
-    grouped[cat].sort((a, b) => (b.tokenEstimate?.tokens ?? 0) - (a.tokenEstimate?.tokens ?? 0));
+  // D3.1-16: terminal-too-short gate. Refuse to open the picker when
+  // the terminal is shorter than 14 rows (floor viewport 8 + chrome ~5).
+  const stdoutRows = process.stdout.rows;
+  if (stdoutRows !== undefined && stdoutRows < 14) {
+    process.stderr.write(
+      `Terminal too short (need ≥14 rows, got ${stdoutRows}). ` +
+        `Resize your terminal or use \`--dangerously-bust-ghosts\` non-interactively.\n`,
+    );
+    process.exit(1);
   }
 
-  // Build @clack/prompts options object (only include non-empty categories)
-  const options: Record<string, Array<{ value: string; label: string }>> = {};
-  for (const cat of CATEGORY_ORDER) {
-    const items = grouped[cat];
-    if (!items || items.length === 0) continue;
-    const label = CATEGORY_LABEL[cat] ?? cat.toUpperCase();
-    options[label] = items.map((item) => ({
-      value: canonicalItemId(item.item),
-      label: formatRowLabel(item, useAscii, now),
-    }));
-  }
-
-  // Use injected or real clack
-  const clack = _clack ?? realClack;
-
-  const result = await clack.groupMultiselect({
-    message: 'Select ghosts to archive:',
-    options,
-    required: false,
-  });
-
-  if (clack.isCancel(result)) {
-    return { kind: 'cancel' };
-  }
-
-  return { kind: 'selected', ids: new Set(result as string[]) };
+  const picker = _picker ?? { openTabbedPicker };
+  const outcome = await picker.openTabbedPicker({ ghosts, useAscii, now });
+  // TabbedPickerOutcome shape is byte-identical to SelectGhostsOutcome —
+  // pass through without translation.
+  return outcome;
 }
 
 // ---------------------------------------------------------------------------
@@ -225,192 +204,64 @@ if (import.meta.vitest) {
     };
   }
 
-  /** Build a fake ClackGroupDep for tests. */
-  function makeClack(returnValue: string[] | symbol): ClackGroupDep & { fakeCancelSymbol: symbol } {
-    const fakeCancelSymbol = Symbol('clack-cancel');
-    return {
-      groupMultiselect: vi.fn().mockResolvedValue(returnValue),
-      isCancel: vi.fn((v: unknown) => v === fakeCancelSymbol),
-      fakeCancelSymbol,
-    };
-  }
+  describe('selectGhosts (thin adapter)', () => {
+    // Terminal-too-short gate covered by integration test in Plan 04.
 
-  describe('selectGhosts', () => {
-    it('returns empty-inventory when ghosts array is empty (groupMultiselect NOT called)', async () => {
-      const clackFns = makeClack([]);
+    it('empty inventory → returns { kind: empty-inventory } and openTabbedPicker is NOT called', async () => {
+      const picker: PickerDep = {
+        openTabbedPicker: vi.fn().mockResolvedValue({ kind: 'selected', ids: new Set() }),
+      };
       const result = await selectGhosts({
         ghosts: [],
         useAscii: false,
-        _clack: clackFns,
+        _picker: picker,
       });
       expect(result.kind).toBe('empty-inventory');
-      expect(clackFns.groupMultiselect).not.toHaveBeenCalled();
+      expect(picker.openTabbedPicker).not.toHaveBeenCalled();
     });
 
-    it('option values are canonicalItemId strings', async () => {
-      const ghost1 = makeGhost({
-        name: 'my-agent',
-        category: 'agent',
-        path: '/a/my-agent.md',
-        tokens: 100,
-      });
-      const ghost2 = makeGhost({
-        name: 'my-skill',
-        category: 'skill',
-        path: '/s/my-skill',
-        tokens: 200,
-      });
-
-      const selected = ['agent|global||/a/my-agent.md', 'skill|global||/s/my-skill'];
-      const clackFns: ClackGroupDep = {
-        groupMultiselect: vi.fn().mockResolvedValue(selected),
-        isCancel: vi.fn(() => false),
+    it('selected outcome from openTabbedPicker passes through unchanged', async () => {
+      const selectedIds = new Set(['agent|global||/fake/my-agent']);
+      const picker: PickerDep = {
+        openTabbedPicker: vi.fn().mockResolvedValue({ kind: 'selected', ids: selectedIds }),
       };
+      const ghost = makeGhost({ name: 'my-agent', category: 'agent', tokens: 100 });
       const result = await selectGhosts({
-        ghosts: [ghost1, ghost2],
+        ghosts: [ghost],
         useAscii: false,
-        _clack: clackFns,
+        _picker: picker,
       });
       expect(result.kind).toBe('selected');
       if (result.kind === 'selected') {
-        expect(result.ids.has('agent|global||/a/my-agent.md')).toBe(true);
-        expect(result.ids.has('skill|global||/s/my-skill')).toBe(true);
+        expect(result.ids).toBe(selectedIds);
+        expect(result.ids.has('agent|global||/fake/my-agent')).toBe(true);
       }
+      expect(picker.openTabbedPicker).toHaveBeenCalledTimes(1);
     });
 
-    it('sorts items by tokens desc within category', async () => {
-      const low = makeGhost({ name: 'low', category: 'agent', tokens: 100 });
-      const high = makeGhost({ name: 'high', category: 'agent', tokens: 900 });
-      const mid = makeGhost({ name: 'mid', category: 'agent', tokens: 500 });
-
-      let capturedOptions: Record<string, Array<{ value: string; label: string }>> = {};
-      const clack: ClackGroupDep = {
-        groupMultiselect: vi.fn((args) => {
-          capturedOptions = args.options;
-          return Promise.resolve([]);
-        }),
-        isCancel: vi.fn(() => false),
+    it('cancel outcome from openTabbedPicker passes through unchanged', async () => {
+      const picker: PickerDep = {
+        openTabbedPicker: vi.fn().mockResolvedValue({ kind: 'cancel' }),
       };
-
-      await selectGhosts({ ghosts: [low, high, mid], useAscii: false, _clack: clack });
-
-      const agentOptions = capturedOptions['AGENTS'];
-      expect(agentOptions).toBeDefined();
-      // Should be sorted high(900) > mid(500) > low(100)
-      expect(agentOptions[0].label).toContain('high');
-      expect(agentOptions[1].label).toContain('mid');
-      expect(agentOptions[2].label).toContain('low');
-    });
-
-    it('memory item renders [~] glyph when age ≤ 60 days (recent)', async () => {
-      const now = Date.now();
-      const recentMtime = now - 30 * 86_400_000; // 30 days ago
-      const ghost = makeGhost({
-        name: 'CLAUDE.md',
-        category: 'memory',
-        mtimeMs: recentMtime,
-        tokens: 50,
+      const ghost = makeGhost({ name: 'g', tokens: 1 });
+      const result = await selectGhosts({
+        ghosts: [ghost],
+        useAscii: false,
+        _picker: picker,
       });
-
-      let capturedOptions: Record<string, Array<{ value: string; label: string }>> = {};
-      const clack: ClackGroupDep = {
-        groupMultiselect: vi.fn((args) => {
-          capturedOptions = args.options;
-          return Promise.resolve([]);
-        }),
-        isCancel: vi.fn(() => false),
-      };
-
-      await selectGhosts({ ghosts: [ghost], useAscii: false, now, _clack: clack });
-
-      const memOptions = capturedOptions['MEMORY'];
-      expect(memOptions[0].label).toContain('[~]');
-    });
-
-    it('memory item renders [≈] glyph when age > 60 days (stale)', async () => {
-      const now = Date.now();
-      const staleMtime = now - 90 * 86_400_000; // 90 days ago
-      const ghost = makeGhost({
-        name: 'old.md',
-        category: 'memory',
-        mtimeMs: staleMtime,
-        tokens: 50,
-      });
-
-      let capturedOptions: Record<string, Array<{ value: string; label: string }>> = {};
-      const clack: ClackGroupDep = {
-        groupMultiselect: vi.fn((args) => {
-          capturedOptions = args.options;
-          return Promise.resolve([]);
-        }),
-        isCancel: vi.fn(() => false),
-      };
-
-      await selectGhosts({ ghosts: [ghost], useAscii: false, now, _clack: clack });
-
-      const memOptions = capturedOptions['MEMORY'];
-      expect(memOptions[0].label).toContain('[≈]');
-    });
-
-    it('useAscii=true swaps [~] → [r] and [≈] → [s]', async () => {
-      const now = Date.now();
-      const recentMtime = now - 30 * 86_400_000;
-      const staleMtime = now - 90 * 86_400_000;
-      const recent = makeGhost({
-        name: 'recent.md',
-        category: 'memory',
-        mtimeMs: recentMtime,
-        tokens: 100,
-      });
-      const stale = makeGhost({
-        name: 'stale.md',
-        category: 'memory',
-        mtimeMs: staleMtime,
-        tokens: 50,
-      });
-
-      let capturedOptions: Record<string, Array<{ value: string; label: string }>> = {};
-      const clack: ClackGroupDep = {
-        groupMultiselect: vi.fn((args) => {
-          capturedOptions = args.options;
-          return Promise.resolve([]);
-        }),
-        isCancel: vi.fn(() => false),
-      };
-
-      await selectGhosts({ ghosts: [recent, stale], useAscii: true, now, _clack: clack });
-
-      const memOptions = capturedOptions['MEMORY'];
-      // recent.md has more tokens, so it comes first (desc sort)
-      expect(memOptions[0].label).toContain('[r]');
-      expect(memOptions[1].label).toContain('[s]');
-    });
-
-    it('isCancel path returns cancel outcome', async () => {
-      const ghost = makeGhost({ name: 'agent-x', tokens: 100 });
-      const fakeCancelSymbol = Symbol('cancel');
-      const clack: ClackGroupDep = {
-        groupMultiselect: vi.fn().mockResolvedValue(fakeCancelSymbol),
-        isCancel: vi.fn((v: unknown) => v === fakeCancelSymbol),
-      };
-
-      const result = await selectGhosts({ ghosts: [ghost], useAscii: false, _clack: clack });
       expect(result.kind).toBe('cancel');
     });
 
-    it('message passed to groupMultiselect is exactly "Select ghosts to archive:"', async () => {
-      const ghost = makeGhost({ name: 'g', tokens: 1 });
-      let capturedMessage = '';
-      const clack: ClackGroupDep = {
-        groupMultiselect: vi.fn((args) => {
-          capturedMessage = args.message;
-          return Promise.resolve([]);
-        }),
-        isCancel: vi.fn(() => false),
-      };
-
-      await selectGhosts({ ghosts: [ghost], useAscii: false, _clack: clack });
-      expect(capturedMessage).toBe('Select ghosts to archive:');
+    it('shared constants CATEGORY_ORDER + CATEGORY_LABEL + formatRowLabel remain exported', () => {
+      // Compile-time checks via runtime assertions.
+      expect(CATEGORY_ORDER).toContain('agent');
+      expect(CATEGORY_ORDER).toContain('skill');
+      expect(CATEGORY_LABEL['agent']).toBe('AGENTS');
+      expect(CATEGORY_LABEL['mcp-server']).toBe('MCP SERVERS');
+      const ghost = makeGhost({ name: 'x', category: 'agent', tokens: 100 });
+      const label = formatRowLabel(ghost, false, Date.now());
+      expect(label).toContain('x');
+      expect(label).toContain('100 tok');
     });
   });
 }
