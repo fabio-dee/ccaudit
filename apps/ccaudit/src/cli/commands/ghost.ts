@@ -141,7 +141,9 @@ async function runInteractiveGhostFlow(args: {
   // Note: non-TTY + explicit --interactive is already handled by the caller
   // (which sets effectiveDryRun=true and falls through). If we somehow reach
   // here with a non-TTY, the guard will catch it defensively.
-  const isTty = Boolean(process.stdout.isTTY) && Boolean(process.stdin.isTTY);
+  // TEST-ONLY: CCAUDIT_FORCE_TTY=1 — see ghost.ts Site A in run() for full rationale.
+  const forceTty = process.env['CCAUDIT_FORCE_TTY'] === '1';
+  const isTty = forceTty || (Boolean(process.stdout.isTTY) && Boolean(process.stdin.isTTY));
   const ttyCols = process.stdout.columns;
   const guard = checkTuiGuards({
     mode: {
@@ -594,7 +596,14 @@ export const ghostCommand = define({
       // Placed BEFORE the dry-run branch so --interactive short-circuits here.
       // Non-TTY path sets effectiveDryRun=true and falls through to Step 3.6.
       if (ctx.values.interactive === true) {
-        const isTty = Boolean(process.stdout.isTTY) && Boolean(process.stdin.isTTY);
+        // TEST-ONLY: CCAUDIT_FORCE_TTY=1 lets the Phase 3 INV-S2 integration test
+        // exercise the runInteractiveGhostFlow path from a non-pty subprocess
+        // (Phase 3 D-21 / CONTEXT.md). NEVER document in --help. This env var has
+        // no effect on production usage because users on a real terminal already
+        // have isTTY === true, and CI/non-TTY users would never set it.
+        const forceTty = process.env['CCAUDIT_FORCE_TTY'] === '1';
+        const isTty =
+          forceTty || (Boolean(process.stdout.isTTY) && Boolean(process.stdin.isTTY));
         if (!isTty) {
           // D-07: non-TTY + explicit --interactive → fall back to dry-run with notice.
           console.error('No TTY detected — running in dry-run mode.');
