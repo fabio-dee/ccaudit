@@ -628,6 +628,15 @@ async function executeOpsOnManifest(
     else counts.unarchived.failed++;
   }
 
+  // Step 5.1: Unarchive commands (after agents, before totals)
+  const commandOps = archiveOps.filter((o) => o.category === 'command');
+  for (const op of commandOps) {
+    const outcome = await restoreArchiveOp(op, deps);
+    if (outcome === 'moved') counts.unarchived.moved++;
+    else if (outcome === 'already-at-source') counts.unarchived.alreadyAtSource++;
+    else counts.unarchived.failed++;
+  }
+
   const totalFailed = counts.unarchived.failed + counts.reenabled.failed + counts.stripped.failed;
   const duration_ms = Date.now() - start;
   const manifestPaths = allEntryPaths ?? [entry.path];

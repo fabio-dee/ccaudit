@@ -66,7 +66,7 @@ export interface ArchiveOp {
   timestamp: string;
   status: 'completed' | 'failed';
   error?: string;
-  category: 'agent' | 'skill';
+  category: 'agent' | 'skill' | 'command';
   scope: 'global' | 'project';
   source_path: string;
   archive_path: string;
@@ -275,7 +275,7 @@ function sha256Hex(content: Buffer | string): string {
 }
 
 export function buildArchiveOp(input: {
-  category: 'agent' | 'skill';
+  category: 'agent' | 'skill' | 'command';
   scope: 'global' | 'project';
   source_path: string;
   archive_path: string;
@@ -596,6 +596,19 @@ if (import.meta.vitest) {
       });
       expect(op.status).toBe('failed');
       expect(op.error).toBe('EPERM');
+    });
+
+    it('accepts category=command', () => {
+      const op = buildArchiveOp({
+        category: 'command',
+        scope: 'global',
+        source_path: '/home/u/.claude/commands/sc/build.md',
+        archive_path: '/home/u/.claude/ccaudit/archived/commands/sc/build.md',
+        content: '# cmd\n',
+      });
+      expect(op.op_type).toBe('archive');
+      expect(op.category).toBe('command');
+      expect(op.status).toBe('completed');
     });
   });
 

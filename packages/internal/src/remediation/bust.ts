@@ -121,7 +121,7 @@ export type BustResult =
 
 /** Per-category op counters threaded through the pipeline for the manifest footer. */
 export interface BustCounts {
-  archive: { agents: number; skills: number; failed: number };
+  archive: { agents: number; skills: number; commands: number; failed: number };
   disable: { completed: number; failed: number };
   flag: { completed: number; failed: number; refreshed: number; skipped: number };
 }
@@ -371,7 +371,7 @@ export async function runBust(opts: {
   }
 
   const counts: BustCounts = {
-    archive: { agents: 0, skills: 0, failed: 0 },
+    archive: { agents: 0, skills: 0, commands: 0, failed: 0 },
     disable: { completed: 0, failed: 0 },
     flag: { completed: 0, failed: 0, refreshed: 0, skipped: 0 },
   };
@@ -382,6 +382,7 @@ export async function runBust(opts: {
   // these are continue-on-error.
   const agentItems = filteredPlan.archive.filter((i) => i.category === 'agent');
   const skillItems = filteredPlan.archive.filter((i) => i.category === 'skill');
+  const commandItems = filteredPlan.archive.filter((i) => i.category === 'command');
 
   for (const item of agentItems) {
     const op = await archiveOne(item, 'agent', deps, counts);
@@ -389,6 +390,10 @@ export async function runBust(opts: {
   }
   for (const item of skillItems) {
     const op = await archiveOne(item, 'skill', deps, counts);
+    await writer.writeOp(op);
+  }
+  for (const item of commandItems) {
+    const op = await archiveOne(item, 'command', deps, counts);
     await writer.writeOp(op);
   }
 
@@ -486,7 +491,7 @@ export async function runBust(opts: {
     status: 'completed',
     actual_ops: {
       archive: {
-        completed: counts.archive.agents + counts.archive.skills,
+        completed: counts.archive.agents + counts.archive.skills + counts.archive.commands,
         failed: counts.archive.failed,
       },
       disable: counts.disable,
@@ -581,7 +586,7 @@ export async function runBust(opts: {
  */
 async function archiveOne(
   item: ChangePlanItem,
-  category: 'agent' | 'skill',
+  category: 'agent' | 'skill' | 'command',
   deps: BustDeps,
   counts: BustCounts,
 ): Promise<ManifestOp> {
@@ -608,7 +613,8 @@ async function archiveOne(
       });
     }
     const claudeRoot = path.dirname(categoryRoot);
-    const categorySegment = category === 'agent' ? 'agents' : 'skills';
+    const categorySegment =
+      category === 'agent' ? 'agents' : category === 'skill' ? 'skills' : 'commands';
     const archivedDir = path.join(claudeRoot, 'ccaudit', 'archived', categorySegment);
 
     // Read the original bytes BEFORE the rename so the manifest's content
@@ -643,6 +649,8 @@ async function archiveOne(
 
     if (category === 'skill') {
       counts.archive.skills += 1;
+    } else if (category === 'command') {
+      counts.archive.commands += 1;
     } else {
       counts.archive.agents += 1;
     }
@@ -675,8 +683,12 @@ async function archiveOne(
  * Returns null when the segment is absent (caller treats as a programming
  * bug and records a failed archive op).
  */
-function findCategoryRoot(sourcePath: string, category: 'agent' | 'skill'): string | null {
-  const segment = category === 'agent' ? 'agents' : 'skills';
+function findCategoryRoot(
+  sourcePath: string,
+  category: 'agent' | 'skill' | 'command',
+): string | null {
+  const segment =
+    category === 'agent' ? 'agents' : category === 'skill' ? 'skills' : 'commands';
   const parts = sourcePath.split(path.sep);
   for (let i = parts.length - 1; i >= 0; i--) {
     if (parts[i] === segment) {
