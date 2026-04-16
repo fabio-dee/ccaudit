@@ -128,10 +128,19 @@ describe.skipIf(process.platform === 'win32')(
         // Skip any whitespace
         while (i < text.length && (text[i] === ' ' || text[i] === '\n' || text[i] === '\t')) i++;
         if (text[i] !== '{') return null; // not an object value
+        // Walk to the matching closing `}`, respecting JSON string boundaries.
         let depth = 0;
+        let inString = false;
         for (; i < text.length; i++) {
-          if (text[i] === '{') depth++;
-          else if (text[i] === '}') {
+          const ch = text[i];
+          if (inString) {
+            if (ch === '\\') { i++; continue; } // skip escaped char
+            if (ch === '"') inString = false;
+            continue;
+          }
+          if (ch === '"') { inString = true; continue; }
+          if (ch === '{') depth++;
+          else if (ch === '}') {
             depth--;
             if (depth === 0) return { start, end: i + 1 };
           }

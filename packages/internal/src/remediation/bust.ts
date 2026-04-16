@@ -717,12 +717,20 @@ export function patchMcpConfigText(
     while (i < text.length && (text[i] === ' ' || text[i] === '\n' || text[i] === '\t')) i++;
     if (text[i] !== '{') return null;
 
-    // Walk to the matching closing `}`.
+    // Walk to the matching closing `}`, respecting JSON string boundaries.
     let depth = 0;
     let valueEnd = -1;
+    let inString = false;
     for (let j = i; j < text.length; j++) {
-      if (text[j] === '{') depth++;
-      else if (text[j] === '}') {
+      const ch = text[j];
+      if (inString) {
+        if (ch === '\\') { j++; continue; } // skip escaped char
+        if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') { inString = true; continue; }
+      if (ch === '{') depth++;
+      else if (ch === '}') {
         depth--;
         if (depth === 0) {
           valueEnd = j + 1;
