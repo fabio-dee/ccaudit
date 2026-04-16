@@ -32,3 +32,10 @@ export {
   type ConfirmationInput,
 } from './confirmation.ts';
 export { promptAutoOpen, type AutoOpenOutcome } from './auto-open-prompt.ts';
+export {
+  renderRunningProcessMessage,
+  runPreflightRetryLoop,
+  type RunningProcessInput,
+  type PreflightRetryOutcome,
+  type PreflightPhase,
+} from './_preflight-copy.ts';
