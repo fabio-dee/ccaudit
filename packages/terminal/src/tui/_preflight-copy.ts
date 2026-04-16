@@ -325,6 +325,50 @@ if (import.meta.vitest) {
       expect(callArgs.message).toBe("Retry bust? (I've closed all Claude Code windows)");
     });
 
+    it('WR-01: on retry iteration 2, rendered pids come from detectFn output, not stale initialResult', async () => {
+      // Caller supplies initialResult with pids=[999]. User confirms retry.
+      // detectFn returns different pids ([888]). The re-rendered copy must
+      // include 888, not 999 — the fresh detection supersedes the stale
+      // initialResult on every retry iteration.
+      const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        const detectFn = vi
+          .fn()
+          .mockResolvedValueOnce({
+            status: 'ok' as const,
+            processes: [{ pid: 888, command: 'claude' }],
+          })
+          .mockResolvedValueOnce({ status: 'ok' as const, processes: [] });
+        const fakeClack: ClackConfirmDep = {
+          confirm: vi.fn().mockResolvedValueOnce(true),
+          isCancel: vi.fn(() => false),
+        };
+        const out = await runPreflightRetryLoop({
+          detectFn,
+          phase: 'entry',
+          initialResult: { selfInvocation: false, pids: [999] },
+          _clack: fakeClack,
+        });
+        expect(out).toEqual({ status: 'clear' });
+        // Iteration 1 renders with initialResult pids=[999].
+        // Iteration 2 renders with detectFn's fresh pids=[888].
+        const writes = stderrSpy.mock.calls
+          .map((call) => call[0])
+          .filter((arg): arg is string => typeof arg === 'string');
+        const iter1 = writes.find((w) => w.includes('pids: 999'));
+        const iter2 = writes.find((w) => w.includes('pids: 888'));
+        expect(iter1).toBeDefined();
+        expect(iter2).toBeDefined();
+        // Crucially: after retry, NO render should still reference the stale 999.
+        const staleAfterRetry = writes.slice(writes.indexOf(iter1!) + 1).some(
+          (w) => w.includes('pids: 999'),
+        );
+        expect(staleAfterRetry).toBe(false);
+      } finally {
+        stderrSpy.mockRestore();
+      }
+    });
+
     it('W2: emits the running-process copy exactly once per loop iteration (single stderr write)', async () => {
       // Spy on process.stderr.write to count invocations during a single-prompt iteration.
       // Cancel on the first prompt → should see exactly ONE stderr write (one render per iteration).
