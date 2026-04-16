@@ -14,9 +14,17 @@ export {
 export {
   selectGhosts,
   formatRowLabel,
+  CATEGORY_ORDER,
+  CATEGORY_LABEL,
   type SelectGhostsOutcome,
   type SelectGhostsInput,
+  type PickerDep,
 } from './select-ghosts.ts';
+export {
+  openTabbedPicker,
+  type TabbedPickerInput,
+  type TabbedPickerOutcome,
+} from './tabbed-picker.ts';
 export {
   renderConfirmationScreen,
   runConfirmationPrompt,
