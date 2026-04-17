@@ -18,6 +18,9 @@ Current release: **v1.4.0**.
 
 ![Image](https://github.com/user-attachments/assets/2afbe339-539b-4a8d-9f73-8d43746c9ace)
 
+> **"But doesn't `/context` already do this?"**
+>`/context` shows what's loaded *right now* in the current session. ccaudit shows what's been ghost-loading for *weeks* — agents, skills, MCP servers, and memory files you forgot you installed, silently eating your context budget every session. One is a live snapshot; the other is the longitudinal audit.
+
 ---
 
 ## Upgrading from 1.3.x
