@@ -96,6 +96,8 @@ export {
   formatTokenEstimate,
   formatTotalOverhead,
   formatSavingsLine,
+  formatTokensApprox,
+  sumSelectionTokens,
   listMcpTools,
   measureMcpTokens,
   BYTES_PER_TOKEN,

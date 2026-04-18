@@ -21,7 +21,7 @@
  * live here standalone.
  */
 import { MultiSelectPrompt, isCancel } from '@clack/core';
-import { canonicalItemId } from '@ccaudit/internal';
+import { canonicalItemId, formatTokensApprox } from '@ccaudit/internal';
 import type { TokenCostResult } from '@ccaudit/internal';
 import pc from 'picocolors';
 import { computeViewportHeight, windowRows } from './_viewport.ts';
@@ -77,12 +77,15 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
   public tabs: TabState[];
   public activeTabIndex = 0;
   public selectedIds: Set<string>;
+  public tokensById: Map<string, number>;
   public useAscii: boolean;
   public renderTokenCounter: () => string;
   private viewportHeightOverride?: number;
   private now: number;
   private stdoutRows?: number;
   private terminalCols: number;
+  private _resizeHandler: (() => void) | null = null;
+  private _resizeThrottleTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(input: TabbedPickerInput) {
     // Partition ghosts into per-category tabs (CATEGORY_ORDER) with descending
@@ -156,12 +159,34 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     });
 
     this.tabs = tabs;
+    // Phase 4 D4-01 / D4-12: pre-compute a tokens-by-canonical-id map once at
+    // construction so each render pass is an O(|selection|) Map lookup rather
+    // than an O(|catalog|) scan. Hooks are already filtered by the constructor
+    // above, so this map reflects only tabbed items.
+    const tokensById = new Map<string, number>();
+    for (const tab of tabs) {
+      for (const item of tab.items) {
+        tokensById.set(canonicalItemId(item.item), item.tokenEstimate?.tokens ?? 0);
+      }
+    }
+    this.tokensById = tokensById;
     this.selectedIds = new Set<string>();
     this.useAscii = useAscii;
     this.now = now;
     this.stdoutRows = input.stdoutRows;
     this.terminalCols = input.terminalCols ?? 80;
-    this.renderTokenCounter = input.renderTokenCounter ?? (() => '');
+    if (input.renderTokenCounter !== undefined) {
+      // Test/legacy caller seam (D3.1-12). Overrides the live Phase 4 renderer.
+      this.renderTokenCounter = input.renderTokenCounter;
+    } else {
+      // Phase 4 D4-03 / D4-10: live footer implementation replaces the Phase 3.1
+      // no-op stub. Signature unchanged so the _renderFrame() layout contract
+      // (D3.1-12) holds.
+      this.renderTokenCounter = () => {
+        const total = this._computeSelectionTotal();
+        return formatTokensApprox(total, { ascii: this.useAscii });
+      };
+    }
     this.viewportHeightOverride = input.viewportHeightOverride;
 
     // Key dispatch: char-based keys + modifier-based tab switching.
@@ -300,6 +325,7 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
   // ---------------------------------------------------------------------------
 
   public toggleCurrentRow(): void {
+    if (this._terminalTooSmall()) return; // D4-08: suppress row interactivity.
     const t = this.activeTab();
     const item = t.items[t.cursor];
     if (!item) return;
@@ -313,6 +339,7 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
    * tab is already selected, deselect them all; otherwise select them all.
    */
   public toggleAllInActiveTab(): void {
+    if (this._terminalTooSmall()) return; // D4-08.
     const t = this.activeTab();
     const ids = t.items.map((i) => canonicalItemId(i.item));
     const allSelected = ids.every((id) => this.selectedIds.has(id));
@@ -321,6 +348,91 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     } else {
       for (const id of ids) this.selectedIds.add(id);
     }
+  }
+
+  /**
+   * Phase 4 D4-12: sum the tokens of the currently selected canonical ids.
+   * O(|selectedIds|) — catalog map is built once at construction.
+   */
+  private _computeSelectionTotal(): number {
+    let total = 0;
+    for (const id of this.selectedIds) {
+      total += this.tokensById.get(id) ?? 0;
+    }
+    return total;
+  }
+
+  /**
+   * Phase 4 D4-04: tokens for the currently-active tab only.
+   * Used in the per-tab header to render `(N/M · ≈ Xk)`.
+   */
+  private _computeActiveTabTokens(): number {
+    const t = this.tabs[this.activeTabIndex]!;
+    let total = 0;
+    for (const item of t.items) {
+      const id = canonicalItemId(item.item);
+      if (this.selectedIds.has(id)) {
+        total += this.tokensById.get(id) ?? 0;
+      }
+    }
+    return total;
+  }
+
+  /**
+   * Phase 4 D4-08: sub-minimum terminal cliff. Below 14 rows or 60 cols we
+   * render a banner and suppress row interactivity. Cancel keys stay live.
+   */
+  private _terminalTooSmall(): boolean {
+    const rows = this.stdoutRows ?? 24;
+    const cols = this.terminalCols;
+    return rows < 14 || cols < 60;
+  }
+
+  /**
+   * Phase 4 D4-06 / D4-09: register a throttled SIGWINCH handler on process.stdout.
+   * Safe to call multiple times — subsequent calls are no-ops while one is live.
+   * Always paired with _unregisterResize() on prompt exit.
+   */
+  public _registerResize(): void {
+    if (this._resizeHandler !== null) return;
+    const handler = (): void => {
+      // D4-09: coalesce bursts at 50ms. Trailing-edge render only — every
+      // incoming resize event pushes the timer forward, and the render fires
+      // once when the 50ms window finally elapses without a new event.
+      if (this._resizeThrottleTimer !== null) {
+        clearTimeout(this._resizeThrottleTimer);
+      }
+      this._resizeThrottleTimer = setTimeout(() => {
+        this._resizeThrottleTimer = null;
+        this._handleResize();
+      }, 50);
+    };
+    this._resizeHandler = handler;
+    process.stdout.on('resize', handler);
+  }
+
+  public _unregisterResize(): void {
+    if (this._resizeHandler !== null) {
+      process.stdout.off('resize', this._resizeHandler);
+      this._resizeHandler = null;
+    }
+    if (this._resizeThrottleTimer !== null) {
+      clearTimeout(this._resizeThrottleTimer);
+      this._resizeThrottleTimer = null;
+    }
+  }
+
+  /**
+   * Phase 4 D4-07: read the current stdout dimensions into the picker's cached
+   * values and force a re-render. State preservation is automatic because
+   * activeTabIndex, per-tab cursor, and selectedIds live on `this` — only the
+   * geometry changes. D4-08 sub-minimum branch is handled inside _renderFrame.
+   */
+  public _handleResize(): void {
+    this.stdoutRows = process.stdout.rows;
+    this.terminalCols = process.stdout.columns ?? 80;
+    // Nudge the base class to redraw. @clack/core re-renders on state writes.
+    this.state = 'active';
   }
 
   // ---------------------------------------------------------------------------
@@ -336,6 +448,21 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
 
   public cancel(): void {
     this.state = 'cancel';
+  }
+
+  /**
+   * Phase 4 D4-06: register SIGWINCH on entry, unregister on exit (submit,
+   * cancel, or exception). Delegates the actual interactive loop to the base
+   * class's prompt() method. Returns the same Promise shape so
+   * openTabbedPicker's isCancel(result) check keeps working.
+   */
+  public override async prompt(): Promise<string[] | symbol | undefined> {
+    this._registerResize();
+    try {
+      return await super.prompt();
+    } finally {
+      this._unregisterResize();
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -356,6 +483,15 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     // keypress and is cheap (Set → Array copy).
     this.value = Array.from(this.selectedIds);
 
+    // Phase 4 D4-08: sub-minimum terminal branch. We still draw a minimal frame
+    // so the user sees why interactivity is suppressed AND learns the escape
+    // hatch. Cancel keys (q / Ctrl+C / Esc) remain live — they are handled in
+    // the base class key dispatcher and are NOT gated by _terminalTooSmall().
+    if (this._terminalTooSmall()) {
+      const warnGlyph = this.useAscii ? '!' : '⚠';
+      return `${warnGlyph} Terminal too small (need ≥14r × 60c). Resize to continue or press q.`;
+    }
+
     const lines: string[] = [];
     const t = this.activeTab();
 
@@ -375,7 +511,25 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
       this.selectedIds.has(canonicalItemId(i.item)),
     ).length;
     const totalInTab = t.items.length;
-    lines.push(pc.bold(`${t.label} (${selectedInTab}/${totalInTab})`));
+    // Phase 4 D4-04: per-tab header extends to `(N/M · ≈ Xk)` when N > 0.
+    // When N === 0 we suppress the `· ≈ 0k` suffix to keep the header calm.
+    let header: string;
+    if (selectedInTab > 0) {
+      const activeTabTokens = this._computeActiveTabTokens();
+      const activeApprox = formatTokensApprox(activeTabTokens, { ascii: this.useAscii });
+      // activeApprox is e.g. '≈ 2k tokens' or '~ 2k tokens' or '350 tokens'.
+      // For the per-tab header we want just the leading approx value without
+      // the trailing ' tokens' word — strip it to keep the header compact.
+      const compact = activeApprox.replace(/\s*tokens$/, '');
+      if (compact === '') {
+        header = `${t.label} (${selectedInTab}/${totalInTab})`;
+      } else {
+        header = `${t.label} (${selectedInTab}/${totalInTab} · ${compact})`;
+      }
+    } else {
+      header = `${t.label} (${selectedInTab}/${totalInTab})`;
+    }
+    lines.push(pc.bold(header));
 
     // 3–5. Viewport window + ↑/↓ N more indicators (D3.1-06).
     const vh = computeViewportHeight({
@@ -419,15 +573,23 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
       ),
     );
 
-    // 7. Global count line (D3.1-10).
+    // 7. Global count + live token counter on a SINGLE line (D4-03).
+    // Phase 3.1 kept them on separate lines; Phase 4 joins them per the
+    // ROADMAP SC1 wording `N of M selected across all tabs · ≈ Zk tokens saved`.
+    // When the selection is empty (or selection sums to 0), formatTokensApprox
+    // returns '' and the dot separator is suppressed so the line reads as
+    // Phase 3.1's form.
     const totalItems = this.tabs.reduce((sum, tab) => sum + tab.items.length, 0);
-    lines.push(`${this.selectedIds.size} of ${totalItems} selected across all tabs`);
-
-    // 8. Footer token-counter slot (D3.1-12 — Phase 4 handshake).
-    // Always call renderTokenCounter so the layout preserves its line slot.
-    // In this phase it returns '' — Phase 4 replaces the stub implementation.
-    const footer = this.renderTokenCounter();
-    if (footer !== '') lines.push(footer);
+    const counterSuffix = this.renderTokenCounter();
+    // counterSuffix is '' or '≈ Zk tokens' or '350 tokens' (or '~ Zk tokens' in ASCII mode).
+    // Rewrite it to `≈ Zk tokens saved` / '350 tokens saved' / ''.
+    const counterDisplay = counterSuffix === '' ? '' : `${counterSuffix} saved`;
+    const dotGlobal = this.useAscii ? '|' : '·';
+    const globalLine =
+      counterDisplay === ''
+        ? `${this.selectedIds.size} of ${totalItems} selected across all tabs`
+        : `${this.selectedIds.size} of ${totalItems} selected across all tabs ${dotGlobal} ${counterDisplay}`;
+    lines.push(globalLine);
 
     return lines.join('\n');
   }
@@ -817,6 +979,171 @@ if (import.meta.vitest) {
       expect(frame).toContain('Tab');
       expect(frame).toContain('Space toggle');
       expect(frame).toContain('q cancel');
+    });
+
+    describe('Phase 4 live token counter', () => {
+      it('footer drops token suffix when selection is empty', () => {
+        const ghosts = [
+          makeGhost({ name: 'a1', category: 'agent', tokens: 1500 }),
+          makeGhost({ name: 's1', category: 'skill', tokens: 2000 }),
+        ];
+        const picker = makePicker(ghosts);
+        const frame = picker._renderFrame();
+        expect(frame).toContain('0 of 2 selected across all tabs');
+        expect(frame).not.toContain('tokens saved');
+        // Per-tab header with N=0 MUST NOT include the subtotal segment.
+        expect(frame).toContain('AGENTS (0/1)');
+        expect(frame).not.toContain('AGENTS (0/1 ·');
+        expect(frame).not.toContain('AGENTS (0/1 |');
+      });
+
+      it('footer shows ≈ Zk tokens saved after toggling one 1500-token item (ASCII mode: ~ 2k)', () => {
+        const ghosts = [
+          makeGhost({ name: 'a1', category: 'agent', tokens: 1500 }),
+          makeGhost({ name: 's1', category: 'skill', tokens: 2000 }),
+        ];
+        const picker = makePicker(ghosts); // useAscii=true from makePicker default
+        picker.toggleCurrentRow();
+        const frame = picker._renderFrame();
+        expect(frame).toContain('1 of 2 selected across all tabs | ~ 2k tokens saved');
+        expect(frame).toContain('AGENTS (1/1 · ~ 2k)');
+      });
+
+      it('toggleAllInActiveTab updates both the tab header subtotal and the global footer', () => {
+        const ghosts = [
+          makeGhost({ name: 'a1', category: 'agent', tokens: 1000 }),
+          makeGhost({ name: 'a2', category: 'agent', tokens: 500 }),
+          makeGhost({ name: 'a3', category: 'agent', tokens: 250 }),
+          makeGhost({ name: 's1', category: 'skill', tokens: 4000 }),
+        ];
+        const picker = makePicker(ghosts);
+        picker.toggleAllInActiveTab();
+        const frame = picker._renderFrame();
+        expect(frame).toContain('AGENTS (3/3 · ~ 2k)');
+        expect(frame).toContain('3 of 4 selected across all tabs | ~ 2k tokens saved');
+      });
+
+      it('cross-tab selection sums into the global footer but only the active tab shows its own subtotal in the header', () => {
+        const ghosts = [
+          makeGhost({ name: 'a1', category: 'agent', tokens: 3000 }),
+          makeGhost({ name: 's1', category: 'skill', tokens: 2000 }),
+        ];
+        const picker = makePicker(ghosts);
+        picker.toggleCurrentRow();
+        picker.nextTab();
+        picker.toggleCurrentRow();
+        const frame = picker._renderFrame();
+        expect(frame).toContain('SKILLS (1/1 · ~ 2k)');
+        expect(frame).toContain('2 of 2 selected across all tabs | ~ 5k tokens saved');
+        expect(frame).not.toContain('AGENTS (1/1 · ~ 3k)');
+      });
+
+      it('items with null tokenEstimate contribute 0 to both subtotal and footer', () => {
+        const ghosts = [
+          makeGhost({ name: 'a1', category: 'agent' }),
+          makeGhost({ name: 'a2', category: 'agent', tokens: 1500 }),
+        ];
+        const picker = makePicker(ghosts);
+        // Tab items sort descending by tokens, so a2 (1500) is at cursor 0 and
+        // a1 (null → 0) is at cursor 1. Navigate to a1 then toggle.
+        picker.cursorDown();
+        picker.toggleCurrentRow();
+        const frame = picker._renderFrame();
+        // With a single 0-token selection the subtotal is 0 → header shows
+        // bare N/M (0 formats to empty); footer shows count line without
+        // "tokens saved".
+        expect(frame).toContain('AGENTS (1/2)');
+        expect(frame).toContain('1 of 2 selected across all tabs');
+        expect(frame).not.toContain('tokens saved');
+      });
+    });
+
+    describe('Phase 4 resize + sub-minimum terminal', () => {
+      it('sub-minimum terminal (stdoutRows=10) returns the banner as the entire frame', () => {
+        const ghosts = [
+          makeGhost({ name: 'a1', category: 'agent', tokens: 100 }),
+          makeGhost({ name: 's1', category: 'skill', tokens: 200 }),
+        ];
+        const picker = new TabbedGhostPicker({
+          ghosts,
+          useAscii: true,
+          stdoutRows: 10,
+          terminalCols: 120,
+        });
+        const frame = picker._renderFrame();
+        expect(frame).toContain('! Terminal too small');
+        expect(frame).toContain('press q');
+        expect(frame).not.toContain('AGENTS (');
+        expect(frame).not.toContain('selected across all tabs');
+      });
+
+      it('sub-minimum terminal (terminalCols=40) returns the banner', () => {
+        const ghosts = [makeGhost({ name: 'a1', category: 'agent', tokens: 100 })];
+        const picker = new TabbedGhostPicker({
+          ghosts,
+          useAscii: true,
+          stdoutRows: 24,
+          terminalCols: 40,
+        });
+        expect(picker._renderFrame()).toContain('Terminal too small');
+      });
+
+      it('sub-minimum terminal suppresses Space/a interactivity (selection set unchanged)', () => {
+        const ghosts = [
+          makeGhost({ name: 'a1', category: 'agent', tokens: 100 }),
+          makeGhost({ name: 'a2', category: 'agent', tokens: 200 }),
+        ];
+        const picker = new TabbedGhostPicker({
+          ghosts,
+          useAscii: true,
+          stdoutRows: 10,
+          terminalCols: 120,
+        });
+        expect(picker.selectedIds.size).toBe(0);
+        picker.toggleCurrentRow();
+        expect(picker.selectedIds.size).toBe(0);
+        picker.toggleAllInActiveTab();
+        expect(picker.selectedIds.size).toBe(0);
+      });
+
+      it('Unicode banner glyph when useAscii=false', () => {
+        const ghosts = [makeGhost({ name: 'a1', category: 'agent', tokens: 100 })];
+        const picker = new TabbedGhostPicker({
+          ghosts,
+          useAscii: false,
+          stdoutRows: 10,
+          terminalCols: 120,
+        });
+        expect(picker._renderFrame()).toContain('⚠ Terminal too small');
+      });
+
+      it('caller-provided renderTokenCounter override is honored (D3.1-12 seam preserved)', () => {
+        const ghosts = [makeGhost({ name: 'a1', category: 'agent', tokens: 100 })];
+        const picker = new TabbedGhostPicker({
+          ghosts,
+          useAscii: true,
+          stdoutRows: 24,
+          terminalCols: 120,
+          renderTokenCounter: () => 'CUSTOM_FOOTER',
+        });
+        const frame = picker._renderFrame();
+        expect(frame).toContain('CUSTOM_FOOTER');
+      });
+
+      it('_registerResize/_unregisterResize add then remove exactly one stdout resize listener', () => {
+        const ghosts = [makeGhost({ name: 'a1', category: 'agent', tokens: 100 })];
+        const picker = new TabbedGhostPicker({
+          ghosts,
+          useAscii: true,
+          stdoutRows: 24,
+          terminalCols: 120,
+        });
+        const before = process.stdout.listenerCount('resize');
+        picker._registerResize();
+        expect(process.stdout.listenerCount('resize')).toBe(before + 1);
+        picker._unregisterResize();
+        expect(process.stdout.listenerCount('resize')).toBe(before);
+      });
     });
   });
 }
