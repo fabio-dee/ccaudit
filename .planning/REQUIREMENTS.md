@@ -13,18 +13,18 @@ Requirements for the v1.5 milestone — "interactive archive" response to Reddit
 - [ ] **TUI-02**: Picker groups ghosts by category (agents / skills / MCP / memory / commands / hooks) then by framework sub-group; full keyboard model per design doc §5.4 (arrows, Space, a/n/i, g/G, /, s, ?, Enter, q, Ctrl-C).
 - [x] **TUI-03**: Selection flows through `runBust` via Approach A — full-inventory hash governs the gate; filter is applied after verification. Non-interactive `--dangerously-bust-ghosts` path is unchanged when `selectedItems` is undefined.
 - [x] **TUI-04**: Confirmation screen replaces the 3-prompt readline ceremony in the interactive path. Confirmation shows categorized summary + estimated savings. `y + Enter` proceeds, `b` returns to picker preserving selection, `q` cancels.
-- [x] **TUI-05**: Framework-protected items appear dimmed + locked with inline reason (`"Part of <framework> (N used, M ghost). --force-partial to override."`); not selectable in default mode. `--force-partial` unlocks them with a banner warning.
-- [ ] **TUI-06**: Memory file glyph uses `[~]` / `[≈]` with `CCAUDIT_ASCII_ONLY=1` fallback (and auto-detection for terminals without Unicode width support).
+- [ ] **TUI-05**: Framework-protected items appear dimmed + locked with inline reason (`"Part of <framework> (N used, M ghost). --force-partial to override."`); not selectable in default mode. `--force-partial` unlocks them with a banner warning.
+- [x] **TUI-06**: Memory file glyph uses `[~]` / `[≈]` with `CCAUDIT_ASCII_ONLY=1` fallback (and auto-detection for terminals without Unicode width support).
 - [x] **TUI-07**: After a regular `ccaudit ghost` scan on a TTY, prompt `Open interactive picker? [y/N]`. Suppressed by non-TTY, `--json`, `--csv`, `--quiet`, `--ci`. Opt-in required; never auto-proceeds.
 
 ### SAFETY (new invariants S1–S6)
 
 - [x] **SAFETY-01** (INV-S1): Unselected MCP server keys are byte-preserved in `~/.claude.json` after subset bust. Verified by fixture test — serverA + serverB; select A; assert B's key is byte-identical post-bust.
 - [x] **SAFETY-02** (INV-S2): Ctrl+C / SIGINT during TUI produces zero disk writes. Verified by subprocess test — spawn TUI, send SIGINT, assert exit 0 and empty `~/.claude/ccaudit/manifests/`.
-- [ ] **SAFETY-03** (INV-S3): Subset manifests + full manifests round-trip through `ccaudit restore`. Verified by test — subset bust {A, B}, full bust {C}, `restore` restores all three.
-- [ ] **SAFETY-04** (INV-S4): `manifest.header.planned_ops` counts reflect the filtered plan, not the full plan. Verified by test — N-of-M subset bust; assert `header.planned_ops.archive + disable + flag === N` and exactly `N+2` JSONL lines.
-- [ ] **SAFETY-05** (INV-S5): `bust.summary.freedTokens` is subset-accurate; additive `bust.summary.totalPlannedTokens` preserves the full-plan figure for consumers. Verified by test — two known-cost agents, subset-bust one, assert `freedTokens` matches that agent's estimate.
-- [ ] **SAFETY-06** (INV-S6): Framework-protected items are not selectable in the TUI without `--force-partial`. Verified by fixture test — partial-framework scenario shows items locked; `--force-partial` unlocks.
+- [x] **SAFETY-03** (INV-S3): Subset manifests + full manifests round-trip through `ccaudit restore`. Verified by test — subset bust {A, B}, full bust {C}, `restore` restores all three.
+- [x] **SAFETY-04** (INV-S4): `manifest.header.planned_ops` counts reflect the filtered plan, not the full plan. Verified by test — N-of-M subset bust; assert `header.planned_ops.archive + disable + flag === N` and exactly `N+2` JSONL lines.
+- [x] **SAFETY-05** (INV-S5): `bust.summary.freedTokens` is subset-accurate; additive `bust.summary.totalPlannedTokens` preserves the full-plan figure for consumers. Verified by test — two known-cost agents, subset-bust one, assert `freedTokens` matches that agent's estimate.
+- [x] **SAFETY-06** (INV-S6): Framework-protected items are not selectable in the TUI without `--force-partial`. Verified by fixture test — partial-framework scenario shows items locked; `--force-partial` unlocks.
 
 ### RESTORE (D3 — both halves ship in v1.5)
 
@@ -82,15 +82,15 @@ Which phases cover which requirements. Filled by roadmapper during ROADMAP.md cr
 | TUI-02 | Phase 5 | Pending |
 | TUI-03 | Phase 2 | Complete |
 | TUI-04 | Phase 2 | Complete |
-| TUI-05 | Phase 6 | Complete |
-| TUI-06 | Phase 2 | Pending |
+| TUI-05 | Phase 6 | Pending |
+| TUI-06 | Phase 2 | Complete |
 | TUI-07 | Phase 2 | Complete |
 | SAFETY-01 | Phase 3 | Complete |
 | SAFETY-02 | Phase 3 | Complete |
-| SAFETY-03 | Phase 3 | Pending |
-| SAFETY-04 | Phase 1 | Pending |
-| SAFETY-05 | Phase 1 | Pending |
-| SAFETY-06 | Phase 3 | Pending |
+| SAFETY-03 | Phase 3 | Complete |
+| SAFETY-04 | Phase 1 | Complete |
+| SAFETY-05 | Phase 1 | Complete |
+| SAFETY-06 | Phase 3 | Complete |
 | RESTORE-01 | Phase 8 | Pending |
 | RESTORE-02 | Phase 8 | Pending |
 | RESTORE-03 | Phase 8 | Pending |
