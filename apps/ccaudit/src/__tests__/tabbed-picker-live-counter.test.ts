@@ -474,7 +474,8 @@ describe.skipIf(process.platform === 'win32')(
       const afterSecondSpace = stripAnsi(stdoutBuf.slice(beforeLen));
       // Banner still present (interactivity suppressed).
       expect(
-        afterSecondSpace.includes('Terminal too small') || afterResize.includes('Terminal too small'),
+        afterSecondSpace.includes('Terminal too small') ||
+          afterResize.includes('Terminal too small'),
         `expected banner after suppressed Space; stdoutSlice:\n${afterSecondSpace}`,
       ).toBe(true);
 
