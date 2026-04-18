@@ -194,6 +194,24 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     // The base class auto-calls render() after every keypress, so mutating
     // instance state here is sufficient — no explicit render call needed.
     this.on('key', (char, info) => {
+      // Phase 4 integration test seam (gated on env — production path is dead code).
+      // The pty-based SIGWINCH test cannot fire a real 'resize' event because the
+      // child process stdout is a pipe, not a TTY. CCAUDIT_TEST_RESIZE=1 lets the
+      // test send Ctrl+R to invoke _handleResize() directly. Optional env var
+      // CCAUDIT_TEST_RESIZE_ROWS drives the post-resize stdoutRows.
+      if (process.env.CCAUDIT_TEST_RESIZE === '1' && char === '\x12') {
+        // Invoke the resize handler, THEN overwrite stdoutRows with the forced
+        // value (handleResize reads process.stdout.rows which is undefined on
+        // piped stdio, so it would otherwise clobber the test-supplied value).
+        this._handleResize();
+        const forcedRows = process.env.CCAUDIT_TEST_RESIZE_ROWS;
+        if (forcedRows !== undefined && /^\d+$/.test(forcedRows)) {
+          this.stdoutRows = parseInt(forcedRows, 10);
+        }
+        // Nudge @clack/core to re-render after the forced rows take effect.
+        this.state = 'active';
+        return;
+      }
       // Tab switching: Tab / Shift-Tab.
       if (info?.name === 'tab') {
         if (info.shift === true) this.prevTab();
