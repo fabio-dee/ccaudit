@@ -262,3 +262,63 @@ The plan's checkpoint asks the user to:
 3. Confirm the bundle delta in this SUMMARY (< 10 KB).
 
 **Recommended user-side action before approval:** decide whether the **KNOWN-GAP** (@clack/core Esc/Enter alias defect affecting D5-05/D5-06/D5-13) should be closed BEFORE the Phase 5 verify+milestone tag, or whether to ship v1.5 with the gap documented and address it in a v1.5.1 follow-up. This decision is upstream of the human-verify "approved / report issues" response.
+
+---
+
+## Gap closure (2026-04-19)
+
+**Status:** CLOSED. The `@clack/core` Esc/Enter alias defect documented under KNOWN-GAP above is fixed. All three `it.todo` markers are now live passing tests, plus a new D5-13 Esc-closes-help-overlay test was added. `pnpm verify` is green end-to-end.
+
+### Fix location
+
+`packages/terminal/src/tui/tabbed-picker.ts` — constructor-time reassignment of `this.onKeypress` wraps the base `@clack/core.Prompt.onKeypress` with a guard that intercepts `escape` and `return` ONLY when `filterMode` or `helpOpen` is `true`. In the intercept path we manually `emit('key', …)` so the existing constructor-installed key listener runs its mode-specific logic (clear query + exit filter on escape, exit filter but keep query on return, close overlay on escape) and then call `render()`. For every other key — including Ctrl+C, arrows, typed chars, and escape/return in the normal (non-filter, non-help) picker state — we delegate to the original bound dispatcher untouched, preserving INV-S2 and every Phase 3.1/4 binding.
+
+### Why reassignment, not override
+
+`@clack/core@1.2.0` declares `onKeypress` as a `private` class field and binds it in the base constructor (`this.onKeypress = this.onKeypress.bind(this)`). TypeScript therefore rejects a `public override onKeypress(…)` method declaration. The workable shape is to capture the already-bound original and reassign `this.onKeypress` to a wrapper function at the tail of our constructor, before `prompt()` attaches it as the keypress listener. The module-global alternative (`updateSettings({ aliases: {} })` from `@clack/core`) would have de-aliased escape/return for every prompt the host process ever opens — an unacceptable blast radius for a targeted fix.
+
+### Help-overlay Enter UX
+
+Per planner's discretion (see CONTEXT.md "Claude's Discretion" and D5-13 "every other key swallowed"), Enter while the help overlay is open is a **no-op** — consistent with the existing rule that only `?` and `Esc` are acknowledged while help is showing. Users press `?` or `Esc` to close; Enter neither closes nor submits.
+
+### Normal-state Esc / Enter unchanged
+
+When `filterMode` and `helpOpen` are both `false`, Esc and Enter fall through to the base dispatcher untouched — so the Phase 3.1 picker still cancels on Esc and submits on Enter. This preserves the existing CHANGELOG/README surface and avoids a second regression.
+
+### Test coverage changes
+
+- `apps/ccaudit/src/__tests__/tabbed-picker-filter.test.ts`
+  - Removed three `it.todo(…)` markers.
+  - **D5-05 Esc-clears-filter (pty):** types `/pen`, asserts footer; presses Esc; asserts picker did NOT exit, `No changes made` NOT present, `Filter: pen_` gone, full-inventory counter back.
+  - **D5-05 Enter-keeps-query (pty):** types `/pen`, presses Enter, then Space to force a new render; asserts picker did NOT exit and `Filtered: 2 of 3 visible | 1 selected` still renders.
+  - **D5-06 Space-toggles-in-filter + Esc-clear preserves selection (pty):** covers D5-06 end-to-end, including re-entering filter + Esc-clearing it without losing the selection.
+- `apps/ccaudit/src/__tests__/tabbed-picker-help-overlay.test.ts`
+  - **D5-13 Esc-closes-help (pty):** opens help with `?`, presses Esc, asserts picker did NOT cancel and the normal footer restored. The original `?`-toggle SC3 test remains green and an outdated `(Note: closing via Esc also cancels the underlying picker …)` comment was updated to reflect the new behavior.
+
+### Final numbers
+
+```
+phase_5_gap_closure_post_build_gzipped_bytes: 179988
+phase_4_baseline_bytes:                       177038
+delta_bytes:                                    2950
+delta_kb:                                       2.88
+budget_bytes:                                  10240
+budget_kb:                                     10.00
+headroom_bytes:                                 7290
+headroom_kb:                                    7.12
+```
+
+Bundle is 506 B *smaller* than the pre-fix Phase 5 post-build (180494 B) because the `onKeypress` wrapper replaces the documentation-only KNOWN-GAP text and the test file retires its long `it.todo` annotation block.
+
+### Verification
+
+- `pnpm verify` (typecheck + lint + build + bundle smoke + bundle-size gate + 1490-test vitest run + format:check): **GREEN.**
+- All five SC1–SC5 pty tests still pass (SC3 retains the `?`-toggle regression path, SC5 continues to use Enter-exits-filter because the path is now correct).
+- INV-S2 (SIGINT during filter-input mode): still PASSING.
+
+### Commits
+
+| Commit | Type | Scope |
+| --- | --- | --- |
+| `5326399` | fix(05-gap) | onKeypress wrapper + 3 promoted pty tests + Esc-closes-help pty test |
+
