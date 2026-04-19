@@ -24,7 +24,7 @@
  * live here standalone.
  */
 import { MultiSelectPrompt, isCancel } from '@clack/core';
-import { canonicalItemId, formatTokensApprox } from '@ccaudit/internal';
+import { canonicalItemId, formatTokensApprox, isProtected } from '@ccaudit/internal';
 import type { TokenCostResult } from '@ccaudit/internal';
 import pc from 'picocolors';
 import { computeViewportHeight, windowRows } from './_viewport.ts';
@@ -39,6 +39,11 @@ import {
   type FilterSortState,
 } from './_filter-sort.ts';
 import { renderHelpOverlay } from './_help-overlay.ts';
+import {
+  dimLine,
+  protectedHintLine,
+  renderProtectedPrefix,
+} from './_protection-render.ts';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -59,6 +64,14 @@ export interface TabbedPickerInput {
   viewportHeightOverride?: number;
   /** Phase 4 handshake (D3.1-12): footer-slot renderer. Returns '' this phase. */
   renderTokenCounter?: () => string;
+  /**
+   * Phase 6 Plan 02/03 (D6-13 / D6-16): when true, framework-protected rows
+   * render normally (no dim, no lock glyph), and all bulk-toggle paths treat
+   * them as selectable. Flag is strictly per-invocation — no setter exposed.
+   * Plan 03 plumbs this from the CLI `--force-partial` flag. Defaults to
+   * `false`; picker enforces protection unless explicitly overridden.
+   */
+  forcePartial?: boolean;
 }
 
 export type TabbedPickerOutcome =
@@ -100,10 +113,22 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
   public activeTabIndex = 0;
   public selectedIds: Set<string>;
   public tokensById: Map<string, number>;
+  /**
+   * Phase 6 Plan 02: per-canonical-ID reverse index used by toggle-guard
+   * assertions and group-toggle protection filtering. Built once at
+   * construction alongside `tokensById`.
+   */
+  public itemsById: Map<string, TokenCostResult>;
   public useAscii: boolean;
   public renderTokenCounter: () => string;
   public filterSortByTab: FilterSortState[];
   public filterMode = false;
+  /**
+   * Phase 6 Plan 02 / Plan 03 (D6-13, D6-16): immutable per-invocation
+   * flag that relaxes protection rendering + toggle gating. Set in
+   * constructor; no setter exposed.
+   */
+  public readonly forcePartial: boolean;
 
   /**
    * Phase 5 D5-13: modal help overlay flag. When true, the picker swallows
@@ -198,14 +223,19 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     // than an O(|catalog|) scan. Hooks are already filtered by the constructor
     // above, so this map reflects only tabbed items.
     const tokensById = new Map<string, number>();
+    const itemsById = new Map<string, TokenCostResult>();
     for (const tab of tabs) {
       for (const item of tab.items) {
-        tokensById.set(canonicalItemId(item.item), item.tokenEstimate?.tokens ?? 0);
+        const id = canonicalItemId(item.item);
+        tokensById.set(id, item.tokenEstimate?.tokens ?? 0);
+        itemsById.set(id, item);
       }
     }
     this.tokensById = tokensById;
+    this.itemsById = itemsById;
     this.selectedIds = new Set<string>();
     this.useAscii = useAscii;
+    this.forcePartial = input.forcePartial === true;
     this.now = now;
     this.stdoutRows = input.stdoutRows;
     this.terminalCols = input.terminalCols ?? 80;
@@ -641,16 +671,55 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     const row = this._rowsActive()[t.cursor];
     if (!row) return;
     if (row.kind === 'item') {
+      // Phase 6 Plan 02 (D6-09): silent no-op on protected rows when
+      // --force-partial is OFF. Dim + [🔒] + below-cursor reason already
+      // communicate un-selectability; a beep/error would be noisy.
+      if (!this.forcePartial && isProtected(row.item.item)) return;
       const id = canonicalItemId(row.item.item);
       if (this.selectedIds.has(id)) this.selectedIds.delete(id);
       else this.selectedIds.add(id);
+      this._assertNoProtectedSelected();
       return;
     }
+    // Phase 6 Plan 02 (D6-12): framework-group toggle skips protected
+    // members when --force-partial is OFF. If every member is protected,
+    // the toggle is a no-op.
     const { groupIds } = row;
-    if (groupIds.length === 0) return;
-    const anyUnselected = groupIds.some((id) => !this.selectedIds.has(id));
-    if (anyUnselected) for (const id of groupIds) this.selectedIds.add(id);
-    else for (const id of groupIds) this.selectedIds.delete(id);
+    const eligibleIds = this.forcePartial
+      ? groupIds
+      : groupIds.filter((id) => {
+          const it = this.itemsById.get(id);
+          return it === undefined || !isProtected(it.item);
+        });
+    if (eligibleIds.length === 0) return;
+    const anyUnselected = eligibleIds.some((id) => !this.selectedIds.has(id));
+    if (anyUnselected) for (const id of eligibleIds) this.selectedIds.add(id);
+    else for (const id of eligibleIds) this.selectedIds.delete(id);
+    this._assertNoProtectedSelected();
+  }
+
+  /**
+   * Phase 6 Plan 02 — post-mutation invariant: when --force-partial is
+   * OFF, no protected canonical ID may appear in `selectedIds` (D6-11).
+   * Under `import.meta.vitest`, fails loud to surface regressions; in
+   * production runtime, silently drops any stray protected IDs
+   * (belt-and-braces — server-side INV-S6 in `runBust` is the real gate).
+   */
+  private _assertNoProtectedSelected(): void {
+    if (this.forcePartial) return;
+    const offenders: string[] = [];
+    for (const id of this.selectedIds) {
+      const it = this.itemsById.get(id);
+      if (it !== undefined && isProtected(it.item)) offenders.push(id);
+    }
+    if (offenders.length === 0) return;
+    if (import.meta.vitest !== undefined) {
+      throw new Error(
+        `TabbedGhostPicker invariant violated: protected id(s) entered selection ` +
+          `while forcePartial=false: ${offenders.join(', ')}`,
+      );
+    }
+    for (const id of offenders) this.selectedIds.delete(id);
   }
 
   /**
@@ -666,7 +735,13 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     const t = this.activeTab();
     const state = this.filterSortByTab[this.activeTabIndex];
     const filterActive = state?.active === true && state.query !== '';
-    const source = filterActive ? this._visibleActive() : t.items;
+    const baseSource = filterActive ? this._visibleActive() : t.items;
+    // Phase 6 Plan 02 (D6-10): exclude protected items from the toggle-all
+    // candidate set when --force-partial is OFF. They're not selectable,
+    // so they shouldn't participate in the "select-all-or-clear" decision.
+    const source = this.forcePartial
+      ? baseSource
+      : baseSource.filter((i) => !isProtected(i.item));
     const ids = source.map((i) => canonicalItemId(i.item));
     const allSelected = ids.length > 0 && ids.every((id) => this.selectedIds.has(id));
     if (allSelected) {
@@ -674,6 +749,7 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     } else {
       for (const id of ids) this.selectedIds.add(id);
     }
+    this._assertNoProtectedSelected();
   }
 
   /**
@@ -916,7 +992,19 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
           const isSelected = this.selectedIds.has(id);
           const marker = isSelected ? '[x]' : '[ ]';
           const label = formatRowLabel(row.item, this.useAscii, this.now);
-          lines.push(`${cursorMark} ${marker} ${label}`);
+          // Phase 6 Plan 02 (D6-04 / D6-20): protected rows render dim with
+          // a [🔒] glyph (or [L] in ASCII) BEFORE the selection checkbox.
+          // When --force-partial is ON, render normally — the banner (plan
+          // 03) carries the mode-wide unlock signal. Glyph + dim always
+          // co-occur: never color-alone.
+          const isLocked = !this.forcePartial && isProtected(row.item.item);
+          if (isLocked) {
+            const prefix = renderProtectedPrefix(row.item.item, { ascii: this.useAscii });
+            const rowBody = `${prefix}${marker} ${label}`;
+            lines.push(`${cursorMark}${dimLine(rowBody, { ascii: this.useAscii })}`);
+          } else {
+            lines.push(`${cursorMark} ${marker} ${label}`);
+          }
         }
       }
 
@@ -927,6 +1015,21 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     }
 
     // 6. Hint / filter-input line.
+    // Phase 6 Plan 02 (D6-05): the below-cursor hint slot is SHARED with
+    // Phase 5's filter input and help hint — no stacking. Protection
+    // reason takes priority: when the focused row is an item, is
+    // protected, and --force-partial is OFF, render the scanner-provided
+    // reason verbatim instead of the Phase 5 filter/help hint. Hidden
+    // behind filterMode (the user is actively typing a query — filter
+    // input wins) to preserve Phase 5 interactivity.
+    const focusedRow = rows[t.cursor];
+    const protectionHint =
+      !this.filterMode &&
+      !this.forcePartial &&
+      focusedRow !== undefined &&
+      focusedRow.kind === 'item'
+        ? protectedHintLine(focusedRow.item.item, { ascii: this.useAscii })
+        : null;
     if (this.filterMode) {
       // Phase 5 D5-01: footer hint becomes the filter input. The trailing
       // underscore is an ASCII cursor glyph (D5-21). Defense-in-depth sanitize
@@ -934,6 +1037,8 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
       // the append-time sanitizer still can't inject terminal escapes here.
       const echoQuery = sanitizeFilterQuery(activeState?.query ?? '');
       lines.push(`Filter: ${echoQuery}_`);
+    } else if (protectionHint !== null) {
+      lines.push(pc.dim(protectionHint));
     } else {
       const leftArrow = this.useAscii ? '<-' : '←';
       const rightArrow = this.useAscii ? '->' : '→';
