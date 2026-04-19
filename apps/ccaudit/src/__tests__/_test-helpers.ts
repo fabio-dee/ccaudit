@@ -556,11 +556,7 @@ export async function createMultiFrameworkFixture(
 
   const sessionDir = path.join(tmpHome, '.claude', 'projects', 'multi-fwk');
   await mkdir(sessionDir, { recursive: true });
-  await writeFile(
-    path.join(sessionDir, 'session-1.jsonl'),
-    sessionLines.join('\n') + '\n',
-    'utf8',
-  );
+  await writeFile(path.join(sessionDir, 'session-1.jsonl'), sessionLines.join('\n') + '\n', 'utf8');
 }
 
 export interface MultiConfigMcpFixtureOpts {

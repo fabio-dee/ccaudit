@@ -146,19 +146,13 @@ if (import.meta.vitest) {
 
     it('returns "⚠ " for multi-config MCP in Unicode mode', () => {
       expect(
-        renderMcpWarningPrefix(
-          { kind: 'mcp-server', configRefs: ['a', 'b'] },
-          { ascii: false },
-        ),
+        renderMcpWarningPrefix({ kind: 'mcp-server', configRefs: ['a', 'b'] }, { ascii: false }),
       ).toBe('⚠ ');
     });
 
     it('returns "! " for multi-config MCP in ASCII mode', () => {
       expect(
-        renderMcpWarningPrefix(
-          { kind: 'mcp-server', configRefs: ['a', 'b'] },
-          { ascii: true },
-        ),
+        renderMcpWarningPrefix({ kind: 'mcp-server', configRefs: ['a', 'b'] }, { ascii: true }),
       ).toBe('! ');
     });
 
@@ -215,10 +209,7 @@ if (import.meta.vitest) {
 
     it('returns null for single-config MCP', () => {
       expect(
-        alsoInHintLine(
-          { kind: 'mcp-server', configRefs: ['~/.claude.json'] },
-          { ascii: false },
-        ),
+        alsoInHintLine({ kind: 'mcp-server', configRefs: ['~/.claude.json'] }, { ascii: false }),
       ).toBe(null);
     });
 
@@ -242,10 +233,7 @@ if (import.meta.vitest) {
 
     it('formats 3-config MCP without truncation', () => {
       expect(
-        alsoInHintLine(
-          { kind: 'mcp-server', configRefs: ['a', 'b', 'c'] },
-          { ascii: false },
-        ),
+        alsoInHintLine({ kind: 'mcp-server', configRefs: ['a', 'b', 'c'] }, { ascii: false }),
       ).toBe('  Also in: a, b, c');
     });
 

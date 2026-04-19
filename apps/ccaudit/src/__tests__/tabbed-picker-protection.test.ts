@@ -29,9 +29,7 @@ const distPath = path.resolve(here, '..', '..', 'dist', 'index.js');
 
 beforeAll(() => {
   if (!existsSync(distPath)) {
-    throw new Error(
-      `dist binary not found at ${distPath}. Run \`pnpm -F ccaudit build\` first.`,
-    );
+    throw new Error(`dist binary not found at ${distPath}. Run \`pnpm -F ccaudit build\` first.`);
   }
 });
 

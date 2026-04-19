@@ -53,10 +53,7 @@ export function renderProtectedPrefix(
  * interpret SGR, and the caller's glyph choice already handles the ASCII
  * fallback.
  */
-export function dimLine(
-  text: string,
-  opts: { ascii: boolean; colorless?: boolean },
-): string {
+export function dimLine(text: string, opts: { ascii: boolean; colorless?: boolean }): string {
   void opts.ascii;
   if (opts.colorless === true) return text;
   return `\x1b[2m${text}\x1b[22m`;
@@ -145,7 +142,8 @@ if (import.meta.vitest) {
     });
 
     it('passes reason verbatim without template re-construction (scanner owns wording)', () => {
-      const reason = 'Custom scanner-provided reason string with punctuation: "quotes", parens, ellipsis…';
+      const reason =
+        'Custom scanner-provided reason string with punctuation: "quotes", parens, ellipsis…';
       const line = protectedHintLine({ protection: { reason } }, { ascii: true });
       expect(line).toBe(`  ${reason}`);
     });

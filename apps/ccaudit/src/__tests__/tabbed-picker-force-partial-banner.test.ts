@@ -10,7 +10,7 @@
  *   C) In ASCII mode (`CCAUDIT_ASCII_ONLY=1`), the banner uses `!` instead of
  *      `⚠` and drops color.
  */
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { existsSync } from 'node:fs';
 import { mkdir, writeFile, utimes } from 'node:fs/promises';
 import path from 'node:path';
@@ -29,9 +29,7 @@ const distPath = path.resolve(here, '..', '..', 'dist', 'index.js');
 
 beforeAll(() => {
   if (!existsSync(distPath)) {
-    throw new Error(
-      `dist binary not found at ${distPath}. Run \`pnpm -F ccaudit build\` first.`,
-    );
+    throw new Error(`dist binary not found at ${distPath}. Run \`pnpm -F ccaudit build\` first.`);
   }
 });
 
@@ -52,8 +50,7 @@ async function waitForMarker(
 ): Promise<void> {
   const startMs = Date.now();
   let delayMs = 100;
-  const matches = (s: string) =>
-    typeof marker === 'string' ? s.includes(marker) : marker.test(s);
+  const matches = (s: string) => (typeof marker === 'string' ? s.includes(marker) : marker.test(s));
   while (!isExited() && !matches(getStdout()) && Date.now() - startMs < maxWaitMs) {
     await new Promise((r) => setTimeout(r, delayMs));
     delayMs = Math.min(delayMs * 2, 500);
@@ -75,7 +72,10 @@ function baseEnv(extra: Record<string, string> = {}): Record<string, string> {
 }
 
 async function cleanupChild(spawned: { child: { stdin: NodeJS.WritableStream | null } }) {
-  if (spawned.child.stdin && !(spawned.child.stdin as NodeJS.WritableStream & { destroyed?: boolean }).destroyed) {
+  if (
+    spawned.child.stdin &&
+    !(spawned.child.stdin as NodeJS.WritableStream & { destroyed?: boolean }).destroyed
+  ) {
     try {
       spawned.child.stdin.write('\x03');
       spawned.child.stdin.end();
@@ -85,147 +85,144 @@ async function cleanupChild(spawned: { child: { stdin: NodeJS.WritableStream | n
   }
 }
 
-describe.skipIf(process.platform === 'win32')(
-  'Phase 6 SC2 — --force-partial banner',
-  () => {
-    let tmpHome: string;
+describe.skipIf(process.platform === 'win32')('Phase 6 SC2 — --force-partial banner', () => {
+  let tmpHome: string;
 
-    afterEach(async () => {
-      await cleanupTmpHome(tmpHome);
+  afterEach(async () => {
+    await cleanupTmpHome(tmpHome);
+  });
+
+  it('Scenario A: banner renders; protected rows become selectable; Space toggles them', async () => {
+    tmpHome = await makeTmpHome();
+    await buildFakePs(tmpHome);
+    await createMultiFrameworkFixture(tmpHome, [
+      { prefix: 'gsd', usedMembers: ['planner'], ghostMembers: ['researcher', 'verifier'] },
+    ]);
+
+    const spawned = runCcauditGhost(tmpHome, ['--interactive', '--force-partial'], {
+      env: baseEnv(),
+      timeout: 25_000,
+    });
+    let out = '';
+    spawned.child.stdout!.on('data', (c: Buffer) => {
+      out += c.toString();
     });
 
-    it('Scenario A: banner renders; protected rows become selectable; Space toggles them', async () => {
-      tmpHome = await makeTmpHome();
-      await buildFakePs(tmpHome);
-      await createMultiFrameworkFixture(tmpHome, [
-        { prefix: 'gsd', usedMembers: ['planner'], ghostMembers: ['researcher', 'verifier'] },
-      ]);
+    await waitForMarker(
+      () => out,
+      () => spawned.child.exitCode !== null,
+      'selected across all tabs',
+    );
 
-      const spawned = runCcauditGhost(tmpHome, ['--interactive', '--force-partial'], {
-        env: baseEnv(),
-        timeout: 25_000,
-      });
-      let out = '';
-      spawned.child.stdout!.on('data', (c: Buffer) => {
-        out += c.toString();
-      });
+    const frame = stripAnsi(out);
+    expect(
+      /⚠ --force-partial active: framework protection DISABLED/.test(frame),
+      `expected banner glyph + text in Unicode mode; got:\n${frame.slice(0, 1500)}`,
+    ).toBe(true);
+    // Protected lock glyph must NOT appear when --force-partial is on.
+    expect(frame.includes('[🔒]')).toBe(false);
 
-      await waitForMarker(
-        () => out,
-        () => spawned.child.exitCode !== null,
-        'selected across all tabs',
-      );
+    // `a` = tab-all. With --force-partial, ALL 2 protected ghosts become
+    // selectable alongside the framework-less nothing; gsd-planner is USED,
+    // so ghosts = 2. Result: 2 of 2.
+    const before = out.length;
+    await sendKeys(spawned.child, ['a']);
+    await new Promise((r) => setTimeout(r, 400));
+    const afterA = stripAnsi(out.slice(before));
+    expect(
+      /2 of 2 selected across all tabs/.test(afterA),
+      `expected '2 of 2 selected' under --force-partial; got:\n${afterA.slice(-1500)}`,
+    ).toBe(true);
 
-      const frame = stripAnsi(out);
-      expect(
-        /⚠ --force-partial active: framework protection DISABLED/.test(frame),
-        `expected banner glyph + text in Unicode mode; got:\n${frame.slice(0, 1500)}`,
-      ).toBe(true);
-      // Protected lock glyph must NOT appear when --force-partial is on.
-      expect(frame.includes('[🔒]')).toBe(false);
+    await cleanupChild(spawned);
+    const result = await spawned.done;
+    expect([0, 1, 130, 137, null].includes(result.exitCode)).toBe(true);
+  }, 45_000);
 
-      // `a` = tab-all. With --force-partial, ALL 2 protected ghosts become
-      // selectable alongside the framework-less nothing; gsd-planner is USED,
-      // so ghosts = 2. Result: 2 of 2.
-      const before = out.length;
-      await sendKeys(spawned.child, ['a']);
-      await new Promise((r) => setTimeout(r, 400));
-      const afterA = stripAnsi(out.slice(before));
-      expect(
-        /2 of 2 selected across all tabs/.test(afterA),
-        `expected '2 of 2 selected' under --force-partial; got:\n${afterA.slice(-1500)}`,
-      ).toBe(true);
+  it('Scenario B: zero-protected items — banner suffix "(no protected items in this scan)"', async () => {
+    tmpHome = await makeTmpHome();
+    await buildFakePs(tmpHome);
+    // Plain ghosts only — no curated framework at all.
+    const agentsDir = path.join(tmpHome, '.claude', 'agents');
+    await mkdir(agentsDir, { recursive: true });
+    await mkdir(path.join(tmpHome, '.config', 'claude'), { recursive: true });
+    const sixtyDaysAgo = new Date(Date.now() - 60 * 86_400_000);
+    for (const name of ['alpha', 'beta']) {
+      const p = path.join(agentsDir, `${name}.md`);
+      await writeFile(p, `# ${name}\n`, 'utf8');
+      await utimes(p, sixtyDaysAgo, sixtyDaysAgo);
+    }
+    await writeFile(path.join(tmpHome, '.claude.json'), '{}', 'utf8');
+    const sessionDir = path.join(tmpHome, '.claude', 'projects', 'clean');
+    await mkdir(sessionDir, { recursive: true });
+    const recentTs = new Date(Date.now() - 3600_000).toISOString();
+    await writeFile(
+      path.join(sessionDir, 's.jsonl'),
+      JSON.stringify({
+        type: 'system',
+        subtype: 'init',
+        cwd: '/fake/clean',
+        timestamp: recentTs,
+        sessionId: 'clean',
+      }) + '\n',
+      'utf8',
+    );
 
-      await cleanupChild(spawned);
-      const result = await spawned.done;
-      expect([0, 1, 130, 137, null].includes(result.exitCode)).toBe(true);
-    }, 45_000);
+    const spawned = runCcauditGhost(tmpHome, ['--interactive', '--force-partial'], {
+      env: baseEnv(),
+      timeout: 25_000,
+    });
+    let out = '';
+    spawned.child.stdout!.on('data', (c: Buffer) => {
+      out += c.toString();
+    });
 
-    it('Scenario B: zero-protected items — banner suffix "(no protected items in this scan)"', async () => {
-      tmpHome = await makeTmpHome();
-      await buildFakePs(tmpHome);
-      // Plain ghosts only — no curated framework at all.
-      const agentsDir = path.join(tmpHome, '.claude', 'agents');
-      await mkdir(agentsDir, { recursive: true });
-      await mkdir(path.join(tmpHome, '.config', 'claude'), { recursive: true });
-      const sixtyDaysAgo = new Date(Date.now() - 60 * 86_400_000);
-      for (const name of ['alpha', 'beta']) {
-        const p = path.join(agentsDir, `${name}.md`);
-        await writeFile(p, `# ${name}\n`, 'utf8');
-        await utimes(p, sixtyDaysAgo, sixtyDaysAgo);
-      }
-      await writeFile(path.join(tmpHome, '.claude.json'), '{}', 'utf8');
-      const sessionDir = path.join(tmpHome, '.claude', 'projects', 'clean');
-      await mkdir(sessionDir, { recursive: true });
-      const recentTs = new Date(Date.now() - 3600_000).toISOString();
-      await writeFile(
-        path.join(sessionDir, 's.jsonl'),
-        JSON.stringify({
-          type: 'system',
-          subtype: 'init',
-          cwd: '/fake/clean',
-          timestamp: recentTs,
-          sessionId: 'clean',
-        }) + '\n',
-        'utf8',
-      );
+    await waitForMarker(
+      () => out,
+      () => spawned.child.exitCode !== null,
+      'selected across all tabs',
+    );
 
-      const spawned = runCcauditGhost(tmpHome, ['--interactive', '--force-partial'], {
-        env: baseEnv(),
-        timeout: 25_000,
-      });
-      let out = '';
-      spawned.child.stdout!.on('data', (c: Buffer) => {
-        out += c.toString();
-      });
+    const frame = stripAnsi(out);
+    expect(/⚠ --force-partial active/.test(frame)).toBe(true);
+    expect(/\(no protected items in this scan\)/.test(frame)).toBe(true);
 
-      await waitForMarker(
-        () => out,
-        () => spawned.child.exitCode !== null,
-        'selected across all tabs',
-      );
+    await cleanupChild(spawned);
+    const result = await spawned.done;
+    expect([0, 1, 130, 137, null].includes(result.exitCode)).toBe(true);
+  }, 45_000);
 
-      const frame = stripAnsi(out);
-      expect(/⚠ --force-partial active/.test(frame)).toBe(true);
-      expect(/\(no protected items in this scan\)/.test(frame)).toBe(true);
+  it('Scenario C: ASCII mode — banner uses "!" instead of "⚠"', async () => {
+    tmpHome = await makeTmpHome();
+    await buildFakePs(tmpHome);
+    await createMultiFrameworkFixture(tmpHome, [
+      { prefix: 'gsd', usedMembers: ['planner'], ghostMembers: ['researcher'] },
+    ]);
 
-      await cleanupChild(spawned);
-      const result = await spawned.done;
-      expect([0, 1, 130, 137, null].includes(result.exitCode)).toBe(true);
-    }, 45_000);
+    const spawned = runCcauditGhost(tmpHome, ['--interactive', '--force-partial'], {
+      env: baseEnv({ CCAUDIT_ASCII_ONLY: '1' }),
+      timeout: 25_000,
+    });
+    let out = '';
+    spawned.child.stdout!.on('data', (c: Buffer) => {
+      out += c.toString();
+    });
 
-    it('Scenario C: ASCII mode — banner uses "!" instead of "⚠"', async () => {
-      tmpHome = await makeTmpHome();
-      await buildFakePs(tmpHome);
-      await createMultiFrameworkFixture(tmpHome, [
-        { prefix: 'gsd', usedMembers: ['planner'], ghostMembers: ['researcher'] },
-      ]);
+    await waitForMarker(
+      () => out,
+      () => spawned.child.exitCode !== null,
+      'selected across all tabs',
+    );
 
-      const spawned = runCcauditGhost(tmpHome, ['--interactive', '--force-partial'], {
-        env: baseEnv({ CCAUDIT_ASCII_ONLY: '1' }),
-        timeout: 25_000,
-      });
-      let out = '';
-      spawned.child.stdout!.on('data', (c: Buffer) => {
-        out += c.toString();
-      });
+    const frame = stripAnsi(out);
+    expect(
+      /! --force-partial active: framework protection DISABLED/.test(frame),
+      `expected ASCII banner with "!" prefix; got:\n${frame.slice(0, 1500)}`,
+    ).toBe(true);
+    expect(frame.includes('⚠')).toBe(false);
 
-      await waitForMarker(
-        () => out,
-        () => spawned.child.exitCode !== null,
-        'selected across all tabs',
-      );
-
-      const frame = stripAnsi(out);
-      expect(
-        /! --force-partial active: framework protection DISABLED/.test(frame),
-        `expected ASCII banner with "!" prefix; got:\n${frame.slice(0, 1500)}`,
-      ).toBe(true);
-      expect(frame.includes('⚠')).toBe(false);
-
-      await cleanupChild(spawned);
-      const result = await spawned.done;
-      expect([0, 1, 130, 137, null].includes(result.exitCode)).toBe(true);
-    }, 45_000);
-  },
-);
+    await cleanupChild(spawned);
+    const result = await spawned.done;
+    expect([0, 1, 130, 137, null].includes(result.exitCode)).toBe(true);
+  }, 45_000);
+});

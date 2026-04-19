@@ -39,11 +39,7 @@ import {
   type FilterSortState,
 } from './_filter-sort.ts';
 import { renderHelpOverlay } from './_help-overlay.ts';
-import {
-  dimLine,
-  protectedHintLine,
-  renderProtectedPrefix,
-} from './_protection-render.ts';
+import { dimLine, protectedHintLine, renderProtectedPrefix } from './_protection-render.ts';
 import { alsoInHintLine, renderMcpWarningPrefix } from './_mcp-warning-render.ts';
 import { bannerHeight, renderForcePartialBanner } from './_force-partial-banner.ts';
 
@@ -743,9 +739,7 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     // Phase 6 Plan 02 (D6-10): exclude protected items from the toggle-all
     // candidate set when --force-partial is OFF. They're not selectable,
     // so they shouldn't participate in the "select-all-or-clear" decision.
-    const source = this.forcePartial
-      ? baseSource
-      : baseSource.filter((i) => !isProtected(i.item));
+    const source = this.forcePartial ? baseSource : baseSource.filter((i) => !isProtected(i.item));
     const ids = source.map((i) => canonicalItemId(i.item));
     const allSelected = ids.length > 0 && ids.every((id) => this.selectedIds.has(id));
     if (allSelected) {

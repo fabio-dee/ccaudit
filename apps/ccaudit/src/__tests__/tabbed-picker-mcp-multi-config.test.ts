@@ -55,9 +55,7 @@ const distPath = path.resolve(here, '..', '..', 'dist', 'index.js');
 
 beforeAll(() => {
   if (!existsSync(distPath)) {
-    throw new Error(
-      `dist binary not found at ${distPath}. Run \`pnpm -F ccaudit build\` first.`,
-    );
+    throw new Error(`dist binary not found at ${distPath}. Run \`pnpm -F ccaudit build\` first.`);
   }
 });
 
@@ -78,8 +76,7 @@ async function waitForMarker(
 ): Promise<void> {
   const startMs = Date.now();
   let delayMs = 100;
-  const matches = (s: string) =>
-    typeof marker === 'string' ? s.includes(marker) : marker.test(s);
+  const matches = (s: string) => (typeof marker === 'string' ? s.includes(marker) : marker.test(s));
   while (!isExited() && !matches(getStdout()) && Date.now() - startMs < maxWaitMs) {
     await new Promise((r) => setTimeout(r, delayMs));
     delayMs = Math.min(delayMs * 2, 500);
@@ -112,7 +109,10 @@ async function focusMcpTab(
 ): Promise<boolean> {
   for (let i = 0; i < maxTabs; i++) {
     const beforeLen = getOut().length;
-    if (child.stdin && !(child.stdin as NodeJS.WritableStream & { destroyed?: boolean }).destroyed) {
+    if (
+      child.stdin &&
+      !(child.stdin as NodeJS.WritableStream & { destroyed?: boolean }).destroyed
+    ) {
       child.stdin.write('\t');
     }
     await new Promise((r) => setTimeout(r, 200));
