@@ -44,6 +44,14 @@ export interface SelectGhostsInput {
   /** From shouldUseAscii() at CLI entry. */
   useAscii: boolean;
   /**
+   * Phase 6 Plan 03 (D6-13, D6-15, D6-16): when true, framework-protected
+   * rows become selectable in the picker and a top-of-TUI banner renders on
+   * every frame. Per-invocation only — not persisted, no env var, no config.
+   * Plumbs straight through to `openTabbedPicker` / `TabbedGhostPicker`.
+   * Defaults to `false` when omitted.
+   */
+  forcePartial?: boolean;
+  /**
    * Optional picker dependency injection for tests.
    * In production the real openTabbedPicker is used.
    */
@@ -142,7 +150,7 @@ export function formatRowLabel(item: TokenCostResult, useAscii: boolean, now: nu
  * collapses and the tab bar / hints / row list cannot coexist.
  */
 export async function selectGhosts(input: SelectGhostsInput): Promise<SelectGhostsOutcome> {
-  const { ghosts, now: nowParam, useAscii, _picker } = input;
+  const { ghosts, now: nowParam, useAscii, forcePartial, _picker } = input;
   const now = nowParam ?? Date.now();
 
   // D-13: Empty state — caller should skip picker.
@@ -173,7 +181,12 @@ export async function selectGhosts(input: SelectGhostsInput): Promise<SelectGhos
   }
 
   const picker = _picker ?? { openTabbedPicker };
-  const outcome = await picker.openTabbedPicker({ ghosts, useAscii, now });
+  const outcome = await picker.openTabbedPicker({
+    ghosts,
+    useAscii,
+    now,
+    ...(forcePartial === true ? { forcePartial: true } : {}),
+  });
   // TabbedPickerOutcome shape is byte-identical to SelectGhostsOutcome —
   // pass through without translation.
   return outcome;

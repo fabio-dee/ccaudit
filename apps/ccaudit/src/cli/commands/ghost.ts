@@ -334,7 +334,12 @@ async function runInteractiveGhostFlow(args: {
   const useAscii = shouldUseAscii(process.env, process.stdout, ttyCols);
   // Only ghost-tier items go into the picker (D-11).
   const pickerGhosts = interactiveProtection.filtered.filter((r) => r.tier !== 'used');
-  const pickOutcome = await selectGhosts({ ghosts: pickerGhosts, now: Date.now(), useAscii });
+  const pickOutcome = await selectGhosts({
+    ghosts: pickerGhosts,
+    now: Date.now(),
+    useAscii,
+    forcePartial,
+  });
 
   if (pickOutcome.kind === 'cancel') {
     console.error('No changes made.');
@@ -572,7 +577,7 @@ export const ghostCommand = define({
     forcePartial: {
       type: 'boolean',
       description:
-        'Bypass framework-as-unit bust protection. Archive ghost members of partially-used frameworks. Also affects --dry-run preview and checkpoint hash — both runs MUST use the same value.',
+        'Bypass framework-as-unit bust protection. Archive ghost members of partially-used frameworks. Also affects --dry-run preview and checkpoint hash — both runs MUST use the same value. Under --interactive, also allows selecting framework-protected rows in the picker (per-invocation only; not persisted).',
       default: false,
     },
     regime: {

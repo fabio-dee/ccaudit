@@ -35,6 +35,15 @@ export interface InventoryItem {
    * ordered via `compareConfigRef` (project-local → ~user → system).
    */
   configRefs?: string[];
+  /**
+   * Phase 6 (D6-01): framework-as-unit protection metadata. Propagated
+   * downstream onto `GhostItem.protection` by `toGhostItems` when the
+   * item belongs to a partially-used framework; additionally attached here
+   * on the underlying InventoryItem so picker paths that read
+   * `TokenCostResult.item` can consult `isProtected(item)` directly.
+   * Advisory only — server-side INV-S6 in `runBust` remains the gate.
+   */
+  protection?: FrameworkProtection;
 }
 
 /**
