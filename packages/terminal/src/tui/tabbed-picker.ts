@@ -27,6 +27,14 @@ import pc from 'picocolors';
 import { computeViewportHeight, windowRows } from './_viewport.ts';
 import { renderTabBar, type TabDescriptor } from './_tab-bar.ts';
 import { CATEGORY_ORDER, CATEGORY_LABEL, formatRowLabel } from './select-ghosts.ts';
+import {
+  matchesQuery,
+  sortItems,
+  nextSort,
+  sanitizeFilterQuery,
+  defaultFilterSortState,
+  type FilterSortState,
+} from './_filter-sort.ts';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -80,6 +88,8 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
   public tokensById: Map<string, number>;
   public useAscii: boolean;
   public renderTokenCounter: () => string;
+  public filterSortByTab: FilterSortState[];
+  public filterMode = false;
   private viewportHeightOverride?: number;
   private now: number;
   private stdoutRows?: number;
@@ -159,6 +169,7 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     });
 
     this.tabs = tabs;
+    this.filterSortByTab = tabs.map(() => defaultFilterSortState());
     // Phase 4 D4-01 / D4-12: pre-compute a tokens-by-canonical-id map once at
     // construction so each render pass is an O(|selection|) Map lookup rather
     // than an O(|catalog|) scan. Hooks are already filtered by the constructor
@@ -194,6 +205,64 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     // The base class auto-calls render() after every keypress, so mutating
     // instance state here is sufficient — no explicit render call needed.
     this.on('key', (char, info) => {
+      // Phase 5 filter-input mode (D5-04, D5-05). Priority over all other
+      // non-cancel bindings: typed chars/backspace mutate the query, Esc
+      // clears+exits in one stroke, Enter exits but keeps query.
+      // Ctrl+C is still honored because @clack/core's base cancel handler
+      // processes it before or independently of this listener — we never
+      // swallow it here (INV-S2).
+      if (this.filterMode) {
+        const st = this.filterSortByTab[this.activeTabIndex];
+        if (!st) return;
+        if (info?.name === 'escape') {
+          st.query = '';
+          st.active = false;
+          this.filterMode = false;
+          this._clampActiveCursor();
+          this.state = 'active';
+          return;
+        }
+        if (info?.name === 'return') {
+          this.filterMode = false;
+          if (st.query === '') st.active = false;
+          this.state = 'active';
+          return;
+        }
+        if (info?.name === 'backspace') {
+          st.query = st.query.slice(0, -1);
+          if (st.query === '') st.active = false;
+          else st.active = true;
+          this._clampActiveCursor();
+          this.state = 'active';
+          return;
+        }
+        // Tab / Shift-Tab exit filter mode and delegate to tab-switch logic
+        // (the tab-switch itself clears the departing tab's filter per D5-03).
+        if (info?.name === 'tab') {
+          this.filterMode = false;
+          if (info.shift === true) this.prevTab();
+          else this.nextTab();
+          this.state = 'active';
+          return;
+        }
+        // Printable character append (codepoint ≥ 32, not DEL, single-char
+        // only). `/`, `s`, alphanumerics, punctuation all route here (D5-04).
+        if (typeof char === 'string' && char.length === 1) {
+          const code = char.charCodeAt(0);
+          if (code >= 32 && code !== 127) {
+            st.query = sanitizeFilterQuery(st.query + char);
+            st.active = true;
+            // Reset cursor to 0 on query change — the visible slice is new.
+            this.tabs[this.activeTabIndex]!.cursor = 0;
+            this.state = 'active';
+            return;
+          }
+        }
+        // In filter mode all other keys are swallowed. Cancel (Ctrl+C) is
+        // handled by the base class independent of this listener.
+        return;
+      }
+
       // Phase 4 integration test seam (gated on env — production path is dead code).
       // The pty-based SIGWINCH test cannot fire a real 'resize' event because the
       // child process stdout is a pipe, not a TTY. CCAUDIT_TEST_RESIZE=1 lets the
@@ -258,6 +327,26 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
         this.jumpToTab(idx);
         return;
       }
+      // Phase 5 D5-01: '/' enters filter input mode for the active tab.
+      if (char === '/') {
+        const st = this.filterSortByTab[this.activeTabIndex];
+        if (st) {
+          this.filterMode = true;
+          st.active = true;
+        }
+        this.state = 'active';
+        return;
+      }
+      // Phase 5 D5-08: 's' cycles the active tab's sort mode.
+      if (char === 's') {
+        const st = this.filterSortByTab[this.activeTabIndex];
+        if (st) {
+          st.sort = nextSort(st.sort);
+          this._clampActiveCursor();
+        }
+        this.state = 'active';
+        return;
+      }
     });
 
     // Cursor dispatch: arrow keys + space + enter + cancel (via base aliases).
@@ -280,17 +369,66 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
   // Tab navigation
   // ---------------------------------------------------------------------------
 
+  /**
+   * Phase 5 D5-11: compute visible items for tab — sort first, then filter.
+   * Sort is always applied (default `staleness-desc` is identical to pre-sort
+   * scan output for backward compat). Filter narrows only when `state.active`
+   * AND query is non-empty.
+   */
+  public visibleItemsForTab(tabIdx: number): TokenCostResult[] {
+    const state = this.filterSortByTab[tabIdx];
+    const tab = this.tabs[tabIdx];
+    if (!state || !tab) return [];
+    const sorted = sortItems(tab.items, state.sort, this.now);
+    if (state.active && state.query !== '') {
+      return sorted.filter((x) => matchesQuery(x.item.name, state.query));
+    }
+    return sorted;
+  }
+
+  private _visibleActive(): TokenCostResult[] {
+    return this.visibleItemsForTab(this.activeTabIndex);
+  }
+
+  /**
+   * Phase 5 D5-03: on tab switch, clear the DEPARTING tab's filter (query +
+   * active flag). Sort mode on the departing tab is preserved per D5-09.
+   * Global `filterMode` is always exited on tab switch. Active tab's cursor
+   * is clamped to the new visible-slice bounds.
+   */
+  private _onTabSwitch(): void {
+    const departing = this.filterSortByTab[this.activeTabIndex];
+    if (departing) {
+      departing.active = false;
+      departing.query = '';
+    }
+    this.filterMode = false;
+  }
+
+  private _clampActiveCursor(): void {
+    const t = this.tabs[this.activeTabIndex];
+    if (!t) return;
+    const vlen = this._visibleActive().length;
+    t.cursor = Math.min(t.cursor, Math.max(0, vlen - 1));
+  }
+
   public nextTab(): void {
+    this._onTabSwitch();
     this.activeTabIndex = (this.activeTabIndex + 1) % this.tabs.length;
+    this._clampActiveCursor();
   }
 
   public prevTab(): void {
+    this._onTabSwitch();
     this.activeTabIndex = (this.activeTabIndex - 1 + this.tabs.length) % this.tabs.length;
+    this._clampActiveCursor();
   }
 
   public jumpToTab(index: number): void {
     if (index < 0 || index >= this.tabs.length) return; // no-op (D3.1-02)
+    this._onTabSwitch();
     this.activeTabIndex = index;
+    this._clampActiveCursor();
   }
 
   // ---------------------------------------------------------------------------
@@ -308,7 +446,8 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
 
   public cursorDown(): void {
     const t = this.activeTab();
-    t.cursor = Math.min(t.items.length - 1, t.cursor + 1);
+    const vlen = this._visibleActive().length;
+    t.cursor = Math.min(Math.max(0, vlen - 1), t.cursor + 1);
   }
 
   public cursorPageUp(): void {
@@ -326,7 +465,8 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
       rowsOverride: this.viewportHeightOverride,
       stdoutRows: this.stdoutRows,
     });
-    t.cursor = Math.min(t.items.length - 1, t.cursor + vh);
+    const vlen = this._visibleActive().length;
+    t.cursor = Math.min(Math.max(0, vlen - 1), t.cursor + vh);
   }
 
   public cursorHome(): void {
@@ -335,7 +475,8 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
 
   public cursorEnd(): void {
     const t = this.activeTab();
-    t.cursor = t.items.length - 1;
+    const vlen = this._visibleActive().length;
+    t.cursor = Math.max(0, vlen - 1);
   }
 
   // ---------------------------------------------------------------------------
@@ -345,7 +486,8 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
   public toggleCurrentRow(): void {
     if (this._terminalTooSmall()) return; // D4-08: suppress row interactivity.
     const t = this.activeTab();
-    const item = t.items[t.cursor];
+    const visible = this._visibleActive();
+    const item = visible[t.cursor];
     if (!item) return;
     const id = canonicalItemId(item.item);
     if (this.selectedIds.has(id)) this.selectedIds.delete(id);
@@ -355,12 +497,19 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
   /**
    * D3.1-15: `a` scope is active tab only in v0.5. If every item in the active
    * tab is already selected, deselect them all; otherwise select them all.
+   *
+   * Phase 5: when a filter is active on this tab, operate ONLY on currently
+   * VISIBLE items (GitHub/Gmail-style select-all-or-clear on the filtered
+   * group, per D5-17). Hidden selections are preserved.
    */
   public toggleAllInActiveTab(): void {
     if (this._terminalTooSmall()) return; // D4-08.
     const t = this.activeTab();
-    const ids = t.items.map((i) => canonicalItemId(i.item));
-    const allSelected = ids.every((id) => this.selectedIds.has(id));
+    const state = this.filterSortByTab[this.activeTabIndex];
+    const filterActive = state?.active === true && state.query !== '';
+    const source = filterActive ? this._visibleActive() : t.items;
+    const ids = source.map((i) => canonicalItemId(i.item));
+    const allSelected = ids.length > 0 && ids.every((id) => this.selectedIds.has(id));
     if (allSelected) {
       for (const id of ids) this.selectedIds.delete(id);
     } else {
@@ -525,6 +674,8 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     );
 
     // 2. Per-tab header: `{label} (N/M)` (D3.1-09 / SC3).
+    // N/M count reflects the underlying tab items (not the visible slice),
+    // consistent with Phase 3.1/4 semantics.
     const selectedInTab = t.items.filter((i) =>
       this.selectedIds.has(canonicalItemId(i.item)),
     ).length;
@@ -547,67 +698,124 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     } else {
       header = `${t.label} (${selectedInTab}/${totalInTab})`;
     }
+    // Phase 5 D5-12: append sort label ONLY when sort mode != default.
+    const activeState = this.filterSortByTab[this.activeTabIndex];
+    if (activeState && activeState.sort !== 'staleness-desc') {
+      const suffix = activeState.sort === 'tokens-desc' ? 'tokens' : 'name';
+      header = `${header} · sort:${suffix}`;
+    }
     lines.push(pc.bold(header));
 
     // 3–5. Viewport window + ↑/↓ N more indicators (D3.1-06).
+    // Phase 5: render the VISIBLE slice (sorted-then-filtered) — cursor is
+    // an index into this slice.
+    const visible = this._visibleActive();
     const vh = computeViewportHeight({
       rowsOverride: this.viewportHeightOverride,
       stdoutRows: this.stdoutRows,
     });
-    const win = windowRows({ rows: t.items, cursor: t.cursor, viewportHeight: vh });
+    // Clamp cursor into bounds for a safe windowRows call even if prior key
+    // handling left a stale cursor.
+    if (visible.length === 0) {
+      t.cursor = 0;
+    } else if (t.cursor >= visible.length) {
+      t.cursor = visible.length - 1;
+    }
+    const win = windowRows({ rows: visible, cursor: t.cursor, viewportHeight: vh });
 
-    if (win.aboveCount > 0) {
-      const up = this.useAscii ? '^' : '↑';
-      lines.push(pc.dim(`${up} ${win.aboveCount} more above`));
+    // Phase 5 D5-07: empty-result placeholder when filter excludes all rows.
+    if (visible.length === 0 && activeState?.active === true && activeState.query !== '') {
+      lines.push(pc.dim('No matches. Press Esc to clear.'));
+    } else {
+      if (win.aboveCount > 0) {
+        const up = this.useAscii ? '^' : '↑';
+        lines.push(pc.dim(`${up} ${win.aboveCount} more above`));
+      }
+
+      const cursorGlyph = this.useAscii ? '>' : '›';
+      for (let i = 0; i < win.slice.length; i++) {
+        const absIdx = win.sliceStart + i;
+        const item = win.slice[i]!;
+        const id = canonicalItemId(item.item);
+        const isCursor = absIdx === t.cursor;
+        const isSelected = this.selectedIds.has(id);
+        const marker = isSelected ? '[x]' : '[ ]';
+        const cursorMark = isCursor ? cursorGlyph : ' ';
+        const label = formatRowLabel(item, this.useAscii, this.now);
+        lines.push(`${cursorMark} ${marker} ${label}`);
+      }
+
+      if (win.belowCount > 0) {
+        const down = this.useAscii ? 'v' : '↓';
+        lines.push(pc.dim(`${down} ${win.belowCount} more below`));
+      }
     }
 
-    const cursorGlyph = this.useAscii ? '>' : '›';
-    for (let i = 0; i < win.slice.length; i++) {
-      const absIdx = win.sliceStart + i;
-      const item = win.slice[i]!;
-      const id = canonicalItemId(item.item);
-      const isCursor = absIdx === t.cursor;
-      const isSelected = this.selectedIds.has(id);
-      const marker = isSelected ? '[x]' : '[ ]';
-      const cursorMark = isCursor ? cursorGlyph : ' ';
-      const label = formatRowLabel(item, this.useAscii, this.now);
-      lines.push(`${cursorMark} ${marker} ${label}`);
+    // 6. Hint / filter-input line.
+    if (this.filterMode) {
+      // Phase 5 D5-01: footer hint becomes the filter input. The trailing
+      // underscore is an ASCII cursor glyph (D5-21). Defense-in-depth sanitize
+      // at render time too (T-05-01) so any future code path that bypasses
+      // the append-time sanitizer still can't inject terminal escapes here.
+      const echoQuery = sanitizeFilterQuery(activeState?.query ?? '');
+      lines.push(`Filter: ${echoQuery}_`);
+    } else {
+      const leftArrow = this.useAscii ? '<-' : '←';
+      const rightArrow = this.useAscii ? '->' : '→';
+      const upArrow = this.useAscii ? '^' : '↑';
+      const downArrow = this.useAscii ? 'v' : '↓';
+      const dot = this.useAscii ? '|' : '·';
+      lines.push(
+        pc.dim(
+          `Tab ${leftArrow} ${rightArrow} tabs ${dot} ${upArrow}${downArrow} nav ${dot} Space toggle ${dot} a tab-all ${dot} Enter ${rightArrow} ${dot} q cancel`,
+        ),
+      );
     }
 
-    if (win.belowCount > 0) {
-      const down = this.useAscii ? 'v' : '↓';
-      lines.push(pc.dim(`${down} ${win.belowCount} more below`));
-    }
-
-    // 6. Compact hint (D3.1-11).
-    const leftArrow = this.useAscii ? '<-' : '←';
-    const rightArrow = this.useAscii ? '->' : '→';
-    const upArrow = this.useAscii ? '^' : '↑';
-    const downArrow = this.useAscii ? 'v' : '↓';
-    const dot = this.useAscii ? '|' : '·';
-    lines.push(
-      pc.dim(
-        `Tab ${leftArrow} ${rightArrow} tabs ${dot} ${upArrow}${downArrow} nav ${dot} Space toggle ${dot} a tab-all ${dot} Enter ${rightArrow} ${dot} q cancel`,
-      ),
-    );
-
-    // 7. Global count + live token counter on a SINGLE line (D4-03).
-    // Phase 3.1 kept them on separate lines; Phase 4 joins them per the
-    // ROADMAP SC1 wording `N of M selected across all tabs · ≈ Zk tokens saved`.
-    // When the selection is empty (or selection sums to 0), formatTokensApprox
-    // returns '' and the dot separator is suppressed so the line reads as
-    // Phase 3.1's form.
+    // 7. Global count + live token counter on a SINGLE line (D4-03) — OR
+    // Phase 5 D5-01 filtered-count line when the filter is active on the
+    // current tab OR the user is typing into the filter input.
     const totalItems = this.tabs.reduce((sum, tab) => sum + tab.items.length, 0);
-    const counterSuffix = this.renderTokenCounter();
-    // counterSuffix is '' or '≈ Zk tokens' or '350 tokens' (or '~ Zk tokens' in ASCII mode).
-    // Rewrite it to `≈ Zk tokens saved` / '350 tokens saved' / ''.
-    const counterDisplay = counterSuffix === '' ? '' : `${counterSuffix} saved`;
-    const dotGlobal = this.useAscii ? '|' : '·';
-    const globalLine =
-      counterDisplay === ''
-        ? `${this.selectedIds.size} of ${totalItems} selected across all tabs`
-        : `${this.selectedIds.size} of ${totalItems} selected across all tabs ${dotGlobal} ${counterDisplay}`;
-    lines.push(globalLine);
+    const filterActiveHere = this.filterMode || activeState?.active === true;
+
+    if (filterActiveHere) {
+      // Phase 5 D5-01 + D5-20: `Filtered: M of N visible · X selected [(incl. hidden)]?`
+      // where M = visible count on active tab, N = total items on active tab,
+      // X = ALL selections across all tabs (including hidden). Append
+      // `(incl. hidden)` ONLY when at least one selected id is NOT in the
+      // currently-visible slice of ANY tab.
+      const M = visible.length;
+      const N = t.items.length;
+      const X = this.selectedIds.size;
+
+      // Compute the set of visible canonical ids across all tabs to determine
+      // whether any selections are hidden. This is O(sum of visible lengths)
+      // per render, which is bounded by total catalog size — same cost class
+      // as the existing per-tab selection scan.
+      const visibleIds = new Set<string>();
+      for (let i = 0; i < this.tabs.length; i++) {
+        const vi = this.visibleItemsForTab(i);
+        for (const item of vi) visibleIds.add(canonicalItemId(item.item));
+      }
+      let hiddenSelected = 0;
+      for (const id of this.selectedIds) {
+        if (!visibleIds.has(id)) hiddenSelected++;
+      }
+      const dotFilter = this.useAscii ? '|' : '·';
+      const hiddenSuffix = hiddenSelected > 0 ? ' (incl. hidden)' : '';
+      lines.push(`Filtered: ${M} of ${N} visible ${dotFilter} ${X} selected${hiddenSuffix}`);
+    } else {
+      const counterSuffix = this.renderTokenCounter();
+      // counterSuffix is '' or '≈ Zk tokens' or '350 tokens' (or '~ Zk tokens' in ASCII mode).
+      // Rewrite it to `≈ Zk tokens saved` / '350 tokens saved' / ''.
+      const counterDisplay = counterSuffix === '' ? '' : `${counterSuffix} saved`;
+      const dotGlobal = this.useAscii ? '|' : '·';
+      const globalLine =
+        counterDisplay === ''
+          ? `${this.selectedIds.size} of ${totalItems} selected across all tabs`
+          : `${this.selectedIds.size} of ${totalItems} selected across all tabs ${dotGlobal} ${counterDisplay}`;
+      lines.push(globalLine);
+    }
 
     return lines.join('\n');
   }
@@ -1161,6 +1369,324 @@ if (import.meta.vitest) {
         expect(process.stdout.listenerCount('resize')).toBe(before + 1);
         picker._unregisterResize();
         expect(process.stdout.listenerCount('resize')).toBe(before);
+      });
+    });
+
+    // ---------------------------------------------------------------------
+    // Phase 5: filter + sort integration
+    // ---------------------------------------------------------------------
+
+    /**
+     * Fire a 'key' event at the picker's registered listener. `info.name` is
+     * the node:readline key name (e.g. 'escape', 'return', 'backspace',
+     * 'tab'). `char` is the typed character or undefined for named keys.
+     */
+    function fireKey(
+      picker: TabbedGhostPicker,
+      char: string | undefined,
+      info?: { name?: string; shift?: boolean },
+    ): void {
+      (picker as unknown as { emit: (event: string, ...args: unknown[]) => boolean }).emit(
+        'key',
+        char,
+        info,
+      );
+    }
+
+    describe('Phase 5 filter + sort — Task 1 state + visibility', () => {
+      it('defaultFilterSortState is set per tab on construction', () => {
+        const ghosts = [
+          makeGhost({ name: 'a1', category: 'agent' }),
+          makeGhost({ name: 's1', category: 'skill' }),
+        ];
+        const picker = makePicker(ghosts);
+        expect(picker.filterSortByTab.length).toBe(2);
+        for (const st of picker.filterSortByTab) {
+          expect(st).toEqual({ query: '', active: false, sort: 'staleness-desc' });
+        }
+        expect(picker.filterMode).toBe(false);
+      });
+
+      it('visibleItemsForTab narrows by name substring (D5-01/D5-02)', () => {
+        const ghosts = [
+          makeGhost({ name: 'alpha', category: 'agent', tokens: 100 }),
+          makeGhost({ name: 'beta', category: 'agent', tokens: 200 }),
+          makeGhost({ name: 'gamma-alpha', category: 'agent', tokens: 50 }),
+        ];
+        const picker = makePicker(ghosts);
+        picker.filterSortByTab[0]!.active = true;
+        picker.filterSortByTab[0]!.query = 'ALPHA';
+        const names = picker.visibleItemsForTab(0).map((x) => x.item.name);
+        expect(names).toEqual(expect.arrayContaining(['alpha', 'gamma-alpha']));
+        expect(names).not.toContain('beta');
+      });
+
+      it('filter does NOT drop selected ids for hidden rows (D5-06)', () => {
+        const ghosts = [
+          makeGhost({ name: 'alpha', category: 'agent', tokens: 100 }),
+          makeGhost({ name: 'beta', category: 'agent', tokens: 200 }),
+        ];
+        const picker = makePicker(ghosts);
+        // Select both.
+        picker.toggleAllInActiveTab();
+        expect(picker.selectedIds.size).toBe(2);
+        // Filter to only 'alpha' — 'beta' is hidden.
+        picker.filterSortByTab[0]!.active = true;
+        picker.filterSortByTab[0]!.query = 'alpha';
+        expect(picker._renderFrame()).toBeTruthy();
+        // Selections preserved.
+        expect(picker.selectedIds.size).toBe(2);
+      });
+
+      it('visibleItemsForTab sorts first then filters (D5-11)', () => {
+        const ghosts = [
+          makeGhost({ name: 'aa', category: 'agent', tokens: 10 }),
+          makeGhost({ name: 'ab', category: 'agent', tokens: 30 }),
+          makeGhost({ name: 'ac', category: 'agent', tokens: 20 }),
+        ];
+        const picker = makePicker(ghosts);
+        picker.filterSortByTab[0]!.sort = 'tokens-desc';
+        picker.filterSortByTab[0]!.active = true;
+        picker.filterSortByTab[0]!.query = 'a';
+        const names = picker.visibleItemsForTab(0).map((x) => x.item.name);
+        // Tokens desc: ab(30), ac(20), aa(10). Filter 'a' matches all.
+        expect(names).toEqual(['ab', 'ac', 'aa']);
+      });
+
+      it('per-tab sort persists across tab switch (D5-09)', () => {
+        const ghosts = [
+          makeGhost({ name: 'a1', category: 'agent' }),
+          makeGhost({ name: 's1', category: 'skill' }),
+        ];
+        const picker = makePicker(ghosts);
+        picker.filterSortByTab[0]!.sort = 'tokens-desc';
+        picker.nextTab();
+        picker.prevTab();
+        expect(picker.filterSortByTab[0]!.sort).toBe('tokens-desc');
+      });
+
+      it('tab switch resets the departing tab filter query + active flag (D5-03); sort mode preserved', () => {
+        const ghosts = [
+          makeGhost({ name: 'alpha', category: 'agent' }),
+          makeGhost({ name: 's1', category: 'skill' }),
+        ];
+        const picker = makePicker(ghosts);
+        picker.filterSortByTab[0]!.active = true;
+        picker.filterSortByTab[0]!.query = 'alpha';
+        picker.filterSortByTab[0]!.sort = 'tokens-desc';
+        picker.filterMode = true;
+        picker.nextTab();
+        expect(picker.filterMode).toBe(false);
+        expect(picker.filterSortByTab[0]!.query).toBe('');
+        expect(picker.filterSortByTab[0]!.active).toBe(false);
+        // Sort preserved.
+        expect(picker.filterSortByTab[0]!.sort).toBe('tokens-desc');
+      });
+
+      it('toggleAllInActiveTab with active filter toggles only VISIBLE items (D5-17)', () => {
+        const ghosts = [
+          makeGhost({ name: 'alpha', category: 'agent' }),
+          makeGhost({ name: 'beta', category: 'agent' }),
+          makeGhost({ name: 'alphasecond', category: 'agent' }),
+        ];
+        const picker = makePicker(ghosts);
+        picker.filterSortByTab[0]!.active = true;
+        picker.filterSortByTab[0]!.query = 'alpha';
+        picker.toggleAllInActiveTab();
+        // Only 'alpha' + 'alphasecond' are visible → both selected. 'beta' not selected.
+        expect(picker.selectedIds.has('agent|global||/fake/alpha')).toBe(true);
+        expect(picker.selectedIds.has('agent|global||/fake/alphasecond')).toBe(true);
+        expect(picker.selectedIds.has('agent|global||/fake/beta')).toBe(false);
+      });
+    });
+
+    describe('Phase 5 filter + sort — Task 2 key bindings + footer', () => {
+      it("'/' then typed chars: filterMode = true, query grows, visible slice narrows", () => {
+        const ghosts = [
+          makeGhost({ name: 'alpha', category: 'agent' }),
+          makeGhost({ name: 'beta', category: 'agent' }),
+        ];
+        const picker = makePicker(ghosts);
+        fireKey(picker, '/');
+        expect(picker.filterMode).toBe(true);
+        fireKey(picker, 'a');
+        fireKey(picker, 'l');
+        expect(picker.filterSortByTab[0]!.query).toBe('al');
+        const names = picker.visibleItemsForTab(0).map((x) => x.item.name);
+        expect(names).toEqual(['alpha']);
+      });
+
+      it('Backspace in filter mode shrinks query', () => {
+        const ghosts = [makeGhost({ name: 'alpha', category: 'agent' })];
+        const picker = makePicker(ghosts);
+        fireKey(picker, '/');
+        fireKey(picker, 'a');
+        fireKey(picker, 'b');
+        expect(picker.filterSortByTab[0]!.query).toBe('ab');
+        fireKey(picker, undefined, { name: 'backspace' });
+        expect(picker.filterSortByTab[0]!.query).toBe('a');
+        fireKey(picker, undefined, { name: 'backspace' });
+        expect(picker.filterSortByTab[0]!.query).toBe('');
+        expect(picker.filterSortByTab[0]!.active).toBe(false);
+      });
+
+      it('Esc in filter mode clears query AND exits mode (D5-05)', () => {
+        const ghosts = [makeGhost({ name: 'alpha', category: 'agent' })];
+        const picker = makePicker(ghosts);
+        fireKey(picker, '/');
+        fireKey(picker, 'a');
+        expect(picker.filterMode).toBe(true);
+        expect(picker.filterSortByTab[0]!.query).toBe('a');
+        fireKey(picker, undefined, { name: 'escape' });
+        expect(picker.filterMode).toBe(false);
+        expect(picker.filterSortByTab[0]!.query).toBe('');
+        expect(picker.filterSortByTab[0]!.active).toBe(false);
+      });
+
+      it('Enter in filter mode exits mode but preserves query (D5-05)', () => {
+        const ghosts = [
+          makeGhost({ name: 'alpha', category: 'agent' }),
+          makeGhost({ name: 'beta', category: 'agent' }),
+        ];
+        const picker = makePicker(ghosts);
+        fireKey(picker, '/');
+        fireKey(picker, 'a');
+        fireKey(picker, 'l');
+        fireKey(picker, undefined, { name: 'return' });
+        expect(picker.filterMode).toBe(false);
+        expect(picker.filterSortByTab[0]!.query).toBe('al');
+        expect(picker.filterSortByTab[0]!.active).toBe(true);
+        // List stays narrowed.
+        const names = picker.visibleItemsForTab(0).map((x) => x.item.name);
+        expect(names).toEqual(['alpha']);
+      });
+
+      it("'s' cycles sort per-tab (4 presses returns to tokens-desc, D5-10)", () => {
+        const ghosts = [makeGhost({ name: 'a1', category: 'agent' })];
+        const picker = makePicker(ghosts);
+        expect(picker.filterSortByTab[0]!.sort).toBe('staleness-desc');
+        fireKey(picker, 's');
+        expect(picker.filterSortByTab[0]!.sort).toBe('tokens-desc');
+        fireKey(picker, 's');
+        expect(picker.filterSortByTab[0]!.sort).toBe('name-asc');
+        fireKey(picker, 's');
+        expect(picker.filterSortByTab[0]!.sort).toBe('staleness-desc');
+        fireKey(picker, 's');
+        expect(picker.filterSortByTab[0]!.sort).toBe('tokens-desc');
+      });
+
+      it("'s' while in filter mode is appended to query (NOT treated as sort)", () => {
+        const ghosts = [makeGhost({ name: 'spam', category: 'agent' })];
+        const picker = makePicker(ghosts);
+        fireKey(picker, '/');
+        fireKey(picker, 's');
+        expect(picker.filterSortByTab[0]!.query).toBe('s');
+        expect(picker.filterSortByTab[0]!.sort).toBe('staleness-desc');
+      });
+
+      it("footer shows 'Filtered: M of N visible · X selected' when filter active", () => {
+        const ghosts = [
+          makeGhost({ name: 'alpha', category: 'agent' }),
+          makeGhost({ name: 'zzz', category: 'agent' }),
+          makeGhost({ name: 'yyy', category: 'agent' }),
+        ];
+        const picker = makePicker(ghosts); // useAscii=true → '|' separator
+        fireKey(picker, '/');
+        fireKey(picker, 'a');
+        const frame = picker._renderFrame();
+        // Only 'alpha' contains 'a' → M=1, N=3, X=0
+        expect(frame).toContain('Filtered: 1 of 3 visible | 0 selected');
+      });
+
+      it("footer shows '(incl. hidden)' when a selected id is not in any visible slice", () => {
+        const ghosts = [
+          makeGhost({ name: 'alpha', category: 'agent' }),
+          makeGhost({ name: 'beta', category: 'agent' }),
+        ];
+        const picker = makePicker(ghosts);
+        // Select 'beta' (cursor on first item which is 'alpha'; sort staleness
+        // with no mtimeMs means both are equally stale — preserve input order,
+        // so 'alpha' is at cursor 0).
+        picker.cursorDown();
+        picker.toggleCurrentRow(); // select 'beta'
+        // Now filter to 'alp' — beta hidden.
+        fireKey(picker, '/');
+        fireKey(picker, 'a');
+        fireKey(picker, 'l');
+        fireKey(picker, 'p');
+        const frame = picker._renderFrame();
+        expect(frame).toContain('1 selected (incl. hidden)');
+      });
+
+      it("footer omits '(incl. hidden)' when all selections are in a visible slice", () => {
+        const ghosts = [
+          makeGhost({ name: 'alpha', category: 'agent' }),
+          makeGhost({ name: 'beta', category: 'agent' }),
+        ];
+        const picker = makePicker(ghosts);
+        picker.toggleCurrentRow(); // select 'alpha' (cursor 0)
+        fireKey(picker, '/');
+        fireKey(picker, 'a');
+        const frame = picker._renderFrame();
+        // Both 'alpha' and 'beta' start with no mtimeMs → staleness-desc leaves
+        // input order. 'alpha' is visible, 'beta' is hidden but not selected.
+        expect(frame).toContain('1 selected');
+        expect(frame).not.toContain('(incl. hidden)');
+      });
+
+      it('sort label appears on header only when non-default (D5-12)', () => {
+        const ghosts = [makeGhost({ name: 'a1', category: 'agent' })];
+        const picker = makePicker(ghosts);
+        // Default: no sort label.
+        expect(picker._renderFrame()).not.toContain('sort:');
+        fireKey(picker, 's'); // → tokens-desc
+        expect(picker._renderFrame()).toContain('sort:tokens');
+        fireKey(picker, 's'); // → name-asc
+        expect(picker._renderFrame()).toContain('sort:name');
+        fireKey(picker, 's'); // → staleness-desc (default)
+        expect(picker._renderFrame()).not.toContain('sort:');
+      });
+
+      it('sanitization: pasted ANSI bytes are stripped from echoed query (T-05-01)', () => {
+        const ghosts = [makeGhost({ name: 'foo', category: 'agent' })];
+        const picker = makePicker(ghosts);
+        fireKey(picker, '/');
+        // Simulate pasting "\x1b[31mfoo" one character at a time through the
+        // filter-append path. Each single-char codepoint < 32 is rejected by
+        // the append guard. This covers the append-time mitigation. The
+        // render-time mitigation additionally re-sanitizes, so if a future
+        // code path bypasses append and writes a raw escape to state.query,
+        // the rendered echo still has no escapes.
+        // Direct state poisoning to exercise the render-time sanitizer:
+        picker.filterSortByTab[0]!.query = '\x1b[31mfoo';
+        picker.filterSortByTab[0]!.active = true;
+        const frame = picker._renderFrame();
+        // Echoed as 'Filter: foo_' — no ANSI in output (the plain "foo_"
+        // sequence must appear).
+        expect(frame).toContain('Filter: foo_');
+        // Raw ESC byte must NOT be present.
+        // eslint-disable-next-line no-control-regex
+        expect(/\x1b/.test(frame)).toBe(false);
+      });
+
+      it('cursor clamps when s-cycle changes visible ordering', () => {
+        const ghosts = [
+          makeGhost({ name: 'a1', category: 'agent', tokens: 1 }),
+          makeGhost({ name: 'a2', category: 'agent', tokens: 2 }),
+          makeGhost({ name: 'a3', category: 'agent', tokens: 3 }),
+        ];
+        const picker = makePicker(ghosts);
+        picker.cursorDown();
+        picker.cursorDown();
+        expect(picker.tabs[0]!.cursor).toBe(2);
+        // Apply a filter that narrows to a single item.
+        fireKey(picker, '/');
+        fireKey(picker, 'a');
+        fireKey(picker, '2');
+        // Visible slice has 1 item — cursor clamps to 0.
+        const frame = picker._renderFrame();
+        expect(frame).toContain('Filtered: 1 of 3 visible');
+        expect(picker.tabs[0]!.cursor).toBe(0);
       });
     });
   });
