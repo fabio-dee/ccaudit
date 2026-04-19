@@ -5,6 +5,81 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+v1.5 "Interactive Archive" — response to Reddit feedback asking for a surgical
+alternative to the full-inventory bust. Threads an optional subset filter
+through the existing `runBust` pipeline, adds a `@clack/core`-based TUI
+picker, and locks down six new safety invariants (INV-S1…S6) before polish.
+Restore gains `--interactive` / `--name` / `--all-matching` in a companion
+phase (not shipped in this entry — see Phase 8 tracking in `.planning/`).
+
+### Added
+
+- `ghost --interactive` / `-i`: tabbed TUI picker for selective archival.
+  Six category tabs (agents / skills / MCP / memory / commands / hooks) with
+  bounded viewport, cross-tab selection persistence, and an inline
+  confirmation screen that replaces the 3-prompt readline ceremony. Requires
+  a TTY; non-TTY sessions fall back to `--dry-run`. `--interactive` combined
+  with `--json` is a hard error.
+- Keyboard model: `/` filter (case-insensitive substring), `s` sort cycle
+  (staleness → tokens → name), `?` help overlay, `Space` toggle, `a`
+  toggle-all-within-tab, `Tab` / `Shift-Tab` / `←` / `→` tab navigation,
+  `1`–`6` direct-jump to visible tabs, `Enter` confirm global selection,
+  `Esc` / `Ctrl+C` / `q` cancel with "No changes made." and exit 0.
+- Live token counter in the picker footer: `X of Y · ≈ Zk tokens saved`
+  recomputes on every toggle and re-renders on `SIGWINCH`.
+- Framework protection UX: partially-used-framework members render dimmed
+  with a `[🔒]` glyph and inline reason
+  `"Part of <framework> (N used, M ghost). --force-partial to override."`
+  Space is a no-op on protected rows. `--force-partial` surfaces a banner
+  warning at the top of the TUI and unlocks the rows for the current run.
+- MCP multi-project warning: MCP server rows whose key appears in more than
+  one config file render with a `⚠` glyph and a focused-row "Also in:" hint
+  listing the referenced config paths.
+- JSON envelope fields (additive — see `docs/JSON-SCHEMA.md`):
+  `bust.summary.totalPlannedTokens` (full-plan figure preserved across
+  subset busts) and `manifest.header.selection_filter` (`{ mode: 'full' }`
+  or `{ mode: 'subset', ids: string[] }`).
+- Auto-open prompt: after a regular `ccaudit ghost` scan on a TTY, users
+  see `Open interactive picker? [y/N]`. Suppressed by `--json`, `--csv`,
+  `--quiet`, `--ci`, and non-TTY.
+- `CCAUDIT_SELECT_IDS` environment variable: non-interactive subset hook
+  (primarily for integration tests and scripted automation). Threads the
+  same filter the TUI uses through `runBust`.
+- Six new safety invariants (INV-S1…S6) documented in `CLAUDE.md` and
+  locked by fixture-based integration tests.
+
+### Changed
+
+- `bust.summary.freedTokens` is now **subset-accurate** when
+  `manifest.header.selection_filter.mode === 'subset'`. For full-inventory
+  busts (the default non-interactive path) the value is unchanged —
+  `freedTokens === totalPlannedTokens` and the v1.4 contract is preserved.
+  **Migration note**: consumers that compared `freedTokens` across runs
+  must now consult `selection_filter.mode` to distinguish subset vs full
+  busts. Dashboards that want "what was the full opportunity?" should read
+  `totalPlannedTokens`.
+
+### Fixed
+
+- TUI picker long-list viewport overflow (Phase 3.1): `@clack/prompts.groupMultiselect`
+  renders all options inline with no windowing, so long inventories auto-
+  anchored to the bottom of the terminal and the highlighted cursor
+  disappeared above the viewport. Replaced with a custom
+  `@clack/core.MultiSelectPrompt` subclass backed by a bounded viewport
+  (`max(8, rows − 10)`) with `↑ N more` / `↓ N more` scroll indicators.
+- `@clack/core` Esc → cancel / Enter → submit alias defect (Phase 5 gap
+  closure): `@clack/core`'s base `Prompt.onKeypress` unconditionally
+  aliased `escape` → cancel and `return` → submit after subclass handlers
+  ran, breaking `Esc`-clears-filter, `Enter`-keeps-query, and `Esc`-closes-
+  help-overlay contracts. Fixed by wrapping `onKeypress` on the subclass
+  and conditionally suppressing the base aliases when `filterMode` or
+  `helpOpen` is true. Normal picker-state Ctrl+C / Esc / Enter behavior
+  is unchanged.
+
+---
+
 ## [1.4.0] - 2026-04-13
 
 Token estimation methodology rewrite. All six Claude Code inventory categories now
