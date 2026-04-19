@@ -32,14 +32,17 @@ export function warningGlyph(ascii: boolean): string {
 /**
  * True when the item is an MCP server referenced by more than one config
  * file. Tolerant of partial shapes so callers can pass `GhostItem` or the
- * underlying `InventoryItem` interchangeably.
+ * underlying `InventoryItem` interchangeably — both use `category` as the
+ * discriminator field (Phase 6 Plan 04 bugfix: earlier revision keyed off
+ * `kind` which neither canonical type exposes at runtime).
  */
-export function isMultiConfig(item: { kind?: string; configRefs?: string[] }): boolean {
-  return (
-    item.kind === 'mcp-server' &&
-    Array.isArray(item.configRefs) &&
-    item.configRefs.length > 1
-  );
+export function isMultiConfig(item: {
+  kind?: string;
+  category?: string;
+  configRefs?: string[];
+}): boolean {
+  const tag = item.category ?? item.kind;
+  return tag === 'mcp-server' && Array.isArray(item.configRefs) && item.configRefs.length > 1;
 }
 
 /**
@@ -120,6 +123,14 @@ if (import.meta.vitest) {
       expect(isMultiConfig({ kind: 'mcp-server', configRefs: ['a', 'b', 'c', 'd', 'e'] })).toBe(
         true,
       );
+    });
+
+    it('accepts InventoryItem-shaped input via `category` (bugfix 06-05)', () => {
+      // InventoryItem uses `category`, not `kind`. The picker passes
+      // `row.item.item` (an InventoryItem) to renderMcpWarningPrefix, so
+      // this branch MUST work end-to-end.
+      expect(isMultiConfig({ category: 'mcp-server', configRefs: ['a', 'b'] })).toBe(true);
+      expect(isMultiConfig({ category: 'agent', configRefs: ['a', 'b'] })).toBe(false);
     });
   });
 
