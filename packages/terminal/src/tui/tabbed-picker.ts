@@ -44,6 +44,7 @@ import {
   protectedHintLine,
   renderProtectedPrefix,
 } from './_protection-render.ts';
+import { bannerHeight, renderForcePartialBanner } from './_force-partial-banner.ts';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -635,6 +636,7 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     const vh = computeViewportHeight({
       rowsOverride: this.viewportHeightOverride,
       stdoutRows: this.stdoutRows,
+      bannerRows: bannerHeight({ active: this.forcePartial }),
     });
     t.cursor = Math.max(0, t.cursor - vh);
   }
@@ -644,6 +646,7 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     const vh = computeViewportHeight({
       rowsOverride: this.viewportHeightOverride,
       stdoutRows: this.stdoutRows,
+      bannerRows: bannerHeight({ active: this.forcePartial }),
     });
     const rlen = this._rowsActive().length;
     t.cursor = Math.min(Math.max(0, rlen - 1), t.cursor + vh);
@@ -909,6 +912,28 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     const lines: string[] = [];
     const t = this.activeTab();
 
+    // Phase 6 Plan 03 (D6-08, D6-14): top-of-TUI `--force-partial` banner.
+    // Renders on EVERY frame while the flag is on — never only-on-toggle —
+    // so the mode-wide unlock signal is never hidden. Glyph + text convey
+    // the warning independently of color (D6-20).
+    if (this.forcePartial) {
+      let protectedCount = 0;
+      for (const item of this.itemsById.values()) {
+        if (isProtected(item.item)) protectedCount++;
+      }
+      const bannerText = renderForcePartialBanner({
+        active: true,
+        protectedCount,
+        ascii: this.useAscii,
+      });
+      if (bannerText !== '') {
+        // Color the banner yellow when we're in Unicode / color mode.
+        // ASCII mode drops color to match the glyph-only signal on dumb
+        // terminals. Text alone already conveys the warning.
+        lines.push(this.useAscii ? bannerText : pc.yellow(bannerText));
+      }
+    }
+
     // 1. Tab bar.
     const tabDescriptors: TabDescriptor[] = this.tabs.map((tab) => ({ label: tab.label }));
     lines.push(
@@ -954,11 +979,15 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     lines.push(pc.bold(header));
 
     // 3–5. Viewport window + ↑/↓ N more (D3.1-06). Plan 04: render PickerRow[].
+    // Phase 6 Plan 03 (D6-08): deduct 1 row from the viewport when the
+    // `--force-partial` banner is visible so the rest of the Phase 3.1
+    // formula (`Math.max(8, rows-10)`) stays honest.
     const visible = this._visibleActive();
     const rows = this._rowsActive();
     const vh = computeViewportHeight({
       rowsOverride: this.viewportHeightOverride,
       stdoutRows: this.stdoutRows,
+      bannerRows: bannerHeight({ active: this.forcePartial }),
     });
     // Clamp cursor into bounds for a safe windowRows call even if prior key
     // handling left a stale cursor.

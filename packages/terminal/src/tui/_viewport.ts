@@ -29,9 +29,16 @@ export interface ViewportWindow<T> {
 export function computeViewportHeight(opts: {
   rowsOverride?: number;
   stdoutRows?: number | undefined;
+  /**
+   * Phase 6 Plan 03 (D6-08): rows consumed by the top-of-TUI
+   * `--force-partial` banner. Defaults to 0 so Phase 3.1/4/5 call sites
+   * stay byte-identical. When `forcePartial` is ON the picker passes 1.
+   */
+  bannerRows?: number;
 }): number {
-  if (opts.rowsOverride !== undefined) return opts.rowsOverride;
-  return Math.max(8, (opts.stdoutRows ?? 24) - 10);
+  const bannerRows = opts.bannerRows ?? 0;
+  if (opts.rowsOverride !== undefined) return Math.max(1, opts.rowsOverride - bannerRows);
+  return Math.max(8, (opts.stdoutRows ?? 24) - 10) - bannerRows;
 }
 
 /**
@@ -99,6 +106,22 @@ if (import.meta.vitest) {
 
     it('rowsOverride=5 → returns 5 (test-injection bypasses floor)', () => {
       expect(computeViewportHeight({ rowsOverride: 5, stdoutRows: 24 })).toBe(5);
+    });
+
+    it('bannerRows=1 reduces viewport by 1 vs bannerRows=0 (Phase 6 D6-08)', () => {
+      const without = computeViewportHeight({ stdoutRows: 30, bannerRows: 0 });
+      const withBanner = computeViewportHeight({ stdoutRows: 30, bannerRows: 1 });
+      expect(withBanner).toBe(without - 1);
+    });
+
+    it('bannerRows defaults to 0 (Phase 3.1/4/5 call sites stay byte-identical)', () => {
+      expect(computeViewportHeight({ stdoutRows: 30 })).toBe(
+        computeViewportHeight({ stdoutRows: 30, bannerRows: 0 }),
+      );
+    });
+
+    it('bannerRows=1 also reduces rowsOverride path', () => {
+      expect(computeViewportHeight({ rowsOverride: 10, bannerRows: 1 })).toBe(9);
     });
   });
 
