@@ -88,6 +88,164 @@ Bust, restore, and reclaim emit a `counts` object rather than an `items` array.
 
 > `skipped` = files whose inferred source path already existed (safety invariant: never overwritten).
 
+## Bust summary (v1.5)
+
+Successful `bust` responses carry a `summary` object alongside `counts`:
+
+```json
+"summary": {
+  "beforeTokens": 63722,
+  "freedTokens": 12800,
+  "totalPlannedTokens": 63722,
+  "afterTokens": 50922,
+  "pctWindow": 6,
+  "healthBefore": 23,
+  "healthAfter": 71,
+  "gradeBefore": "Poor",
+  "gradeAfter": "Good",
+  "checkpointTimestamp": "2026-04-18T09:42:11.000Z",
+  "checkpointMcpRegime": "eager"
+}
+```
+
+| Field                 | Type   | Description                                                                                                               |
+| --------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `beforeTokens`        | number | Grand-total ghost token overhead at dry-run checkpoint time.                                                              |
+| `freedTokens`         | number | Tokens actually freed by this bust. _Behavior changed in v1.5 — see note below._                                          |
+| `totalPlannedTokens`  | number | _Additive since v1.5._ Full-plan token figure preserved from the dry-run checkpoint; unaffected by subset filtering.      |
+| `afterTokens`         | number | `max(0, beforeTokens - freedTokens)`.                                                                                     |
+| `pctWindow`           | number | `freedTokens` as a percentage of a 200 000-token context window.                                                          |
+| `healthBefore`        | number | Composite health score (0–100) before the bust.                                                                           |
+| `healthAfter`         | number | Composite health score (0–100) after the bust.                                                                            |
+| `gradeBefore`         | string | Letter grade label for `healthBefore` (e.g. `Poor`, `Good`).                                                              |
+| `gradeAfter`          | string | Letter grade label for `healthAfter`.                                                                                     |
+| `checkpointTimestamp` | string | ISO 8601 UTC timestamp of the dry-run checkpoint that gated this bust.                                                    |
+| `checkpointMcpRegime` | string | `'eager' \| 'deferred' \| 'unknown'` — regime pinned at dry-run time so Before/After totals stay consistent across steps. |
+
+### `freedTokens` behavior change in v1.5
+
+In v1.4.x, `freedTokens` was always the full-inventory plan total because
+every bust was full-inventory. v1.5 introduces subset busts via the
+`--interactive` TUI picker and the `CCAUDIT_SELECT_IDS` env hook. When a
+subset bust runs, `freedTokens` now reflects the subset-accurate figure
+(sum of per-item token estimates across the archived subset only).
+
+The companion `totalPlannedTokens` field preserves the full-plan figure
+from the checkpoint so dashboards can still answer "what was the full
+opportunity?" after a subset bust.
+
+Consumers that compared `freedTokens` across runs MUST now check
+`manifest.header.selection_filter.mode` (see next section) to distinguish
+subset vs full-inventory busts. For full-inventory busts (the default
+non-interactive path), `freedTokens === totalPlannedTokens` and the v1.4
+contract is preserved.
+
+## Manifest header (v1.5)
+
+Every manifest record emitted by `bust` carries a header with a
+`selection_filter` field that identifies whether the bust was a full or
+subset operation.
+
+```json
+"selection_filter": { "mode": "full" }
+```
+
+```json
+"selection_filter": {
+  "mode": "subset",
+  "ids": ["agent:code-reviewer", "mcp-server:playwright", "skill:my-skill"]
+}
+```
+
+| Field                   | Type                 | Description                                                                                                                       |
+| ----------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `selection_filter.mode` | `'full' \| 'subset'` | `'full'` for default non-interactive busts and empty-selection abort paths. `'subset'` when `--interactive` or env hook filtered. |
+| `selection_filter.ids`  | `string[]`           | Present only when `mode === 'subset'`. Canonical item IDs actually archived, sorted lexicographically for determinism.            |
+
+Older manifests (pre-v1.5) omit the field entirely; readers should treat
+its absence as `{ mode: 'full' }`.
+
+### Additive contract
+
+All v1.5 envelope additions are **additive**. Consumers reading a v1.4
+envelope must tolerate the absence of `totalPlannedTokens` and
+`selection_filter`; consumers reading a v1.5+ envelope must tolerate their
+presence. The `--json` envelope never drops or renames fields without a
+major-version bump flagged in `CHANGELOG.md`.
+
+### Example: full-inventory bust
+
+```json
+{
+  "meta": { "command": "bust", "version": "1.5.0", "exitCode": 0 },
+  "manifestPath": "~/.claude/ccaudit/manifests/bust-2026-04-19T10:00:00Z.jsonl",
+  "counts": {
+    "archive": { "agents": 116, "skills": 74, "failed": 0 },
+    "disable": { "completed": 4, "failed": 0 },
+    "flag": { "completed": 6, "refreshed": 0, "failed": 0 }
+  },
+  "summary": {
+    "beforeTokens": 63722,
+    "freedTokens": 63722,
+    "totalPlannedTokens": 63722,
+    "afterTokens": 0,
+    "pctWindow": 32,
+    "healthBefore": 23,
+    "healthAfter": 91,
+    "gradeBefore": "Poor",
+    "gradeAfter": "Excellent",
+    "checkpointTimestamp": "2026-04-19T09:59:30.000Z",
+    "checkpointMcpRegime": "eager"
+  }
+}
+```
+
+Corresponding `manifest.header.selection_filter`:
+
+```json
+{ "mode": "full" }
+```
+
+### Example: subset bust (v1.5 --interactive)
+
+```json
+{
+  "meta": { "command": "bust", "version": "1.5.0", "exitCode": 0 },
+  "manifestPath": "~/.claude/ccaudit/manifests/bust-2026-04-19T10:05:00Z.jsonl",
+  "counts": {
+    "archive": { "agents": 2, "skills": 1, "failed": 0 },
+    "disable": { "completed": 1, "failed": 0 },
+    "flag": { "completed": 0, "refreshed": 0, "failed": 0 }
+  },
+  "summary": {
+    "beforeTokens": 63722,
+    "freedTokens": 8400,
+    "totalPlannedTokens": 63722,
+    "afterTokens": 55322,
+    "pctWindow": 4,
+    "healthBefore": 23,
+    "healthAfter": 41,
+    "gradeBefore": "Poor",
+    "gradeAfter": "Fair",
+    "checkpointTimestamp": "2026-04-19T10:04:45.000Z",
+    "checkpointMcpRegime": "eager"
+  }
+}
+```
+
+Corresponding `manifest.header.selection_filter`:
+
+```json
+{
+  "mode": "subset",
+  "ids": ["agent:code-reviewer", "agent:pencil-dev", "mcp-server:playwright", "skill:my-skill"]
+}
+```
+
+Note: `summary.freedTokens` (8400) < `summary.totalPlannedTokens` (63722)
+because only a subset was archived. `selection_filter.mode === 'subset'`
+is the signal that the two figures will differ.
+
 ## Item categories
 
 The `category` field on each item is one of:
