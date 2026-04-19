@@ -133,7 +133,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 5 plans
 - [x] 05-01-filter-helpers-and-state-PLAN.md — Pure helpers (matchesQuery, sortItems, nextSort, sanitizeFilterQuery) + FilterSortState type; in-source tests
 - [x] 05-02-filter-and-sort-integration-PLAN.md — Wire filter input mode + sort cycle into TabbedGhostPicker; extend footer format with Filtered: / sort label
-- [ ] 05-03-help-overlay-PLAN.md — Modal help overlay (?) with grouped binding catalog; state-preserving open/close
+- [x] 05-03-help-overlay-PLAN.md — Modal help overlay (?) with grouped binding catalog; state-preserving open/close
 - [ ] 05-04-framework-group-toggle-PLAN.md — Space on framework sub-header toggles group; outcome A (sub-headers rendered) vs B (D5-18 n/a) decided per codebase inspection
 - [ ] 05-05-integration-tests-and-bundle-gate-PLAN.md — 5 pty integration tests (SC1-SC5) + INV-S2 re-run + <10KB gzip bundle gate + human-verify
 **UI hint**: yes
