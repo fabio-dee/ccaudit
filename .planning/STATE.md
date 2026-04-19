@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: Interactive Archive
 status: verifying
-stopped_at: Completed 04-03-integration-tests-PLAN.md
-last_updated: "2026-04-19T08:04:17.329Z"
+stopped_at: Completed 05-04-framework-group-toggle-PLAN.md
+last_updated: "2026-04-19T08:18:08.292Z"
 last_activity: 2026-04-18
 progress:
   total_phases: 10
   completed_phases: 5
   total_plans: 25
-  completed_plans: 23
-  percent: 92
+  completed_plans: 24
+  percent: 96
 ---
 
 # Project State
@@ -67,6 +67,7 @@ Next: Phase 5 (Keyboard model completeness) — depends on Phase 3.1 (satisfied)
 | Phase 04 P03 | 15min | 3 tasks | 3 files |
 | Phase 05 P02 | 25min | 2 tasks | 1 files |
 | Phase 05 P03 | ~20min | 2 tasks | 2 files |
+| Phase 05 P04 | 10min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -110,6 +111,7 @@ Recent decisions affecting current work:
 - [Phase 03.2]: Phase 3.1 tabbed-picker-terminal-too-short.test.ts now requires buildFakePs + skipIf(win32) because entry preflight runs ps BEFORE the D3.1-16 height gate inside selectGhosts
 - [Phase 03.2]: Plan 05: Module-scope buildWrappedProcessDeps helper with per-layer counters (entry vs bust) — deviation from plan text's single-counter design, required to exercise both retry layers in SC5b integration test
 - [Phase 03.2]: Plan 05: @clack/prompts.confirm resolves on 'y'/'n' character alone — NEVER send '\r' afterward (leaks Enter to next prompt, commits default value); drive subprocess integration tests with marker-counting on ◆ active-prompt glyph, not full-line phrase regex (clack repaints on every key input)
+- [Phase 05]: Plan 04 Outcome A: InventoryItem.framework field is live; implemented PickerRow sub-headers + Space group-toggle (D5-17..D5-20)
 
 ### Pending Todos
 
@@ -121,6 +123,6 @@ None yet. Phase 1's primary risk (`computeGhostHash` refactor drift) is mitigate
 
 ## Session Continuity
 
-Last session: 2026-04-18T22:01:19.493Z
-Stopped at: Completed 04-03-integration-tests-PLAN.md
+Last session: 2026-04-19T08:18:08.289Z
+Stopped at: Completed 05-04-framework-group-toggle-PLAN.md
 Resume file: None

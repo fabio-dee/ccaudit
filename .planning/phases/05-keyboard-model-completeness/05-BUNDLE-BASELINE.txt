@@ -1,0 +1,8 @@
+phase_4_post_build_gzipped_bytes: 177038
+recorded_at: 2026-04-19T08:19:46Z
+source: .planning/phases/04-live-token-counter/BUNDLE-POST.txt (recorded at Phase 4 tip commit e483806 before Plans 05-01..05-04 merged)
+notes: |
+  The Phase 4 `BUNDLE-POST.txt` was written by Plan 04-04's bundle-gate task
+  on the Phase 4 tip and is the authoritative post-Phase-4 gzipped size.
+  Plan 05-05's <10 KB growth gate compares the current (Plan 05-04 merged)
+  dist bundle against this number (D5-26).
