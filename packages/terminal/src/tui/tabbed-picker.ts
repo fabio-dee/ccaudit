@@ -409,6 +409,68 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
       // internal consistency checks (though render() is fully overridden).
       this.cursor = this.tabs[this.activeTabIndex]?.cursor ?? 0;
     });
+
+    // Phase 5 gap-closure (D5-05, D5-13): wrap the base-class onKeypress so
+    // that `escape` and `return` keypresses are intercepted while the picker
+    // is in filter-input mode or has the help overlay open. Without this
+    // wrapper, `@clack/core@1.2.0`'s `Prompt.onKeypress` unconditionally
+    // flips `state` to `'cancel'` (escape alias) or `'submit'` (return) at
+    // the tail of its dispatch — AFTER our `key` listener has set
+    // `state='active'` — so the picker cancels/submits even when the
+    // filter-input or help overlay is the intended target of the key.
+    //
+    // Targeted override only: Ctrl+C (char === '\x03', info.name undefined)
+    // still reaches the base path and cancels the picker (INV-S2). Escape
+    // and return in the normal picker state (no filter, no help) also still
+    // reach the base path, preserving Phase 3.1's cancel-on-Esc and
+    // submit-on-Enter behavior. We re-emit `key` manually when we
+    // short-circuit so the existing in-constructor key listener still runs
+    // its mode-specific handling (clear query + exit filter on escape, exit
+    // filter but keep query on return, close help overlay on escape).
+    //
+    // We do NOT call `updateSettings({ aliases: {} })` from @clack/core —
+    // that would de-alias escape/return globally for every prompt the host
+    // process ever opens, a blast radius far larger than this targeted fix.
+    //
+    // Note on mechanics: @clack/core's Prompt binds its own onKeypress
+    // (`this.onKeypress = this.onKeypress.bind(this)`) in its constructor
+    // and attaches it as a listener in prompt(). Reassigning `this.onKeypress`
+    // here (before prompt() runs) installs OUR wrapper as the listener.
+    // The wrapper captures the original bound dispatcher and delegates to
+    // it for every key that doesn't match the escape/return + filter/help
+    // suppression condition.
+    const originalOnKeypress = (
+      this as unknown as { onKeypress: (char: string | undefined, info: unknown) => void }
+    ).onKeypress.bind(this);
+    // Cast to `any` because @clack/core marks onKeypress as private — our
+    // targeted reassignment is a deliberate breach of the visibility
+    // modifier that matches the documented behavior of the class field.
+    (
+      this as unknown as { onKeypress: (char: string | undefined, info: unknown) => void }
+    ).onKeypress = (char: string | undefined, info: unknown): void => {
+      const keyInfo = info as
+        | { name?: string; sequence?: string; shift?: boolean; ctrl?: boolean }
+        | undefined;
+      const suppressing = this.filterMode || this.helpOpen;
+      const isEscape = keyInfo?.name === 'escape';
+      const isReturn = keyInfo?.name === 'return';
+      if (suppressing && (isEscape || isReturn)) {
+        if (this.state === 'error') this.state = 'active';
+        // Emit 'key' so the existing constructor-installed listener runs
+        // the mode-specific logic and resets state to 'active'. The base
+        // `render()` isn't accessible from outside the class, but emitting
+        // 'value' or reassigning state='active' is enough to trigger the
+        // next render on the `@clack/core` event loop: the constructor's
+        // key handler assigns `this.state = 'active'` which the base class
+        // treats as a render-worthy state transition the next time render
+        // is invoked. To be safe and match the base's own tail, we also
+        // call the private `render` via a cast.
+        this.emit('key', char?.toLowerCase(), keyInfo);
+        (this as unknown as { render: () => void }).render();
+        return;
+      }
+      originalOnKeypress(char, info);
+    };
   }
 
   // ---------------------------------------------------------------------------

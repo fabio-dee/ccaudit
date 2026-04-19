@@ -122,11 +122,10 @@ describe.skipIf(process.platform === 'win32')('Phase 5 SC3 — help overlay inte
     await sendKeys(spawned.child, [' ']);
     await new Promise((r) => setTimeout(r, 250));
 
-    // Close overlay via `?` toggle. (Note: closing via Esc also cancels the
-    // underlying picker because @clack/core dispatches the same keypress to
-    // both the 'key' handler — which turns off helpOpen — and the 'cursor'
-    // handler — which, now that helpOpen is false, processes Esc as `cancel`.
-    // The `?` toggle path is dispatch-safe.)
+    // Close overlay via `?` toggle. After the Phase 5 gap-closure fix,
+    // Esc also safely closes the overlay (see the dedicated test below);
+    // this original SC3 path exercises the `?` toggle for regression
+    // coverage of the idempotent toggle gesture.
     let beforeLen = stdoutBuf.length;
     await sendKeys(spawned.child, ['?']);
     await new Promise((r) => setTimeout(r, 400));
@@ -146,6 +145,50 @@ describe.skipIf(process.platform === 'win32')('Phase 5 SC3 — help overlay inte
     expect(
       afterToggle.includes('0 of 3 selected across all tabs'),
       `expected picker footer after ?-? toggle; got:\n${afterToggle}`,
+    ).toBe(true);
+
+    // Cleanup.
+    await sendKeys(spawned.child, ['\x03']);
+    spawned.child.stdin!.end();
+    const result = await spawned.done;
+    expect([0, 130, null].includes(result.exitCode)).toBe(true);
+  }, 30_000);
+
+  it('D5-13: `Esc` closes the help overlay without canceling the picker (gap-closure)', async () => {
+    const spawned = runCcauditGhost(tmpHome, ['--interactive'], {
+      env: baseEnv(),
+      timeout: 20_000,
+    });
+
+    let stdoutBuf = '';
+    spawned.child.stdout!.on('data', (c: Buffer) => {
+      stdoutBuf += c.toString();
+    });
+
+    await waitForMarker(
+      () => stdoutBuf,
+      () => spawned.child.exitCode !== null,
+      '0 of 3 selected across all tabs',
+    );
+
+    // Open overlay.
+    await sendKeys(spawned.child, ['?']);
+    await waitForMarker(
+      () => stripAnsi(stdoutBuf),
+      () => spawned.child.exitCode !== null,
+      'Jump to tab N',
+    );
+
+    // Esc should close the overlay and return to the picker — NOT cancel.
+    const beforeLen = stdoutBuf.length;
+    await sendKeys(spawned.child, ['\x1b']);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(spawned.child.exitCode).toBeNull();
+    const afterEsc = stripAnsi(stdoutBuf.slice(beforeLen));
+    expect(afterEsc).not.toContain('No changes made');
+    expect(
+      afterEsc.includes('0 of 3 selected across all tabs'),
+      `expected picker footer restored after Esc-closes-help; got:\n${afterEsc}`,
     ).toBe(true);
 
     // Cleanup.

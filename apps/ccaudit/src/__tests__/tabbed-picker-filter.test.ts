@@ -190,39 +190,170 @@ describe.skipIf(process.platform === 'win32')('Phase 5 SC1 — filter integratio
     expect([0, 130, null].includes(result.exitCode)).toBe(true);
   }, 30_000);
 
-  // KNOWN-GAP (two pre-existing Phase 5 bugs surfaced by pty coverage):
-  //
-  //   1. D5-05 "Esc in filter mode clears query + exits filter mode":
-  //      @clack/core's base `onKeypress` unconditionally sets `state='cancel'`
-  //      after running subclass key/cursor handlers (it maps escape→cancel via
-  //      `u.aliases`, then runs `V([t, e?.name, e?.sequence],"cancel") &&
-  //      (this.state="cancel")` at the end of onKeypress). Our subclass's
-  //      `state='active'` re-assignments are overwritten, so Esc cancels the
-  //      picker even while filter-input or help overlay is open.
-  //
-  //   2. D5-05 "Enter exits filter mode but keeps query active":
-  //      Same defect class — @clack/core's base onKeypress unconditionally sets
-  //      `state='submit'` on key name 'return'. Enter inside filter-input mode
-  //      therefore submits the picker instead of closing the input while keeping
-  //      the query live. Observed via a pty probe on Plan 05-05 Phase 4 dist:
-  //      Enter after `/pen` submits the (empty) selection and prints "No changes
-  //      made." on stderr.
-  //
-  //   Plan 05-05 Task 2 stipulates that test-revealed bugs be raised as gap-
-  //   closure work, not fixed inline. The tests below mark those SC1 sub-cases
-  //   as `.todo` pending a subsequent wave that overrides `onKeypress` in
-  //   `TabbedGhostPicker` (or re-aliases escape/return via `updateSettings`
-  //   from @clack/core) while helpOpen or filterMode is active.
-  //
-  //   In-source handler-level tests (tabbed-picker.ts:1648/1661) still pass
-  //   because they drive the handler directly and bypass `onKeypress`.
-  it.todo(
-    'D5-05: Esc in filter mode clears query, exits filter mode, and preserves selection (BLOCKED by @clack/core escape→cancel alias)',
-  );
-  it.todo(
-    'D5-05: Enter in filter mode exits filter mode but keeps query active (BLOCKED by @clack/core base onKeypress setting state=submit on return)',
-  );
-  it.todo(
-    'D5-06: Space in filter-narrowed list toggles the current row (BLOCKED — requires exiting filter mode first, which currently either cancels (Esc) or submits (Enter) the picker)',
-  );
+  // Phase 5 gap closure (D5-05, D5-06, D5-13): the three live tests below
+  // replaced earlier `it.todo` markers once `TabbedGhostPicker.onKeypress`
+  // was overridden to intercept escape/return while `filterMode` or
+  // `helpOpen` is active, preventing `@clack/core`'s base dispatcher from
+  // unconditionally flipping `state` to `'cancel'` / `'submit'`. The fix
+  // is surgical: Ctrl+C still cancels (INV-S2), and escape/return outside
+  // filter/help mode still cancel/submit per Phase 3.1 behavior.
+
+  it('D5-05: Esc in filter mode clears the query and exits filter mode without canceling the picker', async () => {
+    const spawned = runCcauditGhost(tmpHome, ['--interactive'], {
+      env: baseEnv(),
+      timeout: 20_000,
+    });
+
+    let stdoutBuf = '';
+    spawned.child.stdout!.on('data', (c: Buffer) => {
+      stdoutBuf += c.toString();
+    });
+
+    await waitForMarker(
+      () => stdoutBuf,
+      () => spawned.child.exitCode !== null,
+      '0 of 6 selected across all tabs',
+    );
+
+    await sendKeys(spawned.child, ['/', 'p', 'e', 'n']);
+    await waitForMarker(
+      () => stripAnsi(stdoutBuf),
+      () => spawned.child.exitCode !== null,
+      'Filter: pen_',
+    );
+    const beforeEsc = stripAnsi(stdoutBuf);
+    expect(beforeEsc).toContain('Filter: pen_');
+    expect(/Filtered:\s*2\s+of\s+3\s+visible/.test(beforeEsc)).toBe(true);
+
+    // Esc in filter mode: per D5-05 should clear the query AND exit filter
+    // mode in one stroke. Critically, the picker must NOT cancel.
+    const beforeLen = stdoutBuf.length;
+    await sendKeys(spawned.child, ['\x1b']);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(spawned.child.exitCode).toBeNull();
+
+    const afterEsc = stripAnsi(stdoutBuf.slice(beforeLen));
+    expect(afterEsc).not.toContain('No changes made');
+    // Filter footer cleared → the full-inventory counter returns.
+    expect(afterEsc.includes('0 of 6 selected across all tabs')).toBe(true);
+    // And the `Filter: pen_` prompt is not reissued afterwards — the picker
+    // is back in its normal (non-filter) state.
+    expect(afterEsc).not.toContain('Filter: pen_');
+
+    // Cleanup via Ctrl+C.
+    await sendKeys(spawned.child, ['\x03']);
+    spawned.child.stdin!.end();
+    const result = await spawned.done;
+    expect([0, 130, null].includes(result.exitCode)).toBe(true);
+  }, 30_000);
+
+  it('D5-05: Enter in filter mode exits filter-input mode but keeps the narrowed view (query stays active)', async () => {
+    const spawned = runCcauditGhost(tmpHome, ['--interactive'], {
+      env: baseEnv(),
+      timeout: 20_000,
+    });
+
+    let stdoutBuf = '';
+    spawned.child.stdout!.on('data', (c: Buffer) => {
+      stdoutBuf += c.toString();
+    });
+
+    await waitForMarker(
+      () => stdoutBuf,
+      () => spawned.child.exitCode !== null,
+      '0 of 6 selected across all tabs',
+    );
+
+    await sendKeys(spawned.child, ['/', 'p', 'e', 'n']);
+    await waitForMarker(
+      () => stripAnsi(stdoutBuf),
+      () => spawned.child.exitCode !== null,
+      'Filter: pen_',
+    );
+
+    // Enter: exit filter-input mode, but the narrowed view (2 of 3) persists.
+    // Picker must NOT submit.
+    await sendKeys(spawned.child, ['\r']);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(spawned.child.exitCode).toBeNull();
+
+    // Drive one more visible change (Space toggles the focused row) so the
+    // renderer emits a new frame we can inspect. If Enter had (incorrectly)
+    // submitted the picker, this Space keystroke would land on a closed
+    // stdin and the exitCode would already be set.
+    const beforeSpaceLen = stdoutBuf.length;
+    await sendKeys(spawned.child, [' ']);
+    await new Promise((r) => setTimeout(r, 400));
+    const afterSpace = stripAnsi(stdoutBuf.slice(beforeSpaceLen));
+    expect(spawned.child.exitCode).toBeNull();
+    // The post-Space frame must still show the filter narrowing active
+    // (`Filtered: 2 of 3 visible | 1 selected`), confirming Enter kept the
+    // query live rather than submitting the picker.
+    expect(stripAnsi(stdoutBuf)).not.toContain('No changes made');
+    expect(/Filtered:\s*2\s+of\s+3\s+visible\s*\|\s*1\s+selected/.test(afterSpace)).toBe(true);
+
+    // Cleanup via Ctrl+C.
+    await sendKeys(spawned.child, ['\x03']);
+    spawned.child.stdin!.end();
+    const result = await spawned.done;
+    expect([0, 130, null].includes(result.exitCode)).toBe(true);
+  }, 30_000);
+
+  it('D5-06: after Enter-exits-filter-input, Space toggles the current visible row; selection preserved across Esc-clear', async () => {
+    const spawned = runCcauditGhost(tmpHome, ['--interactive'], {
+      env: baseEnv(),
+      timeout: 20_000,
+    });
+
+    let stdoutBuf = '';
+    spawned.child.stdout!.on('data', (c: Buffer) => {
+      stdoutBuf += c.toString();
+    });
+
+    await waitForMarker(
+      () => stdoutBuf,
+      () => spawned.child.exitCode !== null,
+      '0 of 6 selected across all tabs',
+    );
+
+    // Enter filter, type, Enter to exit filter-input mode keeping query live.
+    await sendKeys(spawned.child, ['/', 'p', 'e', 'n']);
+    await waitForMarker(
+      () => stripAnsi(stdoutBuf),
+      () => spawned.child.exitCode !== null,
+      'Filter: pen_',
+    );
+    await sendKeys(spawned.child, ['\r']);
+    await new Promise((r) => setTimeout(r, 300));
+
+    // Space toggles the row under the cursor in the narrowed list. While a
+    // filter is active the footer renders `Filtered: M of N visible | X
+    // selected` (per D5-01) — NOT the full-inventory `X of 6 selected` form.
+    await sendKeys(spawned.child, [' ']);
+    await waitForMarker(
+      () => stripAnsi(stdoutBuf),
+      () => spawned.child.exitCode !== null,
+      'Filtered: 2 of 3 visible | 1 selected',
+    );
+    const afterSpace = stripAnsi(stdoutBuf);
+    expect(afterSpace).toContain('Filtered: 2 of 3 visible | 1 selected');
+
+    // Re-enter filter mode and Esc-clear from there; selection preserved
+    // across the filter clear (D5-06).
+    await sendKeys(spawned.child, ['/']);
+    await new Promise((r) => setTimeout(r, 200));
+    const beforeClearLen = stdoutBuf.length;
+    await sendKeys(spawned.child, ['\x1b']);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(spawned.child.exitCode).toBeNull();
+    const afterClear = stripAnsi(stdoutBuf.slice(beforeClearLen));
+    // Once filter is cleared, counter returns to `X of 6 selected` form;
+    // selection of 1 item survives.
+    expect(afterClear.includes('1 of 6 selected')).toBe(true);
+
+    await sendKeys(spawned.child, ['\x03']);
+    spawned.child.stdin!.end();
+    const result = await spawned.done;
+    expect([0, 130, null].includes(result.exitCode)).toBe(true);
+  }, 30_000);
 });
