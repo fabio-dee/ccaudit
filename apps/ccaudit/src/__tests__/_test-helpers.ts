@@ -467,3 +467,186 @@ export function mcpItemId(tmpHome: string, serverName: string): string {
     projectPath: null,
   });
 }
+
+// ── Phase 6 helpers (multi-framework + multi-config MCP fixtures) ─────────
+
+export interface MultiFrameworkSpec {
+  /**
+   * Curated framework prefix used to generate agent filenames
+   * (`<prefix>-<suffix>.md`). Must match a `KNOWN_FRAMEWORKS` id (e.g. `gsd`
+   * or `sc`) so the scanner attaches `framework: <id>`.
+   */
+  prefix: string;
+  /** Agent file suffixes that should be classified as USED. */
+  usedMembers: readonly string[];
+  /** Agent file suffixes that should be classified as GHOST (60d mtime). */
+  ghostMembers: readonly string[];
+  /**
+   * When the `prefix` is a session-tool name different from the agent
+   * subagent_type, override it here. Default is `<prefix>-<usedMembers[0]>`.
+   */
+  sessionSubagent?: string;
+}
+
+/**
+ * Build a tmp home containing N curated-framework groups, each with mixed
+ * used/ghost membership so `applyFrameworkProtection` classifies them as
+ * `partially-used`. Designed for Phase 6 SC1/SC4 integration tests.
+ *
+ * Caller is responsible for {@link buildFakePs} if the subprocess needs the
+ * preflight to pass.
+ */
+export async function createMultiFrameworkFixture(
+  tmpHome: string,
+  frameworks: readonly MultiFrameworkSpec[],
+): Promise<void> {
+  const agentsDir = path.join(tmpHome, '.claude', 'agents');
+  const xdgDir = path.join(tmpHome, '.config', 'claude');
+  await mkdir(agentsDir, { recursive: true });
+  await mkdir(xdgDir, { recursive: true });
+
+  const sixtyDaysAgo = new Date(Date.now() - 60 * 86_400_000);
+  const recentTs = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+  // Per-framework used + ghost files, plus a per-framework session JSONL
+  // invoking the used subagent so the scanner classifies it as used.
+  const sessionLines: string[] = [
+    JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      cwd: '/fake/multi-fwk',
+      timestamp: recentTs,
+      sessionId: 'multi-fwk',
+    }),
+  ];
+
+  let toolCounter = 1;
+  for (const fw of frameworks) {
+    for (const suffix of fw.usedMembers) {
+      const name = `${fw.prefix}-${suffix}`;
+      await writeFile(path.join(agentsDir, `${name}.md`), `# ${name} used\n`, 'utf8');
+      sessionLines.push(
+        JSON.stringify({
+          type: 'assistant',
+          timestamp: recentTs,
+          sessionId: 'multi-fwk',
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'tool_use',
+                id: `t${toolCounter++}`,
+                name: 'Task',
+                input: { subagent_type: name, prompt: 'do work' },
+              },
+            ],
+          },
+        }),
+      );
+    }
+    for (const suffix of fw.ghostMembers) {
+      const name = `${fw.prefix}-${suffix}`;
+      const p = path.join(agentsDir, `${name}.md`);
+      await writeFile(p, `# ${name} ghost\n`, 'utf8');
+      await utimes(p, sixtyDaysAgo, sixtyDaysAgo);
+    }
+  }
+
+  await writeFile(path.join(tmpHome, '.claude.json'), '{}', 'utf8');
+
+  const sessionDir = path.join(tmpHome, '.claude', 'projects', 'multi-fwk');
+  await mkdir(sessionDir, { recursive: true });
+  await writeFile(
+    path.join(sessionDir, 'session-1.jsonl'),
+    sessionLines.join('\n') + '\n',
+    'utf8',
+  );
+}
+
+export interface MultiConfigMcpFixtureOpts {
+  /** Absolute path to the tmp HOME. */
+  home: string;
+  /**
+   * Absolute project root (defaults to `<home>/project`). A `.mcp.json` is
+   * written here when `alsoInProjectLocal` is true.
+   */
+  projectRoot?: string;
+  /** MCP server key that will appear in multiple config files. */
+  sharedKey: string;
+  /** When true, write `sharedKey` into `<projectRoot>/.mcp.json`. */
+  alsoInProjectLocal?: boolean;
+  /**
+   * When true, write `sharedKey` into `~/.claude/settings.json` under
+   * `mcpServers`. (Note: the ccaudit scanner reads `~/.claude.json`; we
+   * write to BOTH locations so the fixture matches the ticket text — the
+   * scanner walks `~/.claude.json`, which is the canonical user file here.)
+   */
+  alsoInUser?: boolean;
+  /**
+   * Additional `.mcp.json` files at synthetic project roots. Each entry
+   * becomes another project dir with a `.mcp.json` containing `sharedKey`.
+   */
+  extraProjectDirs?: readonly string[];
+}
+
+export interface MultiConfigMcpFixture {
+  /** Project roots to pass into `scanMcpServers(configPath, projectPaths)`. */
+  projectPaths: string[];
+  /** Absolute path to the root user claude config (`~/.claude.json`). */
+  userConfigPath: string;
+}
+
+/**
+ * Write one MCP `sharedKey` into 2+ config files so `scanMcpServers` sets
+ * `configRefs.length >= 2` on the emitted item. Used by Phase 6 SC3 (MCP
+ * multi-config warning hint) and the scanner-aggregation test.
+ *
+ * Writes the same server definition into every target config so the scanner
+ * treats them as genuinely shared. Each config is a well-formed JSON file.
+ */
+export async function createMultiConfigMcpFixture(
+  opts: MultiConfigMcpFixtureOpts,
+): Promise<MultiConfigMcpFixture> {
+  const { home, sharedKey } = opts;
+  const projectRoot = opts.projectRoot ?? path.join(home, 'project');
+  const alsoInProjectLocal = opts.alsoInProjectLocal ?? true;
+  const alsoInUser = opts.alsoInUser ?? true;
+  const extra = opts.extraProjectDirs ?? [];
+
+  const serverDef = { command: 'npx', args: [sharedKey] };
+  const projectPaths: string[] = [];
+
+  // Root user config (~/.claude.json). Always written — this is the scanner's
+  // primary config source.
+  const userConfig: { mcpServers: Record<string, unknown> } = { mcpServers: {} };
+  if (alsoInUser) {
+    userConfig.mcpServers[sharedKey] = serverDef;
+  }
+  const userConfigPath = path.join(home, '.claude.json');
+  await writeFile(userConfigPath, JSON.stringify(userConfig, null, 2) + '\n', 'utf8');
+
+  // Primary project root .mcp.json.
+  if (alsoInProjectLocal) {
+    await mkdir(projectRoot, { recursive: true });
+    await writeFile(
+      path.join(projectRoot, '.mcp.json'),
+      JSON.stringify({ mcpServers: { [sharedKey]: serverDef } }, null, 2) + '\n',
+      'utf8',
+    );
+    projectPaths.push(projectRoot);
+  }
+
+  // Additional project dirs with their own .mcp.json.
+  for (const rel of extra) {
+    const dir = path.isAbsolute(rel) ? rel : path.join(home, rel);
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      path.join(dir, '.mcp.json'),
+      JSON.stringify({ mcpServers: { [sharedKey]: serverDef } }, null, 2) + '\n',
+      'utf8',
+    );
+    projectPaths.push(dir);
+  }
+
+  return { projectPaths, userConfigPath };
+}
