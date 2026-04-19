@@ -126,17 +126,95 @@ Restore anytime: ccaudit restore
 
 ---
 
+## Interactive mode
+
+`ccaudit ghost --interactive` (short: `-i`) opens a TUI picker for selective
+archival. Instead of archiving every ghost in one shot, you scroll six
+category tabs, pick exactly what to archive, and confirm on a single screen.
+Requires a TTY; non-TTY sessions fall back to `--dry-run` and `--interactive`
+combined with `--json` is a hard error.
+
+```bash
+npx ccaudit-cli ghost --interactive
+```
+
+### The picker
+
+```text
+┌─ Archive ghosts ─────────────────────────────────────────────────────┐
+│ [ agents (3/12) ] [ skills (0/8) ] [ mcp (1/2) ] [ memory (0/4) ]    │
+│ [ commands (0/5) ] [ hooks (0/1) ]                                   │
+├──────────────────────────────────────────────────────────────────────┤
+│ ◉ code-reviewer          agent    ~1.2k  28d stale                   │
+│ ◯ pencil-dev             agent    ~0.9k  44d stale                   │
+│ ◉ doc-writer             agent    ~1.5k  91d stale                   │
+│ [🔒] gsd-planner         agent    ~2.1k  Part of GSD (3 used,        │
+│                                          9 ghost). --force-partial   │
+│ ◉ playwright  ⚠          mcp      ~3.8k  Also in: ./project-b/.mcp   │
+│ ↓ 2 more                                                             │
+├──────────────────────────────────────────────────────────────────────┤
+│ 5 of 32 · ≈ 8.4k tokens saved   Space toggle  /  filter  ?  help     │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### The confirmation screen
+
+```text
+┌─ Confirm archive ────────────────────────────────────────────────────┐
+│                                                                      │
+│  Archive the following 5 ghosts?                                     │
+│                                                                      │
+│    agents:    3  (code-reviewer, doc-writer, +1 more)                │
+│    mcp:       1  (playwright)                                        │
+│    skills:    1  (my-skill)                                          │
+│                                                                      │
+│  Estimated savings: ≈ 8.4k tokens per session                        │
+│  Manifest:          ~/.claude/ccaudit/manifests/bust-*.jsonl         │
+│                                                                      │
+│  [ Archive ]   [ Cancel ]                                            │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### Keybinds
+
+| Key                    | Action                                          |
+| ---------------------- | ----------------------------------------------- |
+| `Space`                | Toggle selection of focused row                 |
+| `a`                    | Toggle-all within the active tab                |
+| `/`                    | Filter by case-insensitive substring            |
+| `s`                    | Cycle sort (staleness → tokens → name)          |
+| `?`                    | Help overlay (canonical full keybind list)      |
+| `Tab` / `Shift-Tab`    | Cycle tabs forward / back with wrap             |
+| `←` / `→`              | Same as `Tab` / `Shift-Tab`                     |
+| `1`–`6`                | Jump directly to a visible tab                  |
+| `Enter`                | Confirm selection and proceed to confirm screen |
+| `Esc` / `Ctrl+C` / `q` | Cancel with "No changes made." (exit 0)         |
+
+Framework-protected rows render dimmed with a `[🔒]` glyph and are not
+selectable by default — pass `--force-partial` to unlock them for the
+current run (a `--force-partial active — partial-framework busts allowed`
+banner appears at the top of the picker). See `CLAUDE.md`'s Safety
+invariants section for the full rationale behind framework-as-unit
+protection.
+
+Rollback: `ccaudit restore` moves everything back. A `restore --interactive`
+mirror picker is on the roadmap for Phase 8 — until it ships, use the
+`[name]` positional and `--list` flag documented under `restore` below.
+
+---
+
 ## Commands
 
-| Command         | What it does                                                                           | Notable options                                                                                                                                                                   |
-| --------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ghost`         | Default ghost inventory report, plus dry-run and remediation entry point               | `--since`, `--dry-run`, `--dangerously-bust-ghosts`, `--yes-proceed-busting`, `--privacy`, `--verbose`, `--no-group-frameworks`, `--force-partial`, `--include-hooks`, `--regime` |
-| `inventory`     | Full inventory with usage statistics                                                   | `--since`, `--verbose`, `--no-group-frameworks`                                                                                                                                   |
-| `mcp`           | MCP server token costs and frequency                                                   | `--since`, `--live`, `--timeout`                                                                                                                                                  |
-| `trend`         | Invocation frequency over time                                                         | `--since`                                                                                                                                                                         |
-| `restore`       | Revert a previous bust                                                                 | `[name]`, `--list`                                                                                                                                                                |
-| `reclaim`       | Recover orphaned files in `~/.claude/ccaudit/archived/` not referenced by any manifest | `--dry-run`                                                                                                                                                                       |
-| `install-skill` | Install the `/ccaudit-bust` Claude Code skill                                          | `--dry-run`, `--force`, `--project`                                                                                                                                               |
+| Command         | What it does                                                                           | Notable options                                                                                                                                                                                           |
+| --------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ghost`         | Default ghost inventory report, plus dry-run and remediation entry point               | `--interactive` / `-i`, `--since`, `--dry-run`, `--dangerously-bust-ghosts`, `--yes-proceed-busting`, `--privacy`, `--verbose`, `--no-group-frameworks`, `--force-partial`, `--include-hooks`, `--regime` |
+| `inventory`     | Full inventory with usage statistics                                                   | `--since`, `--verbose`, `--no-group-frameworks`                                                                                                                                                           |
+| `mcp`           | MCP server token costs and frequency                                                   | `--since`, `--live`, `--timeout`                                                                                                                                                                          |
+| `trend`         | Invocation frequency over time                                                         | `--since`                                                                                                                                                                                                 |
+| `restore`       | Revert a previous bust                                                                 | `[name]`, `--list`                                                                                                                                                                                        |
+| `reclaim`       | Recover orphaned files in `~/.claude/ccaudit/archived/` not referenced by any manifest | `--dry-run`                                                                                                                                                                                               |
+| `install-skill` | Install the `/ccaudit-bust` Claude Code skill                                          | `--dry-run`, `--force`, `--project`                                                                                                                                                                       |
 
 ---
 
@@ -165,21 +243,22 @@ Notes:
 
 ### `ghost`
 
-| Flag                        | Short | Description                                                                                                                                                    |
-| --------------------------- | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--since <window>`          | `-s`  | Time window for ghost detection (e.g. `7d`, `30d`, `2w`). Default: `7d`.                                                                                       |
-| `--json`                    | `-j`  | Output as JSON with a `meta` envelope.                                                                                                                         |
-| `--csv`                     |       | RFC 4180 CSV export.                                                                                                                                           |
-| `--quiet`                   | `-q`  | Machine-readable TSV only (suppress decorative text).                                                                                                          |
-| `--verbose`                 | `-v`  | Show scan details on stderr; expand framework rows into member trees.                                                                                          |
-| `--dry-run`                 |       | Preview the change plan without mutating files. Writes a checkpoint to `~/.claude/ccaudit/.last-dry-run`.                                                      |
-| `--dangerously-bust-ghosts` |       | Execute the bust plan: archive ghost agents/skills, disable ghost MCP servers, flag stale memory. Requires a prior `--dry-run` with a matching inventory hash. |
-| `--yes-proceed-busting`     |       | Skip the 3-step confirmation ceremony. Required for non-TTY shells and CI.                                                                                     |
-| `--privacy`                 |       | Redact real project paths from output (replaces with `project-01`, `project-02`, etc.).                                                                        |
-| `--no-group-frameworks`     |       | Disable framework grouping. Output reverts to the v1.2.1 layout.                                                                                               |
-| `--force-partial`           |       | Bypass framework-as-unit bust protection. Must match between `--dry-run` and `--dangerously-bust-ghosts` runs.                                                 |
-| `--include-hooks`           |       | Add hook upper-bound token costs to the grand total. By default hooks are surfaced as advisory only.                                                           |
-| `--regime <mode>`           |       | Override MCP regime detection. `eager` = per-server measured costs; `deferred` = single ToolSearch overhead (~8.7k tokens). Default: `auto`.                   |
+| Flag                        | Short | Description                                                                                                                                                                                                 |
+| --------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--since <window>`          | `-s`  | Time window for ghost detection (e.g. `7d`, `30d`, `2w`). Default: `7d`.                                                                                                                                    |
+| `--json`                    | `-j`  | Output as JSON with a `meta` envelope.                                                                                                                                                                      |
+| `--csv`                     |       | RFC 4180 CSV export.                                                                                                                                                                                        |
+| `--quiet`                   | `-q`  | Machine-readable TSV only (suppress decorative text).                                                                                                                                                       |
+| `--verbose`                 | `-v`  | Show scan details on stderr; expand framework rows into member trees.                                                                                                                                       |
+| `--interactive`             | `-i`  | Open an interactive TUI picker to archive a subset of ghosts. Implies bust with an inline confirmation screen. Requires a TTY; non-TTY sessions fall back to `--dry-run`. Mutually exclusive with `--json`. |
+| `--dry-run`                 |       | Preview the change plan without mutating files. Writes a checkpoint to `~/.claude/ccaudit/.last-dry-run`.                                                                                                   |
+| `--dangerously-bust-ghosts` |       | Execute the bust plan: archive ghost agents/skills, disable ghost MCP servers, flag stale memory. Requires a prior `--dry-run` with a matching inventory hash.                                              |
+| `--yes-proceed-busting`     |       | Skip the 3-step confirmation ceremony. Required for non-TTY shells and CI.                                                                                                                                  |
+| `--privacy`                 |       | Redact real project paths from output (replaces with `project-01`, `project-02`, etc.).                                                                                                                     |
+| `--no-group-frameworks`     |       | Disable framework grouping. Output reverts to the v1.2.1 layout.                                                                                                                                            |
+| `--force-partial`           |       | Bypass framework-as-unit bust protection. Must match between `--dry-run` and `--dangerously-bust-ghosts` runs.                                                                                              |
+| `--include-hooks`           |       | Add hook upper-bound token costs to the grand total. By default hooks are surfaced as advisory only.                                                                                                        |
+| `--regime <mode>`           |       | Override MCP regime detection. `eager` = per-server measured costs; `deferred` = single ToolSearch overhead (~8.7k tokens). Default: `auto`.                                                                |
 
 ### `inventory`
 
