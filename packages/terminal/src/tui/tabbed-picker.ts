@@ -1,4 +1,17 @@
 /**
+ * Phase 5 Plan 04 discovery note (D5-17..D5-20 · Outcome A):
+ *   `TokenCostResult.item.framework?: string | null` is a live field on
+ *   InventoryItem (packages/internal/src/scanner/types.ts:22). The framework
+ *   scanner (packages/internal/src/framework/) attributes real items (typically
+ *   within the AGENTS and MCP categories) to named frameworks, with `null`
+ *   reserved for ungrouped items. Outcome A (real rendering + real toggle)
+ *   is therefore selected: when a tab's currently-visible items span ≥ 2
+ *   distinct framework values, the picker emits a `sub-header` row before
+ *   each framework bucket and `Space` on a sub-header acts as a group
+ *   select-all-or-clear. Tabs with 0 or 1 distinct framework values render
+ *   flat as in Phase 3.1 (no sub-headers → binding is n/a per D5-18, but
+ *   we keep the uniform PickerRow walk so cursor math stays identical).
+ *
  * TabbedGhostPicker (D3.1-14) — custom @clack/core.MultiSelectPrompt subclass
  * that replaces Phase 2's flat groupMultiselect with a tabbed category view.
  *
