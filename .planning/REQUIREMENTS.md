@@ -10,7 +10,7 @@ Requirements for the v1.5 milestone — "interactive archive" response to Reddit
 ### TUI (interactive picker surface)
 
 - [x] **TUI-01**: User can run `ccaudit ghost --interactive` (short `-i`) to open a multi-select picker on a TTY. Non-TTY sessions fall back gracefully; `--interactive` combined with `--json` is a hard error.
-- [ ] **TUI-02**: Picker groups ghosts by category (agents / skills / MCP / memory / commands / hooks) then by framework sub-group; full keyboard model per design doc §5.4 (arrows, Space, a/n/i, g/G, /, s, ?, Enter, q, Ctrl-C).
+- [x] **TUI-02**: Picker groups ghosts by category (agents / skills / MCP / memory / commands / hooks) then by framework sub-group; full keyboard model per design doc §5.4 (arrows, Space, a/n/i, g/G, /, s, ?, Enter, q, Ctrl-C).
 - [x] **TUI-03**: Selection flows through `runBust` via Approach A — full-inventory hash governs the gate; filter is applied after verification. Non-interactive `--dangerously-bust-ghosts` path is unchanged when `selectedItems` is undefined.
 - [x] **TUI-04**: Confirmation screen replaces the 3-prompt readline ceremony in the interactive path. Confirmation shows categorized summary + estimated savings. `y + Enter` proceeds, `b` returns to picker preserving selection, `q` cancels.
 - [ ] **TUI-05**: Framework-protected items appear dimmed + locked with inline reason (`"Part of <framework> (N used, M ghost). --force-partial to override."`); not selectable in default mode. `--force-partial` unlocks them with a banner warning.
@@ -79,7 +79,7 @@ Which phases cover which requirements. Filled by roadmapper during ROADMAP.md cr
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | TUI-01 | Phase 2 | Complete |
-| TUI-02 | Phase 5 | Pending |
+| TUI-02 | Phase 5 | Complete |
 | TUI-03 | Phase 2 | Complete |
 | TUI-04 | Phase 2 | Complete |
 | TUI-05 | Phase 6 | Pending |

@@ -130,7 +130,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. User presses `?` to open the help overlay listing every keybind (including tab navigation from Phase 3.1); `Esc` closes the overlay.
   4. User presses Space on a framework sub-group header (if any are rendered within a tab) and every item within the framework toggles as a unit. (If Phase 3.1 flattens framework sub-groups inside tabs, this criterion becomes n/a — revisit during Phase 5 planning.)
   5. All keybinds work end-to-end on a 50-item fixture without layout breakage.
-**Plans**: TBD
+**Plans**: 5 plans
+- [x] 05-01-filter-helpers-and-state-PLAN.md — Pure helpers (matchesQuery, sortItems, nextSort, sanitizeFilterQuery) + FilterSortState type; in-source tests
+- [x] 05-02-filter-and-sort-integration-PLAN.md — Wire filter input mode + sort cycle into TabbedGhostPicker; extend footer format with Filtered: / sort label
+- [ ] 05-03-help-overlay-PLAN.md — Modal help overlay (?) with grouped binding catalog; state-preserving open/close
+- [ ] 05-04-framework-group-toggle-PLAN.md — Space on framework sub-header toggles group; outcome A (sub-headers rendered) vs B (D5-18 n/a) decided per codebase inspection
+- [ ] 05-05-integration-tests-and-bundle-gate-PLAN.md — 5 pty integration tests (SC1-SC5) + INV-S2 re-run + <10KB gzip bundle gate + human-verify
 **UI hint**: yes
 
 ### Phase 6: Framework protection UX + MCP multi-project warning
@@ -194,7 +199,7 @@ Phases execute in numeric order. Phases 4, 5, 6, 7 may run in parallel after Pha
 | 2. TUI picker v0.5 | 4/4 | Complete   | 2026-04-16 |
 | 3. Safety-invariant integration tests | 4/4 | Complete   | 2026-04-16 |
 | 4. Live token counter | 4/4 | Complete   | 2026-04-18 |
-| 5. Keyboard model completeness | 0/TBD | Not started | - |
+| 5. Keyboard model completeness | 0/5 | Not started | - |
 | 6. Framework protection UX + MCP multi-project | 0/TBD | Not started | - |
 | 7. JSON envelope contract + docs | 0/TBD | Not started | - |
 | 8. restore --interactive (ship gate) | 0/TBD | Not started | - |
