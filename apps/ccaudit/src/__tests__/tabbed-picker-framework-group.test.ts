@@ -152,12 +152,11 @@ describe.skipIf(process.platform === 'win32')(
       // the first row; the first row emitted by assembleRowsForTab for a
       // multi-framework tab is a sub-header. We rely on that (per Plan 04).
       // Press Home to clamp cursor at row 0.
-      let beforeLen = stdoutBuf.length;
       await sendKeys(spawned.child, ['\x1b[H']); // Home
       await new Promise((r) => setTimeout(r, 200));
 
       // Space on sub-header → select whole group (2 items).
-      beforeLen = stdoutBuf.length;
+      let beforeLen = stdoutBuf.length;
       await sendKeys(spawned.child, [' ']);
       await new Promise((r) => setTimeout(r, 400));
       const afterSelect = stripAnsi(stdoutBuf.slice(beforeLen));

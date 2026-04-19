@@ -223,6 +223,6 @@ describe.skipIf(process.platform === 'win32')('Phase 5 SC1 — filter integratio
     'D5-05: Enter in filter mode exits filter mode but keeps query active (BLOCKED by @clack/core base onKeypress setting state=submit on return)',
   );
   it.todo(
-    "D5-06: Space in filter-narrowed list toggles the current row (BLOCKED — requires exiting filter mode first, which currently either cancels (Esc) or submits (Enter) the picker)",
+    'D5-06: Space in filter-narrowed list toggles the current row (BLOCKED — requires exiting filter mode first, which currently either cancels (Esc) or submits (Enter) the picker)',
   );
 });

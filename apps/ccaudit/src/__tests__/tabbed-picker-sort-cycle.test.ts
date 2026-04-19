@@ -62,21 +62,9 @@ async function buildSortFixture(tmpHome: string): Promise<void> {
   const bigBody = 'z '.repeat(800);
 
   const paths: Array<[string, string, Date]> = [
-    [
-      'z-old.md',
-      tinyBody,
-      new Date(Date.now() - 60 * 86_400_000),
-    ],
-    [
-      'a-new.md',
-      bigBody,
-      new Date(Date.now() - 1 * 86_400_000),
-    ],
-    [
-      'm-mid.md',
-      midBody,
-      new Date(Date.now() - 30 * 86_400_000),
-    ],
+    ['z-old.md', tinyBody, new Date(Date.now() - 60 * 86_400_000)],
+    ['a-new.md', bigBody, new Date(Date.now() - 1 * 86_400_000)],
+    ['m-mid.md', midBody, new Date(Date.now() - 30 * 86_400_000)],
   ];
   for (const [name, body, mtime] of paths) {
     const p = path.join(agentsDir, name);
@@ -147,7 +135,7 @@ describe.skipIf(process.platform === 'win32')('Phase 5 SC2 — sort cycle integr
     await cleanupTmpHome(tmpHome);
   });
 
-  it("cycles staleness → tokens → name → staleness on `s`; per-tab memory holds across Tab", async () => {
+  it('cycles staleness → tokens → name → staleness on `s`; per-tab memory holds across Tab', async () => {
     const spawned = runCcauditGhost(tmpHome, ['--interactive'], {
       env: baseEnv(),
       timeout: 25_000,
