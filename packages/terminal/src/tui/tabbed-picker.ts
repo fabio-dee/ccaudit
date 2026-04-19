@@ -921,6 +921,7 @@ if (import.meta.vitest) {
     path?: string;
     tokens?: number;
     mtimeMs?: number;
+    framework?: string | null;
   }): TokenCostResult {
     return {
       item: {
@@ -930,6 +931,7 @@ if (import.meta.vitest) {
         projectPath: null,
         path: overrides.path ?? `/fake/${overrides.name}`,
         ...(overrides.mtimeMs !== undefined ? { mtimeMs: overrides.mtimeMs } : {}),
+        ...(overrides.framework !== undefined ? { framework: overrides.framework } : {}),
       },
       tier: 'definite-ghost',
       lastUsed: null,
@@ -1899,6 +1901,230 @@ if (import.meta.vitest) {
         expect(picker.helpOpen).toBe(true);
         // Filter mode was not implicitly closed — user returns to filter on close.
         expect(picker.filterMode).toBe(true);
+      });
+    });
+
+    describe('Phase 5 framework-group toggle — Plan 04 (D5-17..D5-20)', () => {
+      it('assembleRowsForTab emits sub-headers when visible items span ≥ 2 frameworks', () => {
+        const ghosts = [
+          makeGhost({ name: 'm1', category: 'mcp-server', tokens: 500, framework: 'FrameA' }),
+          makeGhost({ name: 'm2', category: 'mcp-server', tokens: 400, framework: 'FrameA' }),
+          makeGhost({ name: 'm3', category: 'mcp-server', tokens: 300, framework: 'FrameB' }),
+          makeGhost({ name: 'm4', category: 'mcp-server', tokens: 200, framework: 'FrameB' }),
+        ];
+        const picker = makePicker(ghosts);
+        const rows = picker.assembleRowsForTab(0);
+        // 2 sub-headers + 4 items = 6 rows.
+        expect(rows.length).toBe(6);
+        expect(rows[0]!.kind).toBe('sub-header');
+        expect(rows[3]!.kind).toBe('sub-header');
+        // Sub-headers carry groupIds of the currently-visible members.
+        const sh0 = rows[0] as { kind: 'sub-header'; framework: string; groupIds: string[] };
+        expect(sh0.framework).toBe('FrameA');
+        expect(sh0.groupIds.length).toBe(2);
+        expect(picker.hasFrameworkSubHeaders(0)).toBe(true);
+      });
+
+      it('no sub-headers emitted when tab has only one framework value', () => {
+        const ghosts = [
+          makeGhost({ name: 'a1', category: 'agent', tokens: 100, framework: 'Solo' }),
+          makeGhost({ name: 'a2', category: 'agent', tokens: 80, framework: 'Solo' }),
+        ];
+        const picker = makePicker(ghosts);
+        expect(picker.hasFrameworkSubHeaders(0)).toBe(false);
+        const rows = picker.assembleRowsForTab(0);
+        expect(rows.every((r) => r.kind === 'item')).toBe(true);
+        expect(rows.length).toBe(2);
+      });
+
+      it('no sub-headers when framework field is absent on all items (D5-18 n/a path)', () => {
+        const ghosts = [
+          makeGhost({ name: 'a1', category: 'agent', tokens: 100 }),
+          makeGhost({ name: 'a2', category: 'agent', tokens: 80 }),
+        ];
+        const picker = makePicker(ghosts);
+        expect(picker.hasFrameworkSubHeaders(0)).toBe(false);
+      });
+
+      it('null framework values are grouped together as their own bucket', () => {
+        // Mix: two framework=FrameA, two framework=null → two buckets → sub-headers.
+        const ghosts = [
+          makeGhost({ name: 'a1', category: 'agent', tokens: 400, framework: 'FrameA' }),
+          makeGhost({ name: 'a2', category: 'agent', tokens: 300, framework: 'FrameA' }),
+          makeGhost({ name: 'u1', category: 'agent', tokens: 200, framework: null }),
+          makeGhost({ name: 'u2', category: 'agent', tokens: 100, framework: null }),
+        ];
+        const picker = makePicker(ghosts);
+        expect(picker.hasFrameworkSubHeaders(0)).toBe(true);
+        const rows = picker.assembleRowsForTab(0);
+        const headers = rows.filter(
+          (r): r is { kind: 'sub-header'; framework: string; groupIds: string[] } =>
+            r.kind === 'sub-header',
+        );
+        expect(headers.length).toBe(2);
+      });
+
+      it('Space on sub-header selects all group items when none selected (D5-17)', () => {
+        const ghosts = [
+          makeGhost({ name: 'm1', category: 'mcp-server', tokens: 500, framework: 'FrameA' }),
+          makeGhost({ name: 'm2', category: 'mcp-server', tokens: 400, framework: 'FrameA' }),
+          makeGhost({ name: 'm3', category: 'mcp-server', tokens: 300, framework: 'FrameB' }),
+        ];
+        const picker = makePicker(ghosts);
+        // Cursor defaults to 0 → first sub-header (FrameA).
+        expect(picker.assembleRowsForTab(0)[0]!.kind).toBe('sub-header');
+        picker.toggleCurrentRow();
+        expect(picker.selectedIds.size).toBe(2);
+        expect(picker.selectedIds.has('mcp-server|global||/fake/m1')).toBe(true);
+        expect(picker.selectedIds.has('mcp-server|global||/fake/m2')).toBe(true);
+        // FrameB item untouched.
+        expect(picker.selectedIds.has('mcp-server|global||/fake/m3')).toBe(false);
+      });
+
+      it('Space on sub-header with partial selection selects all (anyUnselected path)', () => {
+        const ghosts = [
+          makeGhost({ name: 'm1', category: 'mcp-server', tokens: 500, framework: 'FrameA' }),
+          makeGhost({ name: 'm2', category: 'mcp-server', tokens: 400, framework: 'FrameA' }),
+          makeGhost({ name: 'm3', category: 'mcp-server', tokens: 300, framework: 'FrameB' }),
+        ];
+        const picker = makePicker(ghosts);
+        // Pre-select m1 only (1 of 2 in FrameA).
+        picker.selectedIds.add('mcp-server|global||/fake/m1');
+        // Cursor on FrameA sub-header.
+        picker.toggleCurrentRow();
+        // anyUnselected ⇒ add all group members (m1 already there, m2 added).
+        expect(picker.selectedIds.has('mcp-server|global||/fake/m1')).toBe(true);
+        expect(picker.selectedIds.has('mcp-server|global||/fake/m2')).toBe(true);
+      });
+
+      it('Space on sub-header with full group selection deselects all (select-or-clear)', () => {
+        const ghosts = [
+          makeGhost({ name: 'm1', category: 'mcp-server', tokens: 500, framework: 'FrameA' }),
+          makeGhost({ name: 'm2', category: 'mcp-server', tokens: 400, framework: 'FrameA' }),
+          makeGhost({ name: 'm3', category: 'mcp-server', tokens: 300, framework: 'FrameB' }),
+        ];
+        const picker = makePicker(ghosts);
+        picker.selectedIds.add('mcp-server|global||/fake/m1');
+        picker.selectedIds.add('mcp-server|global||/fake/m2');
+        // Cursor on FrameA sub-header — all group items selected → clear.
+        picker.toggleCurrentRow();
+        expect(picker.selectedIds.has('mcp-server|global||/fake/m1')).toBe(false);
+        expect(picker.selectedIds.has('mcp-server|global||/fake/m2')).toBe(false);
+      });
+
+      it('cursor walks PickerRow[] including sub-headers uniformly', () => {
+        const ghosts = [
+          makeGhost({ name: 'm1', category: 'mcp-server', tokens: 500, framework: 'FrameA' }),
+          makeGhost({ name: 'm2', category: 'mcp-server', tokens: 400, framework: 'FrameA' }),
+          makeGhost({ name: 'm3', category: 'mcp-server', tokens: 300, framework: 'FrameB' }),
+        ];
+        const picker = makePicker(ghosts);
+        // Rows: [subA, m1, m2, subB, m3] → 5 rows. Down 4× lands on m3.
+        expect(picker.tabs[0]!.cursor).toBe(0);
+        picker.cursorDown(); // 1 (m1)
+        picker.cursorDown(); // 2 (m2)
+        picker.cursorDown(); // 3 (subB)
+        picker.cursorDown(); // 4 (m3)
+        expect(picker.tabs[0]!.cursor).toBe(4);
+        // One more should clamp (5 rows total, last index = 4).
+        picker.cursorDown();
+        expect(picker.tabs[0]!.cursor).toBe(4);
+      });
+
+      it('Space on item row keeps existing per-item toggle behavior', () => {
+        const ghosts = [
+          makeGhost({ name: 'm1', category: 'mcp-server', tokens: 500, framework: 'FrameA' }),
+          makeGhost({ name: 'm2', category: 'mcp-server', tokens: 400, framework: 'FrameA' }),
+          makeGhost({ name: 'm3', category: 'mcp-server', tokens: 300, framework: 'FrameB' }),
+        ];
+        const picker = makePicker(ghosts);
+        // Move cursor to m1 (row 1).
+        picker.cursorDown();
+        picker.toggleCurrentRow();
+        expect(picker.selectedIds.size).toBe(1);
+        expect(picker.selectedIds.has('mcp-server|global||/fake/m1')).toBe(true);
+      });
+
+      it('toggleAllInActiveTab operates on items only (sub-headers do not participate)', () => {
+        const ghosts = [
+          makeGhost({ name: 'm1', category: 'mcp-server', tokens: 500, framework: 'FrameA' }),
+          makeGhost({ name: 'm2', category: 'mcp-server', tokens: 400, framework: 'FrameA' }),
+          makeGhost({ name: 'm3', category: 'mcp-server', tokens: 300, framework: 'FrameB' }),
+        ];
+        const picker = makePicker(ghosts);
+        picker.toggleAllInActiveTab();
+        // All three ITEMS selected; sub-header identity never enters selectedIds.
+        expect(picker.selectedIds.size).toBe(3);
+        for (const id of picker.selectedIds) {
+          expect(id.startsWith('mcp-server|global||')).toBe(true);
+        }
+      });
+
+      it('assembleRowsForTab respects sort mode (name-asc changes group order)', () => {
+        // Construct so tokens-desc order puts FrameZ items first (bigger tokens),
+        // then FrameA items. With name-asc the first item seen is aaa (FrameA),
+        // so FrameA sub-header should appear first.
+        const ghosts = [
+          makeGhost({ name: 'zzz', category: 'mcp-server', tokens: 900, framework: 'FrameZ' }),
+          makeGhost({ name: 'yyy', category: 'mcp-server', tokens: 800, framework: 'FrameZ' }),
+          makeGhost({ name: 'aaa', category: 'mcp-server', tokens: 100, framework: 'FrameA' }),
+          makeGhost({ name: 'bbb', category: 'mcp-server', tokens: 50, framework: 'FrameA' }),
+        ];
+        const picker = makePicker(ghosts);
+        // Default sort staleness-desc: tie-broken by stable original order; but the
+        // constructor pre-sorts by tokens-desc, so FrameZ items first. First
+        // sub-header should be FrameZ.
+        const defaultRows = picker.assembleRowsForTab(0);
+        const firstHeader = defaultRows.find(
+          (r): r is { kind: 'sub-header'; framework: string; groupIds: string[] } =>
+            r.kind === 'sub-header',
+        );
+        expect(firstHeader?.framework).toBe('FrameZ');
+        // Switch to name-asc.
+        picker.filterSortByTab[0]!.sort = 'name-asc';
+        const nameAscRows = picker.assembleRowsForTab(0);
+        const firstHeaderAsc = nameAscRows.find(
+          (r): r is { kind: 'sub-header'; framework: string; groupIds: string[] } =>
+            r.kind === 'sub-header',
+        );
+        // With name-asc the first visible item is 'aaa' → FrameA → FrameA header first.
+        expect(firstHeaderAsc?.framework).toBe('FrameA');
+      });
+
+      it('filter narrows groupIds to currently-visible items (D5-11)', () => {
+        const ghosts = [
+          makeGhost({ name: 'alpha', category: 'mcp-server', tokens: 500, framework: 'FrameA' }),
+          makeGhost({ name: 'beta', category: 'mcp-server', tokens: 400, framework: 'FrameA' }),
+          makeGhost({ name: 'gamma', category: 'mcp-server', tokens: 300, framework: 'FrameB' }),
+          makeGhost({ name: 'delta', category: 'mcp-server', tokens: 200, framework: 'FrameB' }),
+        ];
+        const picker = makePicker(ghosts);
+        // Filter to 'a' — matches alpha (FrameA), beta (FrameA), gamma (FrameB), delta (FrameB)
+        // Actually 'al' narrows to just alpha and delta via substring, but let's use a precise query.
+        picker.filterSortByTab[0]!.active = true;
+        picker.filterSortByTab[0]!.query = 'alpha';
+        const rows = picker.assembleRowsForTab(0);
+        // Only one visible item → 1 framework value → no sub-header.
+        expect(picker.hasFrameworkSubHeaders(0)).toBe(false);
+        expect(rows.length).toBe(1);
+        expect(rows[0]!.kind).toBe('item');
+      });
+
+      it('per-tab counter + subtotal update in same pass as group toggle (D5-20)', () => {
+        const ghosts = [
+          makeGhost({ name: 'm1', category: 'mcp-server', tokens: 500, framework: 'FrameA' }),
+          makeGhost({ name: 'm2', category: 'mcp-server', tokens: 400, framework: 'FrameA' }),
+          makeGhost({ name: 'm3', category: 'mcp-server', tokens: 300, framework: 'FrameB' }),
+        ];
+        const picker = makePicker(ghosts);
+        expect(picker.selectedIds.size).toBe(0);
+        // Space on FrameA header.
+        picker.toggleCurrentRow();
+        // Render and confirm the per-tab header shows (2/3) and counter reflects 900 tokens.
+        const frame = picker._renderFrame();
+        expect(frame).toMatch(/\(2\/3/);
+        // Token sum of FrameA group is 900.
+        expect(picker.selectedIds.size).toBe(2);
       });
     });
   });
