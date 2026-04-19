@@ -141,6 +141,68 @@ function buildWrappedProcessDeps(): typeof defaultProcessDeps {
 }
 
 // ---------------------------------------------------------------------------
+// buildInteractivePickerFeed — Phase 6 (D6-01 / D6-09 runtime wiring)
+//
+// `applyFrameworkProtection` strips framework-protected ghosts out of
+// `filtered` when --force-partial is OFF. Phase 6 wants those rows to
+// still RENDER in the picker (dimmed + [🔒]) so the user understands
+// why they cannot be selected. This helper merges the protected items
+// back into the picker feed and attaches `InventoryItem.protection` to
+// each merged item so `isProtected()` returns true and the toggle guard
+// blocks selection. The server-side INV-S6 gate (hash-matched checkpoint)
+// still enforces correctness regardless of UI behavior.
+//
+// When `--force-partial` is ON, `filtered` already contains every ghost
+// (applyFrameworkProtection pass-through), so we return it unchanged —
+// no protected row is locked in that mode by design (D6-13).
+//
+// When `groupFrameworks` is false, no protection grouping runs upstream,
+// so this helper is a pass-through filter for tier !== 'used'.
+// ---------------------------------------------------------------------------
+function buildInteractivePickerFeed(
+  interactiveProtection: FrameworkBustResult,
+  enriched: TokenCostResult[],
+  groupFrameworks: boolean,
+): TokenCostResult[] {
+  const filtered = interactiveProtection.filtered.filter((r) => r.tier !== 'used');
+  if (!groupFrameworks || interactiveProtection.protectedItems.length === 0) {
+    return filtered;
+  }
+
+  // Recompute the per-path protection annotation from the same grouping
+  // applyFrameworkProtection used internally. Reuse toGhostItems/groupByFramework
+  // so behavior stays in lockstep with scanner annotate.ts without exposing new
+  // API surface from the remediation package.
+  const ghostItems = toGhostItems(enriched);
+  const grouped = groupByFramework(ghostItems);
+  const protectionByPath = new Map<
+    string,
+    { framework: string; total: number; ghostCount: number; reason: string }
+  >();
+  for (const fw of grouped.frameworks) {
+    if (fw.status !== 'partially-used') continue;
+    const ghostCount = fw.totals.likelyGhost + fw.totals.definiteGhost;
+    const reason = `Part of ${fw.displayName} (${fw.totals.used} used, ${ghostCount} ghost). --force-partial to override.`;
+    const protection = {
+      framework: fw.id,
+      total: fw.totals.defined,
+      ghostCount,
+      reason,
+    };
+    for (const m of fw.members) protectionByPath.set(m.path, protection);
+  }
+
+  const annotatedProtected = interactiveProtection.protectedItems.map((r) => {
+    const p = protectionByPath.get(r.item.path);
+    if (p === undefined) return r;
+    return { ...r, item: { ...r.item, protection: p } };
+  });
+
+  // Preserve filtered ordering, then append protected items (stable).
+  return [...filtered, ...annotatedProtected];
+}
+
+// ---------------------------------------------------------------------------
 // runInteractiveGhostFlow — private module helper (Plan 03, D-05..D-21, D-26)
 //
 // Orchestrates the full interactive archive flow on a TTY:
@@ -332,8 +394,16 @@ async function runInteractiveGhostFlow(args: {
 
   // ── Open picker (D-02, D-09..D-13) ───────────────────────────────────────
   const useAscii = shouldUseAscii(process.env, process.stdout, ttyCols);
-  // Only ghost-tier items go into the picker (D-11).
-  const pickerGhosts = interactiveProtection.filtered.filter((r) => r.tier !== 'used');
+  // Only ghost-tier items go into the picker (D-11). Phase 6 (D6-01/D6-09):
+  // when --force-partial is OFF, also render protected rows (dimmed + [🔒])
+  // so users can see WHY the rows cannot be selected. The picker's toggle
+  // guard prevents selection; the server-side INV-S6 gate (hash-matched
+  // checkpoint written above) is the real enforcer.
+  const pickerGhosts = buildInteractivePickerFeed(
+    interactiveProtection,
+    enriched,
+    mode.groupFrameworks,
+  );
   const pickOutcome = await selectGhosts({
     ghosts: pickerGhosts,
     now: Date.now(),
