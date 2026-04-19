@@ -33,6 +33,7 @@ import { fileURLToPath } from 'node:url';
 import {
   buildFakePs,
   createFrameworkFixture,
+  createMultiFrameworkFixture,
   runCcauditGhost,
   agentItemId,
 } from './_test-helpers.ts';
@@ -201,7 +202,86 @@ describe.skipIf(process.platform === 'win32')('INV-S6: framework-as-unit bust pr
     ).toBe(true);
   });
 
-  // ── Test C: TUI picker locking (deferred) ──────────────────────────────
+  // ── Test C: INV-S6 with a multi-framework fixture (Phase 6 strengthening) ──
+  //
+  // Converts the former `it.todo` Phase 6 pointer into a real test. Uses
+  // `createMultiFrameworkFixture` to stand up TWO curated frameworks, each
+  // in partially-used state, and asserts that:
+  //   - Without `--force-partial`, selecting a ghost member via
+  //     `CCAUDIT_SELECT_IDS` is filtered by framework protection: no archive,
+  //     source files survive on disk, `protectionWarnings[]` emitted for
+  //     BOTH frameworks in the JSON envelope.
+  //   - With `--force-partial`, selection succeeds and the manifest reflects
+  //     exactly the selected subset (1 item archived, not the whole group).
+  //
+  // This is the canonical Phase 6 INV-S6 regression: multi-framework trust
+  // boundary (2 independent partially-used groups) plus the interactive
+  // selection gate (selection Set ≠ filtered list).
 
-  it.todo('TUI picker locks framework-protected items without --force-partial (Phase 6 — TUI-05)');
+  it('Test C — INV-S6 multi-framework: both frameworks blocked; --force-partial archives only the selected subset', async () => {
+    tmpHome = await (async () => {
+      const p = await mkdtemp(path.join(tmpdir(), 'ccaudit-inv-s6-multi-'));
+      await buildFakePs(p);
+      await createMultiFrameworkFixture(p, [
+        { prefix: 'gsd', usedMembers: ['planner'], ghostMembers: ['researcher', 'verifier'] },
+        { prefix: 'sc', usedMembers: ['analyze'], ghostMembers: ['audit', 'improve'] },
+      ]);
+      return p;
+    })();
+
+    // ── Without --force-partial: dry-run sees BOTH frameworks protected. ──
+    const dryResult = await runCcauditGhost(tmpHome, ['--dry-run', '--json'], {}).done;
+    expect(dryResult.exitCode, `dry-run stderr: ${dryResult.stderr}`).toBe(0);
+    const dry = JSON.parse(dryResult.stdout) as {
+      changePlan: {
+        archive: unknown[];
+        protected?: Array<{ name: string }>;
+        protectionWarnings?: Array<{ frameworkId: string; status: string }>;
+      };
+    };
+    expect(dry.changePlan.archive).toHaveLength(0);
+    const warnings = dry.changePlan.protectionWarnings ?? [];
+    const warnIds = warnings.map((w) => w.frameworkId).sort();
+    expect(warnIds).toContain('gsd');
+    expect(warnIds).toContain('superclaude');
+    // protected[] carries all 4 ghost members across both frameworks.
+    expect(dry.changePlan.protected!.length).toBeGreaterThanOrEqual(4);
+
+    // ── Selecting one ghost without --force-partial is blocked. ──
+    const ghostId = agentItemId(tmpHome, 'sc-audit.md');
+    const blockedBust = await runCcauditGhost(
+      tmpHome,
+      ['--dangerously-bust-ghosts', '--yes-proceed-busting', '--json'],
+      { env: { CCAUDIT_SELECT_IDS: ghostId } },
+    ).done;
+    expect(blockedBust.exitCode, `stderr: ${blockedBust.stderr}`).toBe(0);
+    const blockedEnv = JSON.parse(blockedBust.stdout) as {
+      bust: { counts: { archive: { agents: number } } };
+    };
+    expect(blockedEnv.bust.counts.archive.agents).toBe(0);
+    // Source still on disk.
+    expect(existsSync(path.join(tmpHome, '.claude', 'agents', 'sc-audit.md'))).toBe(true);
+
+    // ── With --force-partial: dry-run + bust one specific ghost. ──
+    const dryForce = await runCcauditGhost(tmpHome, ['--dry-run', '--force-partial', '--json'], {})
+      .done;
+    expect(dryForce.exitCode).toBe(0);
+
+    const busted = await runCcauditGhost(
+      tmpHome,
+      ['--dangerously-bust-ghosts', '--force-partial', '--yes-proceed-busting', '--json'],
+      { env: { CCAUDIT_SELECT_IDS: ghostId } },
+    ).done;
+    expect(busted.exitCode, `stderr: ${busted.stderr}`).toBe(0);
+    const bustedEnv = JSON.parse(busted.stdout) as {
+      bust: { counts: { archive: { agents: number } } };
+    };
+    // Exactly 1 archived — the selected subset, NOT the whole framework group.
+    expect(bustedEnv.bust.counts.archive.agents).toBe(1);
+    expect(existsSync(path.join(tmpHome, '.claude', 'agents', 'sc-audit.md'))).toBe(false);
+    // The other framework's ghosts + the sibling sc-improve stay untouched.
+    expect(existsSync(path.join(tmpHome, '.claude', 'agents', 'sc-improve.md'))).toBe(true);
+    expect(existsSync(path.join(tmpHome, '.claude', 'agents', 'gsd-researcher.md'))).toBe(true);
+    expect(existsSync(path.join(tmpHome, '.claude', 'agents', 'gsd-verifier.md'))).toBe(true);
+  });
 });
