@@ -20,7 +20,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: TUI picker v0.5** — First working `ccaudit ghost --interactive` with `@clack/prompts.groupMultiselect` + auto-open prompt (D7) (completed 2026-04-16)
 - [x] **Phase 3: Safety-invariant integration tests** — Fixture-based tests for INV-S1…S6 locking the contract before polish (v1.5-beta ship gate) (completed 2026-04-16)
 - [x] **Phase 3.1: Tabbed category view (INSERTED)** — Fix long-list viewport-overflow bug from Phase 2 QA; custom `@clack/core.MultiSelectPrompt` subclass with tabbed categories + bounded viewport (completed 2026-04-16)
-- [ ] **Phase 4: Live token counter** — Add live-updating counter to the tabbed picker footer (custom subclass already exists from Phase 3.1; scope reduced)
+- [x] **Phase 4: Live token counter** — Add live-updating counter to the tabbed picker footer (custom subclass already exists from Phase 3.1; scope reduced) (completed 2026-04-18)
 - [ ] **Phase 5: Keyboard model completeness** — Filter, sort cycle, help overlay, framework-group toggle (group-collapse dropped — tabs from Phase 3.1 replace it)
 - [ ] **Phase 6: Framework protection UX + MCP multi-project warning** — Surface existing protection in the picker; warn on multi-config MCPs
 - [ ] **Phase 7: JSON envelope contract + docs** — Document additive fields, CHANGELOG entries, README section, CLAUDE.md invariants
@@ -116,7 +116,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] 04-01-token-counter-helpers-PLAN.md — Add pure `formatTokensApprox` + `sumSelectionTokens` helpers in @ccaudit/internal with in-source tests
 - [x] 04-02-wire-counter-and-resize-PLAN.md — Wire live counter into TabbedGhostPicker footer + per-tab header + SIGWINCH handler (50ms throttle) + sub-minimum terminal banner
 - [x] 04-03-integration-tests-PLAN.md — Six D4-14 integration tests (Space/a/cross-tab/SIGWINCH/sub-min/ASCII) + MH-04 picker-vs-post-bust parity test
-- [ ] 04-04-bundle-gate-and-verify-PLAN.md — Enforce <10 KB phase-local + <15 KB aggregate bundle gates, run pnpm verify, human-verify smoke on a real terminal
+- [x] 04-04-bundle-gate-and-verify-PLAN.md — Enforce <10 KB phase-local + <15 KB aggregate bundle gates, run pnpm verify, human-verify smoke on a real terminal
 **UI hint**: yes
 
 ### Phase 5: Keyboard model completeness
@@ -193,7 +193,7 @@ Phases execute in numeric order. Phases 4, 5, 6, 7 may run in parallel after Pha
 | 1. Selection plumbing | 3/3 | Complete   | 2026-04-15 |
 | 2. TUI picker v0.5 | 4/4 | Complete   | 2026-04-16 |
 | 3. Safety-invariant integration tests | 4/4 | Complete   | 2026-04-16 |
-| 4. Live token counter | 0/4 | Not started | - |
+| 4. Live token counter | 4/4 | Complete   | 2026-04-18 |
 | 5. Keyboard model completeness | 0/TBD | Not started | - |
 | 6. Framework protection UX + MCP multi-project | 0/TBD | Not started | - |
 | 7. JSON envelope contract + docs | 0/TBD | Not started | - |
