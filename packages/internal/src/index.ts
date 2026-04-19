@@ -74,12 +74,19 @@ export {
   toGhostItems,
   LIKELY_GHOST_MS,
   DEFINITE_GHOST_MS,
+  // Phase 6 pure helpers
+  presentPath,
+  computeConfigRefs,
+  compareConfigRef,
+  isProtected,
 } from './scanner/index.ts';
 export type {
   InventoryItem,
   ScanResult,
   ScannerOptions,
   InvocationSummary,
+  FrameworkProtection,
+  ScannedMcpServer,
 } from './scanner/index.ts';
 export type { ClaudeConfig } from './scanner/index.ts';
 

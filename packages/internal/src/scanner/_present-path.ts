@@ -53,9 +53,9 @@ if (import.meta.vitest) {
     });
 
     it('project-root precedence over home', () => {
-      expect(
-        presentPath('/Users/foo/proj/.mcp.json', '/Users/foo', '/Users/foo/proj'),
-      ).toBe('.mcp.json');
+      expect(presentPath('/Users/foo/proj/.mcp.json', '/Users/foo', '/Users/foo/proj')).toBe(
+        '.mcp.json',
+      );
     });
 
     it('leaves non-home absolute paths unchanged', () => {
@@ -71,9 +71,7 @@ if (import.meta.vitest) {
     });
 
     it('compresses home on Windows-style forward-slashed paths', () => {
-      expect(presentPath('C:/Users/foo/.claude/x.json', 'C:/Users/foo')).toBe(
-        '~/.claude/x.json',
-      );
+      expect(presentPath('C:/Users/foo/.claude/x.json', 'C:/Users/foo')).toBe('~/.claude/x.json');
     });
 
     it('does NOT compress a path that only shares a prefix substring with home', () => {
@@ -82,9 +80,9 @@ if (import.meta.vitest) {
     });
 
     it('does NOT compress a path that only shares a prefix substring with projectRoot', () => {
-      expect(
-        presentPath('/Users/foo/project-b/x.json', '/Users/foo', '/Users/foo/project-a'),
-      ).toBe('~/project-b/x.json');
+      expect(presentPath('/Users/foo/project-b/x.json', '/Users/foo', '/Users/foo/project-a')).toBe(
+        '~/project-b/x.json',
+      );
     });
   });
 }

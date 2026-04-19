@@ -28,6 +28,30 @@ export interface InventoryItem {
   importDepth?: number;
   /** Root path from which @-imports were resolved */
   importRoot?: string;
+  /**
+   * Phase 6 (D6-02 / D6-17): config files referencing this MCP server key.
+   * Populated by `scanMcpServers` for every `mcp-server` item (length >= 1).
+   * Absent for non-MCP categories. Paths rendered via `presentPath` and
+   * ordered via `compareConfigRef` (project-local → ~user → system).
+   */
+  configRefs?: string[];
+}
+
+/**
+ * Phase 6 (D6-01): framework-as-unit protection metadata attached to a
+ * canonical ghost item when its framework would trip INV-S6 under a
+ * partial bust. Advisory for the picker — server-side enforcement in
+ * `runBust` remains the actual gate.
+ */
+export interface FrameworkProtection {
+  /** Framework display id (e.g., "gsd", "superclaude"). */
+  framework: string;
+  /** Total members of the framework (used + ghost). */
+  total: number;
+  /** Ghost members (tier !== 'used'). */
+  ghostCount: number;
+  /** Canonical reason string rendered by the picker verbatim. */
+  reason: string;
 }
 
 /**

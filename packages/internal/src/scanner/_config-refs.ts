@@ -33,9 +33,7 @@ export interface ScannedMcpServer {
  * @param servers Scanned MCP servers (one per (key, config) occurrence).
  * @returns Map from key to ordered, deduplicated configPath list.
  */
-export function computeConfigRefs(
-  servers: ReadonlyArray<ScannedMcpServer>,
-): Map<string, string[]> {
+export function computeConfigRefs(servers: ReadonlyArray<ScannedMcpServer>): Map<string, string[]> {
   // Collect dedup sets per key, preserving first-seen order within each bucket.
   const sets = new Map<string, Set<string>>();
   for (const s of servers) {
@@ -144,11 +142,7 @@ if (import.meta.vitest) {
         { key: 'foo', configPath: '.mcp.json' },
         { key: 'foo', configPath: 'apps/b/.mcp.json' },
       ]);
-      expect(result.get('foo')).toEqual([
-        'apps/a/.mcp.json',
-        '.mcp.json',
-        'apps/b/.mcp.json',
-      ]);
+      expect(result.get('foo')).toEqual(['apps/a/.mcp.json', '.mcp.json', 'apps/b/.mcp.json']);
     });
 
     it('returns an empty Map for empty input', () => {

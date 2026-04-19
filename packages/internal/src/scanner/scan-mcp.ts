@@ -2,6 +2,8 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { homedir } from 'node:os';
 import type { InventoryItem } from './types.ts';
+import { computeConfigRefs, compareConfigRef } from './_config-refs.ts';
+import { presentPath } from './_present-path.ts';
 
 /**
  * Shape of ~/.claude.json config relevant to MCP server scanning.
@@ -53,14 +55,23 @@ export async function scanMcpServers(
   projectPaths: string[],
 ): Promise<InventoryItem[]> {
   const config = await readClaudeConfig(claudeConfigPath);
+  const home = homedir();
   const items: InventoryItem[] = [];
   const seen = new Set<string>();
-  const resolvedConfigPath = claudeConfigPath ?? path.join(homedir(), '.claude.json');
+  const resolvedConfigPath = claudeConfigPath ?? path.join(home, '.claude.json');
 
-  // 1. Global mcpServers (root level)
+  // Collect every (server key, rendered config path) occurrence across all
+  // discovered configs so computeConfigRefs can group by key regardless of
+  // project. Rendering happens here via presentPath so the grouping sees
+  // already-canonicalized paths (D6-17 / D6-18).
+  const occurrences: { key: string; configPath: string }[] = [];
+
+  // 1. Global mcpServers (root level in ~/.claude.json)
+  const renderedGlobalConfig = presentPath(resolvedConfigPath, home);
   for (const serverName of Object.keys(config.mcpServers ?? {})) {
     const key = `global::${serverName}`;
     seen.add(key);
+    occurrences.push({ key: serverName, configPath: renderedGlobalConfig });
     items.push({
       name: serverName,
       path: resolvedConfigPath,
@@ -70,10 +81,13 @@ export async function scanMcpServers(
     });
   }
 
-  // 2. Per-project mcpServers from ~/.claude.json
+  // 2. Per-project mcpServers from ~/.claude.json (scope still rendered
+  //    against $HOME since that's where the file lives — but the logical
+  //    "project" that owns the entry is the key in config.projects).
   for (const [projPath, projConfig] of Object.entries(config.projects ?? {})) {
     for (const serverName of Object.keys(projConfig.mcpServers ?? {})) {
       const key = `${projPath}::${serverName}`;
+      occurrences.push({ key: serverName, configPath: renderedGlobalConfig });
       if (!seen.has(key)) {
         seen.add(key);
         items.push({
@@ -87,14 +101,17 @@ export async function scanMcpServers(
     }
   }
 
-  // 3. .mcp.json files at project roots
+  // 3. .mcp.json files at project roots — rendered project-relative when
+  //    the file lives under the project root (D6-18 project precedence).
   for (const projPath of projectPaths) {
     const mcpJsonPath = path.join(projPath, '.mcp.json');
     try {
       const raw = await readFile(mcpJsonPath, 'utf-8');
       const mcpConfig = JSON.parse(raw) as { mcpServers?: Record<string, unknown> };
+      const renderedMcpJsonPath = presentPath(mcpJsonPath, home, projPath);
       for (const serverName of Object.keys(mcpConfig.mcpServers ?? {})) {
         const key = `${projPath}::${serverName}`;
+        occurrences.push({ key: serverName, configPath: renderedMcpJsonPath });
         if (!seen.has(key)) {
           seen.add(key);
           items.push({
@@ -111,7 +128,18 @@ export async function scanMcpServers(
     }
   }
 
-  return items;
+  // D6-02: group occurrences by server key, deduplicate, sort via
+  // compareConfigRef. Every emitted MCP item gets configRefs >= 1.
+  const refs = computeConfigRefs(occurrences);
+  return items.map((it) => {
+    const list = refs.get(it.name);
+    // Defensive: if an item was emitted we also pushed an occurrence for it,
+    // so list must exist. Guard against accidental future drift by falling
+    // back to a single-element list rendered from the item's own config path.
+    const configRefs =
+      list ?? [presentPath(it.path, home, it.projectPath ?? undefined)].sort(compareConfigRef);
+    return { ...it, configRefs };
+  });
 }
 
 if (import.meta.vitest) {
@@ -319,6 +347,70 @@ if (import.meta.vitest) {
       const result = await scanMcpServers(configPath, [projPath]);
       expect(result).toHaveLength(1);
       expect(result[0].name).toBe('working-server');
+    });
+  });
+
+  describe('scanMcpServers — configRefs (Phase 6, D6-02)', () => {
+    let tmpDir: string;
+
+    beforeEach(async () => {
+      tmpDir = await mkdtemp(path.join(tmpdir(), 'scan-mcp-refs-'));
+    });
+
+    afterEach(async () => {
+      await rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('emits configRefs with length >= 1 for every MCP item (single-config case)', async () => {
+      const configPath = path.join(tmpDir, 'claude.json');
+      await writeFile(configPath, JSON.stringify({ mcpServers: { context7: { type: 'http' } } }));
+      const result = await scanMcpServers(configPath, []);
+      expect(result).toHaveLength(1);
+      expect(result[0].configRefs).toBeDefined();
+      expect(result[0].configRefs!.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('collects cross-config references for the same server key', async () => {
+      const configPath = path.join(tmpDir, 'claude.json');
+      const projPath = path.join(tmpDir, 'proj');
+      await mkdir(projPath, { recursive: true });
+      // Same key 'shared' appears in global (root mcpServers) and in
+      // project .mcp.json — configRefs on BOTH emitted items must list both.
+      await writeFile(configPath, JSON.stringify({ mcpServers: { shared: { type: 'http' } } }));
+      await writeFile(
+        path.join(projPath, '.mcp.json'),
+        JSON.stringify({ mcpServers: { shared: { command: 'npx' } } }),
+      );
+      const result = await scanMcpServers(configPath, [projPath]);
+      // Two items: one global-scope, one project-scope (different seen keys).
+      expect(result).toHaveLength(2);
+      for (const it of result) {
+        expect(it.name).toBe('shared');
+        expect(it.configRefs).toBeDefined();
+        expect(it.configRefs!.length).toBe(2);
+        // Project-local ('.mcp.json') must come before a `/`-absolute path
+        // per compareConfigRef bucket rule.
+        const refs = it.configRefs!;
+        expect(refs[0]).toBe('.mcp.json');
+        // The second ref is the rendered global config path — may be
+        // absolute or ~-compressed depending on whether tmpDir is under
+        // $HOME. Either way it must NOT be bucket 0 (project-local).
+        expect(refs[1]!.startsWith('.mcp.json')).toBe(false);
+      }
+    });
+
+    it('renders a project-local .mcp.json as project-relative', async () => {
+      const configPath = path.join(tmpDir, 'claude.json');
+      const projPath = path.join(tmpDir, 'p');
+      await mkdir(projPath, { recursive: true });
+      await writeFile(configPath, '{}');
+      await writeFile(
+        path.join(projPath, '.mcp.json'),
+        JSON.stringify({ mcpServers: { only: { command: 'npx' } } }),
+      );
+      const result = await scanMcpServers(configPath, [projPath]);
+      expect(result).toHaveLength(1);
+      expect(result[0].configRefs).toEqual(['.mcp.json']);
     });
   });
 }
