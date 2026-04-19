@@ -44,6 +44,7 @@ import {
   protectedHintLine,
   renderProtectedPrefix,
 } from './_protection-render.ts';
+import { alsoInHintLine, renderMcpWarningPrefix } from './_mcp-warning-render.ts';
 import { bannerHeight, renderForcePartialBanner } from './_force-partial-banner.ts';
 
 // ---------------------------------------------------------------------------
@@ -1027,12 +1028,17 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
           // 03) carries the mode-wide unlock signal. Glyph + dim always
           // co-occur: never color-alone.
           const isLocked = !this.forcePartial && isProtected(row.item.item);
+          // Phase 6 Plan 04 (D6-06): prepend ⚠ (or !) for multi-config MCP
+          // rows. Advisory only — does NOT affect selection. Glyph order
+          // per CONTEXT discretion: [🔒] / [x] / ⚠ / name, so the warning
+          // sits between the checkbox and the label.
+          const warnPrefix = renderMcpWarningPrefix(row.item.item, { ascii: this.useAscii });
           if (isLocked) {
             const prefix = renderProtectedPrefix(row.item.item, { ascii: this.useAscii });
-            const rowBody = `${prefix}${marker} ${label}`;
+            const rowBody = `${prefix}${marker} ${warnPrefix}${label}`;
             lines.push(`${cursorMark}${dimLine(rowBody, { ascii: this.useAscii })}`);
           } else {
-            lines.push(`${cursorMark} ${marker} ${label}`);
+            lines.push(`${cursorMark} ${marker} ${warnPrefix}${label}`);
           }
         }
       }
@@ -1059,6 +1065,16 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
       focusedRow.kind === 'item'
         ? protectedHintLine(focusedRow.item.item, { ascii: this.useAscii })
         : null;
+    // Phase 6 Plan 04 (D6-07 / D6-21): multi-config MCP hint. Priority
+    // (after Plan 02): filter-input > protection > multi-config > help.
+    // Only evaluated when protection hint is absent so the two never stack.
+    const mcpAlsoInHint =
+      !this.filterMode &&
+      protectionHint === null &&
+      focusedRow !== undefined &&
+      focusedRow.kind === 'item'
+        ? alsoInHintLine(focusedRow.item.item, { ascii: this.useAscii })
+        : null;
     if (this.filterMode) {
       // Phase 5 D5-01: footer hint becomes the filter input. The trailing
       // underscore is an ASCII cursor glyph (D5-21). Defense-in-depth sanitize
@@ -1068,6 +1084,8 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
       lines.push(`Filter: ${echoQuery}_`);
     } else if (protectionHint !== null) {
       lines.push(pc.dim(protectionHint));
+    } else if (mcpAlsoInHint !== null) {
+      lines.push(pc.dim(mcpAlsoInHint));
     } else {
       const leftArrow = this.useAscii ? '<-' : '←';
       const rightArrow = this.useAscii ? '->' : '→';
