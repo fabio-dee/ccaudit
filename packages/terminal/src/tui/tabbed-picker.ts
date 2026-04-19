@@ -35,6 +35,7 @@ import {
   defaultFilterSortState,
   type FilterSortState,
 } from './_filter-sort.ts';
+import { renderHelpOverlay } from './_help-overlay.ts';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -90,6 +91,15 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
   public renderTokenCounter: () => string;
   public filterSortByTab: FilterSortState[];
   public filterMode = false;
+
+  /**
+   * Phase 5 D5-13: modal help overlay flag. When true, the picker swallows
+   * every key except `?` (toggle off) and `Esc` (close); cursor actions are
+   * also swallowed EXCEPT `cancel` (Ctrl+C), which must remain live to
+   * preserve INV-S2 (see T-05-02 mitigation). Render branches on this flag
+   * at the top of `_renderFrame()` and returns `renderHelpOverlay(...)`.
+   */
+  public helpOpen = false;
   private viewportHeightOverride?: number;
   private now: number;
   private stdoutRows?: number;
@@ -205,6 +215,24 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     // The base class auto-calls render() after every keypress, so mutating
     // instance state here is sufficient — no explicit render call needed.
     this.on('key', (char, info) => {
+      // Phase 5 D5-13: help overlay gate. `?` toggles the overlay from ANY
+      // state (including filter mode — per CONTEXT "Claude's Discretion":
+      // `?` is always routed to help). While open, swallow every key except
+      // `?` (toggle off) and `Esc` (close). Ctrl+C remains live via the
+      // base class's cancel handler (INV-S2, T-05-02 mitigation).
+      if (this.helpOpen) {
+        if (char === '?' || info?.name === 'escape') {
+          this.helpOpen = false;
+          this.state = 'active';
+        }
+        // Every other key is swallowed while help is open.
+        return;
+      }
+      if (char === '?') {
+        this.helpOpen = true;
+        this.state = 'active';
+        return;
+      }
       // Phase 5 filter-input mode (D5-04, D5-05). Priority over all other
       // non-cancel bindings: typed chars/backspace mutate the query, Esc
       // clears+exits in one stroke, Enter exits but keeps query.
@@ -352,6 +380,11 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     // Cursor dispatch: arrow keys + space + enter + cancel (via base aliases).
     // 'left'/'right' also cycle tabs (D3.1-01), matching Tab/Shift-Tab.
     this.on('cursor', (action) => {
+      // Phase 5 D5-13 / T-05-02: while help overlay is open, swallow all
+      // cursor actions EXCEPT `cancel` — Ctrl+C must still cancel the
+      // picker (INV-S2). Arrow keys, space, enter are no-ops while help
+      // is showing; closing the overlay returns control unchanged.
+      if (this.helpOpen && action !== 'cancel') return;
       if (action === 'up') this.cursorUp();
       else if (action === 'down') this.cursorDown();
       else if (action === 'left') this.prevTab();
@@ -649,6 +682,18 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     // authoritative across the full lifetime of the prompt — it runs on every
     // keypress and is cheap (Set → Array copy).
     this.value = Array.from(this.selectedIds);
+
+    // Phase 5 D5-13: help overlay render branch. When open, replace the
+    // picker frame entirely with `renderHelpOverlay(...)`. Selection,
+    // cursor, active tab, and filter/sort state are all untouched — they
+    // resume exactly on close (`?` or `Esc`).
+    if (this.helpOpen) {
+      return renderHelpOverlay({
+        useAscii: this.useAscii,
+        rows: this.stdoutRows ?? 24,
+        cols: this.terminalCols,
+      });
+    }
 
     // Phase 4 D4-08: sub-minimum terminal branch. We still draw a minimal frame
     // so the user sees why interactivity is suppressed AND learns the escape
@@ -1687,6 +1732,160 @@ if (import.meta.vitest) {
         const frame = picker._renderFrame();
         expect(frame).toContain('Filtered: 1 of 3 visible');
         expect(picker.tabs[0]!.cursor).toBe(0);
+      });
+    });
+
+    describe('Phase 5 help overlay — Plan 03 (D5-13..D5-16)', () => {
+      it("'?' toggles helpOpen true/false", () => {
+        const ghosts = [makeGhost({ name: 'a1', category: 'agent' })];
+        const picker = makePicker(ghosts);
+        expect(picker.helpOpen).toBe(false);
+        fireKey(picker, '?');
+        expect(picker.helpOpen).toBe(true);
+        fireKey(picker, '?');
+        expect(picker.helpOpen).toBe(false);
+      });
+
+      it('Esc closes the overlay (does NOT mutate filter query)', () => {
+        const ghosts = [
+          makeGhost({ name: 'alpha', category: 'agent' }),
+          makeGhost({ name: 'beta', category: 'agent' }),
+        ];
+        const picker = makePicker(ghosts);
+        // Set a filter first (Enter exits filter mode but keeps query active).
+        fireKey(picker, '/');
+        fireKey(picker, 'a');
+        fireKey(picker, 'l');
+        fireKey(picker, undefined, { name: 'return' });
+        expect(picker.filterSortByTab[0]!.query).toBe('al');
+        expect(picker.filterSortByTab[0]!.active).toBe(true);
+        // Open help.
+        fireKey(picker, '?');
+        expect(picker.helpOpen).toBe(true);
+        // Close with Esc — filter state intact.
+        fireKey(picker, undefined, { name: 'escape' });
+        expect(picker.helpOpen).toBe(false);
+        expect(picker.filterSortByTab[0]!.query).toBe('al');
+        expect(picker.filterSortByTab[0]!.active).toBe(true);
+      });
+
+      it('while help is open, printable keys / / / s / Space / arrows are all no-ops', () => {
+        const ghosts = [
+          makeGhost({ name: 'a1', category: 'agent' }),
+          makeGhost({ name: 'a2', category: 'agent' }),
+          makeGhost({ name: 's1', category: 'skill' }),
+        ];
+        const picker = makePicker(ghosts);
+        const beforeCursor = picker.tabs[0]!.cursor;
+        const beforeTab = picker.activeTabIndex;
+        const beforeSort = picker.filterSortByTab[0]!.sort;
+        const beforeSelected = picker.selectedIds.size;
+        fireKey(picker, '?');
+        expect(picker.helpOpen).toBe(true);
+        // Printable keys that normally navigate / toggle / sort / filter:
+        fireKey(picker, '/');
+        fireKey(picker, 's');
+        fireKey(picker, 'a');
+        fireKey(picker, '2');
+        fireKey(picker, 'x');
+        // Cursor actions (space/arrows/enter/tab).
+        (picker as unknown as { emit: (e: string, ...a: unknown[]) => boolean }).emit(
+          'cursor',
+          'down',
+        );
+        (picker as unknown as { emit: (e: string, ...a: unknown[]) => boolean }).emit(
+          'cursor',
+          'space',
+        );
+        (picker as unknown as { emit: (e: string, ...a: unknown[]) => boolean }).emit(
+          'cursor',
+          'right',
+        );
+        // Nothing mutated.
+        expect(picker.helpOpen).toBe(true);
+        expect(picker.tabs[0]!.cursor).toBe(beforeCursor);
+        expect(picker.activeTabIndex).toBe(beforeTab);
+        expect(picker.filterSortByTab[0]!.sort).toBe(beforeSort);
+        expect(picker.selectedIds.size).toBe(beforeSelected);
+        expect(picker.filterMode).toBe(false);
+      });
+
+      it('open+close overlay preserves selectedIds, activeTabIndex, per-tab cursor, filter/sort (D5-13)', () => {
+        const ghosts = [
+          makeGhost({ name: 'a1', category: 'agent' }),
+          makeGhost({ name: 'a2', category: 'agent' }),
+          makeGhost({ name: 's1', category: 'skill' }),
+          makeGhost({ name: 's2', category: 'skill' }),
+        ];
+        const picker = makePicker(ghosts);
+        // Build some state: select a1, move cursor, switch tab, cycle sort.
+        picker.toggleCurrentRow(); // select a1
+        picker.cursorDown();
+        picker.nextTab(); // tab=1 (SKILLS)
+        picker.toggleCurrentRow(); // select s1
+        fireKey(picker, 's'); // tokens-desc on skills
+        const snapSelected = new Set(picker.selectedIds);
+        const snapTab = picker.activeTabIndex;
+        const snapCursor0 = picker.tabs[0]!.cursor;
+        const snapCursor1 = picker.tabs[1]!.cursor;
+        const snapSort0 = picker.filterSortByTab[0]!.sort;
+        const snapSort1 = picker.filterSortByTab[1]!.sort;
+        // Open + close via `?`.
+        fireKey(picker, '?');
+        fireKey(picker, '?');
+        expect(picker.helpOpen).toBe(false);
+        expect(Array.from(picker.selectedIds).sort()).toEqual(Array.from(snapSelected).sort());
+        expect(picker.activeTabIndex).toBe(snapTab);
+        expect(picker.tabs[0]!.cursor).toBe(snapCursor0);
+        expect(picker.tabs[1]!.cursor).toBe(snapCursor1);
+        expect(picker.filterSortByTab[0]!.sort).toBe(snapSort0);
+        expect(picker.filterSortByTab[1]!.sort).toBe(snapSort1);
+      });
+
+      it('cursor `cancel` action is still honored while help is open (INV-S2 / T-05-02)', () => {
+        const ghosts = [makeGhost({ name: 'a1', category: 'agent' })];
+        const picker = makePicker(ghosts);
+        fireKey(picker, '?');
+        expect(picker.helpOpen).toBe(true);
+        // Drive the cursor dispatcher with 'cancel'; the gate must NOT swallow it.
+        let cancelRan = false;
+        const origCancel = picker.cancel.bind(picker);
+        (picker as unknown as { cancel: () => void }).cancel = () => {
+          cancelRan = true;
+          // Do NOT call origCancel — it flips state and would race the test.
+          // Reference origCancel to satisfy TS no-unused-expressions lint.
+          void origCancel;
+        };
+        (picker as unknown as { emit: (e: string, ...a: unknown[]) => boolean }).emit(
+          'cursor',
+          'cancel',
+        );
+        expect(cancelRan).toBe(true);
+      });
+
+      it('_renderFrame returns help overlay content when helpOpen is true', () => {
+        const ghosts = [makeGhost({ name: 'a1', category: 'agent' })];
+        const picker = makePicker(ghosts);
+        fireKey(picker, '?');
+        const frame = picker._renderFrame();
+        // Heading + representative keybind.
+        expect(frame).toContain('Navigation');
+        expect(frame).toContain('Selection');
+        expect(frame).toContain('View');
+        expect(frame).toContain('Exit');
+        // Does NOT render the tab bar / per-tab header while overlay is up.
+        expect(frame).not.toContain('AGENTS (0/1)');
+      });
+
+      it('`?` opens help from inside filter mode (Claude Discretion routing)', () => {
+        const ghosts = [makeGhost({ name: 'alpha', category: 'agent' })];
+        const picker = makePicker(ghosts);
+        fireKey(picker, '/');
+        expect(picker.filterMode).toBe(true);
+        fireKey(picker, '?');
+        expect(picker.helpOpen).toBe(true);
+        // Filter mode was not implicitly closed — user returns to filter on close.
+        expect(picker.filterMode).toBe(true);
       });
     });
   });
