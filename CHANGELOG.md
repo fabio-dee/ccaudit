@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0-beta.0] — 2026-04-19
+
 v1.5 "Interactive Archive" — response to Reddit feedback asking for a surgical
 alternative to the full-inventory bust. Threads an optional subset filter
 through the existing `runBust` pipeline, adds a `@clack/core`-based TUI
