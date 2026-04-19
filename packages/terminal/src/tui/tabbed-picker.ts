@@ -1,16 +1,6 @@
 /**
- * Phase 5 Plan 04 discovery note (D5-17..D5-20 · Outcome A):
- *   `TokenCostResult.item.framework?: string | null` is a live field on
- *   InventoryItem (packages/internal/src/scanner/types.ts:22). The framework
- *   scanner (packages/internal/src/framework/) attributes real items (typically
- *   within the AGENTS and MCP categories) to named frameworks, with `null`
- *   reserved for ungrouped items. Outcome A (real rendering + real toggle)
- *   is therefore selected: when a tab's currently-visible items span ≥ 2
- *   distinct framework values, the picker emits a `sub-header` row before
- *   each framework bucket and `Space` on a sub-header acts as a group
- *   select-all-or-clear. Tabs with 0 or 1 distinct framework values render
- *   flat as in Phase 3.1 (no sub-headers → binding is n/a per D5-18, but
- *   we keep the uniform PickerRow walk so cursor math stays identical).
+ * Phase 5 Plan 04 (D5-17..D5-20, Outcome A): framework sub-headers +
+ * group-toggle. See .planning/phases/05.../05-04-SUMMARY.md for rationale.
  *
  * TabbedGhostPicker (D3.1-14) — custom @clack/core.MultiSelectPrompt subclass
  * that replaces Phase 2's flat groupMultiselect with a tabbed category view.
@@ -81,8 +71,18 @@ interface TabState {
   categoryId: string;
   label: string;
   items: TokenCostResult[];
+  // Cursor indexes into the assembled PickerRow[] (items + sub-headers).
   cursor: number;
 }
+
+// Phase 5 Plan 04 (D5-17): unified row abstraction — item vs sub-header.
+// Sub-header `groupIds` carry the canonical IDs of currently-visible items
+// in the framework bucket so `Space` toggles the group atomically (D5-11).
+export type PickerRow =
+  | { kind: 'item'; item: TokenCostResult }
+  | { kind: 'sub-header'; framework: string; groupIds: string[] };
+
+const UNGROUPED_FRAMEWORK_LABEL = 'Ungrouped';
 
 // Option shape for @clack/core.MultiSelectPrompt<T>.
 interface FlatOption {
@@ -436,6 +436,48 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     return this.visibleItemsForTab(this.activeTabIndex);
   }
 
+  // Phase 5 Plan 04 (D5-17/D5-18): assemble the unified PickerRow[] for a tab.
+  // Bucket visible items by `item.framework` in first-seen order (D5-11). Emit
+  // a sub-header before each bucket only when ≥ 2 distinct framework values
+  // exist; otherwise render flat (D5-18 "n/a" path). groupIds reflect only
+  // currently-visible members so group-toggle matches what's on screen.
+  public assembleRowsForTab(tabIdx: number): PickerRow[] {
+    const visible = this.visibleItemsForTab(tabIdx);
+    if (visible.length === 0) return [];
+    const order: string[] = [];
+    const buckets = new Map<string, TokenCostResult[]>();
+    for (const x of visible) {
+      const fw =
+        typeof x.item.framework === 'string' && x.item.framework !== ''
+          ? x.item.framework
+          : UNGROUPED_FRAMEWORK_LABEL;
+      if (!buckets.has(fw)) {
+        buckets.set(fw, []);
+        order.push(fw);
+      }
+      buckets.get(fw)!.push(x);
+    }
+    if (order.length < 2) {
+      return visible.map((item) => ({ kind: 'item' as const, item }));
+    }
+    const rows: PickerRow[] = [];
+    for (const fw of order) {
+      const groupItems = buckets.get(fw)!;
+      const groupIds = groupItems.map((g) => canonicalItemId(g.item));
+      rows.push({ kind: 'sub-header', framework: fw, groupIds });
+      for (const item of groupItems) rows.push({ kind: 'item', item });
+    }
+    return rows;
+  }
+
+  public hasFrameworkSubHeaders(tabIdx: number): boolean {
+    return this.assembleRowsForTab(tabIdx).some((r) => r.kind === 'sub-header');
+  }
+
+  private _rowsActive(): PickerRow[] {
+    return this.assembleRowsForTab(this.activeTabIndex);
+  }
+
   /**
    * Phase 5 D5-03: on tab switch, clear the DEPARTING tab's filter (query +
    * active flag). Sort mode on the departing tab is preserved per D5-09.
@@ -454,8 +496,8 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
   private _clampActiveCursor(): void {
     const t = this.tabs[this.activeTabIndex];
     if (!t) return;
-    const vlen = this._visibleActive().length;
-    t.cursor = Math.min(t.cursor, Math.max(0, vlen - 1));
+    const rlen = this._rowsActive().length;
+    t.cursor = Math.min(t.cursor, Math.max(0, rlen - 1));
   }
 
   public nextTab(): void {
@@ -492,8 +534,8 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
 
   public cursorDown(): void {
     const t = this.activeTab();
-    const vlen = this._visibleActive().length;
-    t.cursor = Math.min(Math.max(0, vlen - 1), t.cursor + 1);
+    const rlen = this._rowsActive().length;
+    t.cursor = Math.min(Math.max(0, rlen - 1), t.cursor + 1);
   }
 
   public cursorPageUp(): void {
@@ -511,8 +553,8 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
       rowsOverride: this.viewportHeightOverride,
       stdoutRows: this.stdoutRows,
     });
-    const vlen = this._visibleActive().length;
-    t.cursor = Math.min(Math.max(0, vlen - 1), t.cursor + vh);
+    const rlen = this._rowsActive().length;
+    t.cursor = Math.min(Math.max(0, rlen - 1), t.cursor + vh);
   }
 
   public cursorHome(): void {
@@ -521,8 +563,8 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
 
   public cursorEnd(): void {
     const t = this.activeTab();
-    const vlen = this._visibleActive().length;
-    t.cursor = Math.max(0, vlen - 1);
+    const rlen = this._rowsActive().length;
+    t.cursor = Math.max(0, rlen - 1);
   }
 
   // ---------------------------------------------------------------------------
@@ -530,14 +572,23 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
   // ---------------------------------------------------------------------------
 
   public toggleCurrentRow(): void {
-    if (this._terminalTooSmall()) return; // D4-08: suppress row interactivity.
+    if (this._terminalTooSmall()) return; // D4-08
     const t = this.activeTab();
-    const visible = this._visibleActive();
-    const item = visible[t.cursor];
-    if (!item) return;
-    const id = canonicalItemId(item.item);
-    if (this.selectedIds.has(id)) this.selectedIds.delete(id);
-    else this.selectedIds.add(id);
+    // Phase 5 Plan 04 (D5-17): item → per-row toggle; sub-header → group
+    // select-all-or-clear (anyUnselected ⇒ add all; else remove all).
+    const row = this._rowsActive()[t.cursor];
+    if (!row) return;
+    if (row.kind === 'item') {
+      const id = canonicalItemId(row.item.item);
+      if (this.selectedIds.has(id)) this.selectedIds.delete(id);
+      else this.selectedIds.add(id);
+      return;
+    }
+    const { groupIds } = row;
+    if (groupIds.length === 0) return;
+    const anyUnselected = groupIds.some((id) => !this.selectedIds.has(id));
+    if (anyUnselected) for (const id of groupIds) this.selectedIds.add(id);
+    else for (const id of groupIds) this.selectedIds.delete(id);
   }
 
   /**
@@ -764,22 +815,21 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
     }
     lines.push(pc.bold(header));
 
-    // 3–5. Viewport window + ↑/↓ N more indicators (D3.1-06).
-    // Phase 5: render the VISIBLE slice (sorted-then-filtered) — cursor is
-    // an index into this slice.
+    // 3–5. Viewport window + ↑/↓ N more (D3.1-06). Plan 04: render PickerRow[].
     const visible = this._visibleActive();
+    const rows = this._rowsActive();
     const vh = computeViewportHeight({
       rowsOverride: this.viewportHeightOverride,
       stdoutRows: this.stdoutRows,
     });
     // Clamp cursor into bounds for a safe windowRows call even if prior key
     // handling left a stale cursor.
-    if (visible.length === 0) {
+    if (rows.length === 0) {
       t.cursor = 0;
-    } else if (t.cursor >= visible.length) {
-      t.cursor = visible.length - 1;
+    } else if (t.cursor >= rows.length) {
+      t.cursor = rows.length - 1;
     }
-    const win = windowRows({ rows: visible, cursor: t.cursor, viewportHeight: vh });
+    const win = windowRows({ rows, cursor: t.cursor, viewportHeight: vh });
 
     // Phase 5 D5-07: empty-result placeholder when filter excludes all rows.
     if (visible.length === 0 && activeState?.active === true && activeState.query !== '') {
@@ -793,14 +843,19 @@ export class TabbedGhostPicker extends MultiSelectPrompt<FlatOption> {
       const cursorGlyph = this.useAscii ? '>' : '›';
       for (let i = 0; i < win.slice.length; i++) {
         const absIdx = win.sliceStart + i;
-        const item = win.slice[i]!;
-        const id = canonicalItemId(item.item);
+        const row = win.slice[i]!;
         const isCursor = absIdx === t.cursor;
-        const isSelected = this.selectedIds.has(id);
-        const marker = isSelected ? '[x]' : '[ ]';
         const cursorMark = isCursor ? cursorGlyph : ' ';
-        const label = formatRowLabel(item, this.useAscii, this.now);
-        lines.push(`${cursorMark} ${marker} ${label}`);
+        if (row.kind === 'sub-header') {
+          const dashes = this.useAscii ? '--' : '──';
+          lines.push(pc.dim(`${cursorMark}   ${dashes} ${row.framework} ${dashes}`));
+        } else {
+          const id = canonicalItemId(row.item.item);
+          const isSelected = this.selectedIds.has(id);
+          const marker = isSelected ? '[x]' : '[ ]';
+          const label = formatRowLabel(row.item, this.useAscii, this.now);
+          lines.push(`${cursorMark} ${marker} ${label}`);
+        }
       }
 
       if (win.belowCount > 0) {
@@ -1975,10 +2030,10 @@ if (import.meta.vitest) {
         expect(picker.assembleRowsForTab(0)[0]!.kind).toBe('sub-header');
         picker.toggleCurrentRow();
         expect(picker.selectedIds.size).toBe(2);
-        expect(picker.selectedIds.has('mcp-server|global||/fake/m1')).toBe(true);
-        expect(picker.selectedIds.has('mcp-server|global||/fake/m2')).toBe(true);
+        expect(picker.selectedIds.has('mcp-server|global||m1|/fake/m1')).toBe(true);
+        expect(picker.selectedIds.has('mcp-server|global||m2|/fake/m2')).toBe(true);
         // FrameB item untouched.
-        expect(picker.selectedIds.has('mcp-server|global||/fake/m3')).toBe(false);
+        expect(picker.selectedIds.has('mcp-server|global||m3|/fake/m3')).toBe(false);
       });
 
       it('Space on sub-header with partial selection selects all (anyUnselected path)', () => {
@@ -1989,12 +2044,12 @@ if (import.meta.vitest) {
         ];
         const picker = makePicker(ghosts);
         // Pre-select m1 only (1 of 2 in FrameA).
-        picker.selectedIds.add('mcp-server|global||/fake/m1');
+        picker.selectedIds.add('mcp-server|global||m1|/fake/m1');
         // Cursor on FrameA sub-header.
         picker.toggleCurrentRow();
         // anyUnselected ⇒ add all group members (m1 already there, m2 added).
-        expect(picker.selectedIds.has('mcp-server|global||/fake/m1')).toBe(true);
-        expect(picker.selectedIds.has('mcp-server|global||/fake/m2')).toBe(true);
+        expect(picker.selectedIds.has('mcp-server|global||m1|/fake/m1')).toBe(true);
+        expect(picker.selectedIds.has('mcp-server|global||m2|/fake/m2')).toBe(true);
       });
 
       it('Space on sub-header with full group selection deselects all (select-or-clear)', () => {
@@ -2004,12 +2059,12 @@ if (import.meta.vitest) {
           makeGhost({ name: 'm3', category: 'mcp-server', tokens: 300, framework: 'FrameB' }),
         ];
         const picker = makePicker(ghosts);
-        picker.selectedIds.add('mcp-server|global||/fake/m1');
-        picker.selectedIds.add('mcp-server|global||/fake/m2');
+        picker.selectedIds.add('mcp-server|global||m1|/fake/m1');
+        picker.selectedIds.add('mcp-server|global||m2|/fake/m2');
         // Cursor on FrameA sub-header — all group items selected → clear.
         picker.toggleCurrentRow();
-        expect(picker.selectedIds.has('mcp-server|global||/fake/m1')).toBe(false);
-        expect(picker.selectedIds.has('mcp-server|global||/fake/m2')).toBe(false);
+        expect(picker.selectedIds.has('mcp-server|global||m1|/fake/m1')).toBe(false);
+        expect(picker.selectedIds.has('mcp-server|global||m2|/fake/m2')).toBe(false);
       });
 
       it('cursor walks PickerRow[] including sub-headers uniformly', () => {
@@ -2042,7 +2097,7 @@ if (import.meta.vitest) {
         picker.cursorDown();
         picker.toggleCurrentRow();
         expect(picker.selectedIds.size).toBe(1);
-        expect(picker.selectedIds.has('mcp-server|global||/fake/m1')).toBe(true);
+        expect(picker.selectedIds.has('mcp-server|global||m1|/fake/m1')).toBe(true);
       });
 
       it('toggleAllInActiveTab operates on items only (sub-headers do not participate)', () => {
