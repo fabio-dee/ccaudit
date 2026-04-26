@@ -1,21 +1,22 @@
 // @ccaudit/internal -- remediation module (Phase 7 + Phase 8)
 // Pure functions + checkpoint I/O for --dry-run and --dangerously-bust-ghosts.
 
-export { buildChangePlan } from './change-plan.ts';
+export { buildChangePlan, filterChangePlan } from './change-plan.ts';
 export type { ChangePlan, ChangePlanItem, ChangePlanAction } from './change-plan.ts';
 
 export { calculateDryRunSavings } from './savings.ts';
 
 export {
+  canonicalItemId,
   computeGhostHash,
   resolveCheckpointPath,
   writeCheckpoint,
   readCheckpoint,
 } from './checkpoint.ts';
-export type { Checkpoint, ReadCheckpointResult, StatFn } from './checkpoint.ts';
+export type { Checkpoint, ReadCheckpointResult, StatFn, CanonicalItemInput } from './checkpoint.ts';
 
 // Phase 8: atomic write primitive (D-18 extraction, reused by bust orchestrator)
-export { atomicWriteJson, renameWithRetry } from './atomic-write.ts';
+export { atomicWriteJson, atomicWriteText, renameWithRetry } from './atomic-write.ts';
 export type { AtomicWriteOptions } from './atomic-write.ts';
 
 // Phase 8: collision helpers (D-05, D-06) + nested-path-preserving archive builder
@@ -65,6 +66,12 @@ export {
   buildFlagOp,
   buildRefreshOp,
   buildSkippedOp,
+  buildArchivePurgeOp,
+  buildPurgeManifestHeader,
+  resolvePurgeManifestPath,
+  writePurgeManifest,
+  openPurgeManifestWriter,
+  closePurgeManifestWriter,
   MANIFEST_VERSION,
 } from './manifest.ts';
 export type {
@@ -77,11 +84,20 @@ export type {
   FlagOp,
   RefreshOp,
   SkippedOp,
+  ArchivePurgeOp,
   ReadManifestResult,
+  SelectionFilter,
 } from './manifest.ts';
 
 // Phase 8: bust orchestrator -- the Wave 1 pipeline that wires Wave 0
 // primitives into the full --dangerously-bust-ghosts flow (D-01..D-18).
+//
+// NOTE: `patchMcpConfigText` is exported from bust.ts with `export function`
+// solely to enable in-source unit tests (the vitest block at the bottom of
+// bust.ts) — it is intentionally NOT re-exported here. External callers
+// (e.g. restore.ts) should NOT import it directly from the subpath; if a
+// future use case requires it, promote it to this barrel with a clear API
+// contract first.
 export { runBust, runConfirmationCeremony } from './bust.ts';
 export type { BustResult, BustDeps, BustCounts, CeremonyResult, CeremonyIO } from './bust.ts';
 
@@ -97,6 +113,11 @@ export {
   reEnableMcpTransactional,
   restoreFlagOp,
   restoreRefreshOp,
+  dedupManifestOps,
+  collectRestoreableItems,
+  matchByName,
+  isStaleArchiveOp,
+  filterRestoreableItems,
 } from './restore.ts';
 export type {
   RestoreDeps,
@@ -104,9 +125,27 @@ export type {
   RestoreCounts,
   RestoreMode,
   ManifestListEntry,
+  RestoreableOp,
 } from './restore.ts';
 export { discoverManifests, resolveManifestDir } from './manifest.ts';
 export type { ManifestEntry, DiscoverManifestsDeps } from './manifest.ts';
+
+// Phase 9 SC6: purge-archive domain core (classifier + executor).
+// CLI subcommand is wired in Plan 09-04; this barrel re-export covers the
+// pure-domain surface consumed by that wrapper.
+export { classifyArchiveOps, executePurge } from './purge.ts';
+export type {
+  PurgePlan,
+  PurgeResult,
+  PurgeSummary,
+  PurgeFailure,
+  DropReason,
+  ExecutePurgeDeps,
+} from './purge.ts';
+
+// Shared archive→source move helper (lifted from reclaim.ts for purge reuse).
+export { moveArchiveToSource } from './_archive-move.ts';
+export type { ArchiveMoveDeps, MoveArchiveInput, MoveArchiveFailure } from './_archive-move.ts';
 
 // Phase 4: orphan reclaim command
 export { reclaim } from './reclaim.ts';

@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "server-01": { "type": "stdio", "command": "noop", "args": [] },
+    "server-02": { "type": "stdio", "command": "noop", "args": [] },
+    "server-03": { "type": "stdio", "command": "noop", "args": [] },
+    "server-04": { "type": "stdio", "command": "noop", "args": [] },
+    "server-05": { "type": "stdio", "command": "noop", "args": [] },
+    "server-06": { "type": "stdio", "command": "noop", "args": [] },
+    "server-07": { "type": "stdio", "command": "noop", "args": [] },
+    "server-08": { "type": "stdio", "command": "noop", "args": [] },
+    "server-09": { "type": "stdio", "command": "noop", "args": [] },
+    "server-10": { "type": "stdio", "command": "noop", "args": [] },
+    "server-11": { "type": "stdio", "command": "noop", "args": [] },
+    "server-12": { "type": "stdio", "command": "noop", "args": [] }
+  },
+  "projects": {}
+}

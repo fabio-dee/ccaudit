@@ -26,8 +26,10 @@
 import path from 'node:path';
 import { homedir } from 'node:os';
 
+import { Result } from '@praha/byethrow';
 import type { ManifestEntry } from './manifest.ts';
 import { readManifest } from './manifest.ts';
+import { moveArchiveToSource } from './_archive-move.ts';
 
 // -- Deps interface ---------------------------------------------------
 
@@ -250,16 +252,26 @@ export async function reclaim(opts: ReclaimOptions): Promise<ReclaimResult> {
       continue;
     }
 
-    try {
-      // Ensure parent directory exists before rename.
-      await deps.mkdirRecursive(path.dirname(orphan.inferredSource));
-      await deps.renameFile(orphan.archivePath, orphan.inferredSource);
+    // Delegate the actual move to the shared helper. Archive existence was
+    // already confirmed via readDirRecursive; pass a pathExists that vouches
+    // for the archive and reports the (already-verified-free) source state.
+    const moveResult = await moveArchiveToSource(
+      { archivePath: orphan.archivePath, sourcePath: orphan.inferredSource },
+      {
+        pathExists: async (p) => (p === orphan.archivePath ? true : deps.pathExists(p)),
+        mkdirRecursive: deps.mkdirRecursive,
+        renameFile: deps.renameFile,
+      },
+    );
+
+    if (Result.isSuccess(moveResult)) {
       reclaimed++;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      warn(`reclaim: failed to move ${orphan.archivePath} → ${orphan.inferredSource}: ${message}`);
-      failed.push({ archivePath: orphan.archivePath, error: message });
+      continue;
     }
+
+    const message = moveResult.error.message;
+    warn(`reclaim: failed to move ${orphan.archivePath} → ${orphan.inferredSource}: ${message}`);
+    failed.push({ archivePath: orphan.archivePath, error: message });
   }
 
   return { orphans, reclaimed, skippedSourceExists, failed };
@@ -522,6 +534,50 @@ if (import.meta.vitest) {
       const result = await reclaim({ dryRun: true, deps });
       expect(result.orphans).toHaveLength(1);
       expect(result.reclaimed).toBe(0);
+      expect(renameFile).not.toHaveBeenCalled();
+    });
+
+    it('TOCTOU (M7): source appearing after scan but before move is caught by deps.pathExists', async () => {
+      // Simulate a race: during the orphan-scan phase, the inferred source does NOT
+      // exist (pathExists returns false for the source → orphan.sourceExists = false,
+      // so the early-exit at line ~246 is skipped). Between scan and move a file
+      // materialises at the source path. The forwarded deps.pathExists now returns
+      // true, moveArchiveToSource's INVARIANT check fires, and the move is refused.
+      // Expected: reclaimed === 0, failed contains one entry, renameFile never called.
+      const home = '/home/user';
+      const archivedRoot = `${home}/.claude/ccaudit/archived`;
+      const archivePath = `${archivedRoot}/.claude/agents/toctou.md`;
+      const inferredSource = `${home}/.claude/agents/toctou.md`;
+      const renameFile = vi.fn(async () => undefined);
+      let callCount = 0;
+
+      const deps: Partial<ReclaimDeps> = {
+        homeDir: home,
+        discoverManifests: async () => [],
+        readManifest,
+        readDirRecursive: async () => [makeFile(archivePath)],
+        // First call (during orphan scan): source does NOT exist → sourceExists=false.
+        // Subsequent calls (forwarded from moveArchiveToSource): source NOW exists.
+        // Normalize separators so the test passes on Windows where path.join
+        // inside moveArchiveToSource may return backslash-formatted strings.
+        pathExists: async (p: string) => {
+          const norm = p.replace(/\\/g, '/');
+          if (norm === archivePath) return true; // archive always present
+          if (norm === inferredSource) {
+            callCount++;
+            return callCount > 1; // scan-time: false; move-time: true
+          }
+          return false;
+        },
+        renameFile,
+        mkdirRecursive: async () => undefined,
+      };
+
+      const result = await reclaim({ dryRun: false, deps });
+      expect(result.reclaimed).toBe(0);
+      expect(result.failed).toHaveLength(1);
+      expect(result.failed[0]?.archivePath).toBe(archivePath);
+      // renameFile must NOT have been called (overwrite prevented)
       expect(renameFile).not.toHaveBeenCalled();
     });
 

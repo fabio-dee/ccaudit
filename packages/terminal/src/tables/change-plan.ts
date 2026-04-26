@@ -69,8 +69,8 @@ export function renderChangePlan(plan: ChangePlan, opts?: ChangePlanRenderOption
   }
 
   // ── EXISTING GROUPS (unchanged) ────────────────────────────────────
-  // Group 1: Archive (agents + skills)
-  if (plan.counts.agents > 0 || plan.counts.skills > 0) {
+  // Group 1: Archive (agents + skills + commands)
+  if (plan.counts.agents > 0 || plan.counts.skills > 0 || plan.counts.commands > 0) {
     lines.push(colorize.bold('Will ARCHIVE (reversible via `ccaudit restore <name>`):'));
     if (plan.counts.agents > 0) {
       lines.push(
@@ -80,6 +80,11 @@ export function renderChangePlan(plan: ChangePlan, opts?: ChangePlanRenderOption
     if (plan.counts.skills > 0) {
       lines.push(
         `  ${String(plan.counts.skills).padStart(3)} skills  → ~/.claude/ccaudit/archived/skills/`,
+      );
+    }
+    if (plan.counts.commands > 0) {
+      lines.push(
+        `  ${String(plan.counts.commands).padStart(3)} commands  → ~/.claude/ccaudit/archived/commands/`,
       );
     }
     lines.push('');
@@ -283,7 +288,7 @@ if (import.meta.vitest) {
       archive: [],
       disable: [],
       flag: [],
-      counts: { agents: 0, skills: 0, mcp: 0, memory: 0 },
+      counts: { agents: 0, skills: 0, mcp: 0, memory: 0, commands: 0 },
       savings: { tokens: 0 },
       ...parts,
     };
@@ -303,7 +308,7 @@ if (import.meta.vitest) {
           makeItem({ action: 'disable', category: 'mcp-server', name: 'm3' }),
         ],
         flag: [makeItem({ action: 'flag', category: 'memory', name: 'CLAUDE.md' })],
-        counts: { agents: 2, skills: 1, mcp: 3, memory: 1 },
+        counts: { agents: 2, skills: 1, mcp: 3, memory: 1, commands: 0 },
         savings: { tokens: 94000 },
       });
       const out = renderChangePlan(plan);
@@ -320,7 +325,7 @@ if (import.meta.vitest) {
     it('omits DISABLE group when counts.mcp === 0', () => {
       const plan = makePlan({
         archive: [makeItem({ action: 'archive', category: 'agent' })],
-        counts: { agents: 1, skills: 0, mcp: 0, memory: 0 },
+        counts: { agents: 1, skills: 0, mcp: 0, memory: 0, commands: 0 },
         savings: { tokens: 100 },
       });
       expect(renderChangePlan(plan)).not.toContain('Will DISABLE');
@@ -329,7 +334,7 @@ if (import.meta.vitest) {
     it('omits FLAG group when counts.memory === 0', () => {
       const plan = makePlan({
         archive: [makeItem({ action: 'archive', category: 'agent' })],
-        counts: { agents: 1, skills: 0, mcp: 0, memory: 0 },
+        counts: { agents: 1, skills: 0, mcp: 0, memory: 0, commands: 0 },
       });
       expect(renderChangePlan(plan)).not.toContain('Will FLAG');
     });
@@ -337,7 +342,7 @@ if (import.meta.vitest) {
     it('omits ARCHIVE group when no agents or skills', () => {
       const plan = makePlan({
         disable: [makeItem({ action: 'disable', category: 'mcp-server' })],
-        counts: { agents: 0, skills: 0, mcp: 1, memory: 0 },
+        counts: { agents: 0, skills: 0, mcp: 1, memory: 0, commands: 0 },
       });
       expect(renderChangePlan(plan)).not.toContain('Will ARCHIVE');
     });
@@ -361,6 +366,43 @@ if (import.meta.vitest) {
     it('formats savings as ~X tokens for <1000', () => {
       const out = renderChangePlan(makePlan({ savings: { tokens: 500 } }));
       expect(out).toContain('~500 tokens');
+    });
+
+    it('emits a commands row inside Will ARCHIVE when counts.commands > 0', () => {
+      const plan = makePlan({
+        archive: [
+          makeItem({ action: 'archive', category: 'command', name: 'sc:build', path: '/tmp/cmd' }),
+        ],
+        counts: { agents: 0, skills: 0, mcp: 0, memory: 0, commands: 1 },
+        savings: { tokens: 30 },
+      });
+      const out = renderChangePlan(plan);
+      expect(out).toContain('Will ARCHIVE');
+      expect(out).toMatch(/\b1 commands\b/);
+      expect(out).toMatch(/1 commands\s+→\s+~\/\.claude\/ccaudit\/archived\/commands\//);
+    });
+
+    it('renders ARCHIVE block when commands are the only archive category', () => {
+      const plan = makePlan({
+        archive: [makeItem({ action: 'archive', category: 'command', name: 'cmd1' })],
+        counts: { agents: 0, skills: 0, mcp: 0, memory: 0, commands: 1 },
+        savings: { tokens: 30 },
+      });
+      const out = renderChangePlan(plan);
+      expect(out).toContain('Will ARCHIVE');
+      expect(out).not.toContain('agents');
+      expect(out).not.toContain('skills');
+      expect(out).toContain('1 commands');
+    });
+
+    it('omits commands row when counts.commands === 0', () => {
+      const plan = makePlan({
+        archive: [makeItem({ action: 'archive', category: 'agent', name: 'a1' })],
+        counts: { agents: 1, skills: 0, mcp: 0, memory: 0, commands: 0 },
+      });
+      const out = renderChangePlan(plan);
+      expect(out).toContain('1 agents');
+      expect(out).not.toMatch(/commands\s+→/);
     });
   });
 
@@ -488,7 +530,7 @@ if (import.meta.vitest) {
         ],
         disable: [makeItem({ action: 'disable', category: 'mcp-server', name: 'm1' })],
         flag: [makeItem({ action: 'flag', category: 'memory', name: 'CLAUDE.md' })],
-        counts: { agents: 1, skills: 1, mcp: 1, memory: 1 },
+        counts: { agents: 1, skills: 1, mcp: 1, memory: 1, commands: 0 },
         savings: { tokens: 1234 },
       });
     }

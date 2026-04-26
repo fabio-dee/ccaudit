@@ -5,6 +5,160 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-04-26
+
+### Changed
+
+- README headline reframed around the Opus 4.7 1M-token context window
+  (Phase 10 SC3): the same ~108k token ghost inventory is now expressed as
+  ~11% of 1M (was 54% of 200k), with the absolute number kept inline so
+  readers on smaller-context models retain a figure that matches their
+  reality. New "Native alternatives" section (Phase 10 SC4) compares
+  `/skills t-sort`, `/usage`, and `claude plugin disable` against
+  ccaudit's cross-component scope, regime-aware token math, and
+  archive-with-rollback differentiator. Docs only — no code change.
+
+### Added
+
+- `ccaudit purge-archive` command (Phase 9 SC6) — drains
+  `~/.claude/ccaudit/archived/` via a classifier over the manifest union.
+  Default is `--dry-run`; real purge requires explicit `--yes` (no prompt
+  fallback). Classification: reclaim-if-free → archive moved back to source,
+  drop-if-occupied → archive unlinked (source never overwritten),
+  drop-if-stale → already-gone archive's manifest entry retired, skip-if-
+  both-missing → preserved for diagnosis. Scope is archive ops only; flag
+  (memory) and disable (MCP) ops are untouched. Each executed mutation
+  appends a new `archive_purge` op to a fresh `purge-<ts>-<rand>.jsonl`
+  manifest — originals are never rewritten. JSON envelope:
+  `purge.summary.{purgedCount, reclaimedCount, skippedOccupiedCount,
+staleFilteredCount}` + `purge.failures[]`. See
+  [docs/JSON-SCHEMA.md § Purge](./docs/JSON-SCHEMA.md).
+- Empty-inventory short-circuit (Phase 9 SC1): `ghost` and
+  `ghost --interactive` exit 0 with a clean single-line message on an empty
+  inventory; the TUI is never opened.
+- `CCAUDIT_NO_INTERACTIVE=1` env escape hatch (Phase 9 SC2) — truthy
+  (`1` / `true`, case-insensitive) gates every interactive entry point.
+  Silent suppression of auto-open; hard refusal on explicit `--interactive`
+  with exit code 2 and `refusing: CCAUDIT_NO_INTERACTIVE is set`.
+- Tabbed-picker pagination (Phase 9 SC3): viewports bounded by terminal
+  rows; 500+ item tabs scroll cleanly without layout breakage; scroll
+  position preserved across `/` filter, `s` sort cycle, and framework
+  group toggle.
+- Color-blind-friendly glyph set (Phase 9 SC4): every selectable picker
+  state carries a distinct ASCII-safe glyph in column 1 independent of
+  color — selected `◉`, unselected `◯`, protected `🔒`, multi-config MCP
+  `⚠`, stale memory `⌛` — with ASCII fallback under `NO_COLOR` / `TERM=dumb`
+  / `--no-color`. Legend in the `?` help overlay.
+- SIGWINCH-robust picker rendering (Phase 9 SC5): the custom
+  `@clack/core.MultiSelectPrompt` subclass now registers a `SIGWINCH`
+  handler that recomputes viewport dimensions and issues a full re-render.
+  Debounced via `setImmediate` and torn down on picker exit.
+- `restore --interactive` / `-i`: open a mirror of the archive picker
+  listing every archived item across all manifests (deduplicated,
+  newer-wins); select a subset to restore.
+- `restore --name <pattern>`: fuzzy single-match restore (case-insensitive
+  substring). Ambiguous patterns error with a candidate list — never
+  auto-resolve.
+- `restore --all-matching <pattern>`: bulk restore of every item matching
+  the fuzzy pattern.
+- JSON envelope: restore success/partial-success results now include
+  additive `selection_filter` (`null | { mode: "subset", ids: string[] }`)
+  and `skipped[]` (source_exists skips) fields. See
+  `docs/JSON-SCHEMA.md`.
+- `restore.filtered_stale_count` JSON field — additive non-negative
+  integer on success / partial-success / list envelopes counting
+  archive ops suppressed from the restore listing because
+  `archive_path` is missing AND `source_path` exists
+  (already-restored / test-residue hygiene, Phase 8.2). Applies to
+  `restore --list`, `restore --interactive`, and full `restore`.
+
+### Fixed
+
+- `restore --interactive` now executes selected MEMORY items in the subset
+  restore path instead of dropping them after picker confirmation. Selected
+  memory files have their `ccaudit-stale` / `ccaudit-flagged` frontmatter
+  cleaned as expected, and `selection_filter.ids` now reflects only the
+  ids that actually resolved/executed.
+- `restore --help` and `ghost --help` no longer leak gunshi's raw
+  negatable-placeholder lines (`Negatable of --color`,
+  `Negatable of --group-frameworks`). The public `--no-color` and
+  `--no-group-frameworks` flags now render as clean user-facing help rows.
+
+## [1.5.0-beta.0] — 2026-04-19
+
+v1.5 "Interactive Archive" — response to Reddit feedback asking for a surgical
+alternative to the full-inventory bust. Threads an optional subset filter
+through the existing `runBust` pipeline, adds a `@clack/core`-based TUI
+picker, and locks down six new safety invariants (INV-S1…S6) before polish.
+Restore gains `--interactive` / `--name` / `--all-matching` in a companion
+phase (not shipped in this entry — see Phase 8 tracking in `.planning/`).
+
+### Added
+
+- `ghost --interactive` / `-i`: tabbed TUI picker for selective archival.
+  Six category tabs (agents / skills / MCP / memory / commands / hooks) with
+  bounded viewport, cross-tab selection persistence, and an inline
+  confirmation screen that replaces the 3-prompt readline ceremony. Requires
+  a TTY; non-TTY sessions fall back to `--dry-run`. `--interactive` combined
+  with `--json` is a hard error.
+- Keyboard model: `/` filter (case-insensitive substring), `s` sort cycle
+  (staleness → tokens → name), `?` help overlay, `Space` toggle, `a`
+  toggle-all-within-tab, `Tab` / `Shift-Tab` / `←` / `→` tab navigation,
+  `1`–`6` direct-jump to visible tabs, `Enter` confirm global selection,
+  `Esc` / `Ctrl+C` / `q` cancel with "No changes made." and exit 0.
+- Live token counter in the picker footer: `X of Y · ≈ Zk tokens saved`
+  recomputes on every toggle and re-renders on `SIGWINCH`.
+- Framework protection UX: partially-used-framework members render dimmed
+  with a `[🔒]` glyph and inline reason
+  `"Part of <framework> (N used, M ghost). --force-partial to override."`
+  Space is a no-op on protected rows. `--force-partial` surfaces a banner
+  warning at the top of the TUI and unlocks the rows for the current run.
+- MCP multi-project warning: MCP server rows whose key appears in more than
+  one config file render with a `⚠` glyph and a focused-row "Also in:" hint
+  listing the referenced config paths.
+- JSON envelope fields (additive — see `docs/JSON-SCHEMA.md`):
+  `bust.summary.totalPlannedTokens` (full-plan figure preserved across
+  subset busts) and `manifest.header.selection_filter` (`{ mode: 'full' }`
+  or `{ mode: 'subset', ids: string[] }`).
+- Auto-open prompt: after a regular `ccaudit ghost` scan on a TTY, users
+  see `Open interactive picker? [y/N]`. Suppressed by `--json`, `--csv`,
+  `--quiet`, `--ci`, and non-TTY.
+- `CCAUDIT_SELECT_IDS` environment variable: non-interactive subset hook
+  (primarily for integration tests and scripted automation). Threads the
+  same filter the TUI uses through `runBust`.
+- Six new safety invariants (INV-S1…S6) documented in `CLAUDE.md` and
+  locked by fixture-based integration tests.
+
+### Changed
+
+- `bust.summary.freedTokens` is now **subset-accurate** when
+  `manifest.header.selection_filter.mode === 'subset'`. For full-inventory
+  busts (the default non-interactive path) the value is unchanged —
+  `freedTokens === totalPlannedTokens` and the v1.4 contract is preserved.
+  **Migration note**: consumers that compared `freedTokens` across runs
+  must now consult `selection_filter.mode` to distinguish subset vs full
+  busts. Dashboards that want "what was the full opportunity?" should read
+  `totalPlannedTokens`.
+
+### Fixed
+
+- TUI picker long-list viewport overflow (Phase 3.1): `@clack/prompts.groupMultiselect`
+  renders all options inline with no windowing, so long inventories auto-
+  anchored to the bottom of the terminal and the highlighted cursor
+  disappeared above the viewport. Replaced with a custom
+  `@clack/core.MultiSelectPrompt` subclass backed by a bounded viewport
+  (`max(8, rows − 10)`) with `↑ N more` / `↓ N more` scroll indicators.
+- `@clack/core` Esc → cancel / Enter → submit alias defect (Phase 5 gap
+  closure): `@clack/core`'s base `Prompt.onKeypress` unconditionally
+  aliased `escape` → cancel and `return` → submit after subclass handlers
+  ran, breaking `Esc`-clears-filter, `Enter`-keeps-query, and `Esc`-closes-
+  help-overlay contracts. Fixed by wrapping `onKeypress` on the subclass
+  and conditionally suppressing the base aliases when `filterMode` or
+  `helpOpen` is true. Normal picker-state Ctrl+C / Esc / Enter behavior
+  is unchanged.
+
+---
+
 ## [1.4.0] - 2026-04-13
 
 Token estimation methodology rewrite. All six Claude Code inventory categories now

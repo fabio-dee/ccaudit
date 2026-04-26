@@ -13,6 +13,8 @@
   },
   "devDependencies": {
     "@ccaudit/internal": "workspace:*",
+    "@clack/core": "catalog:",
+    "@clack/prompts": "catalog:",
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "cli-table3": "catalog:",

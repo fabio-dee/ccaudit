@@ -1,10 +1,11 @@
 import type { TokenCostResult } from '../token/types.ts';
 import type { ItemCategory, ItemScope } from '../types.ts';
 import { calculateDryRunSavings } from './savings.ts';
+import { canonicalItemId } from './checkpoint.ts';
 
 /**
  * Action verbs grouping items in the change plan.
- * - archive: agents + skills (definite-ghost) -> moved to ccaudit/archived/ in Phase 8
+ * - archive: agents + skills + commands (definite-ghost) -> moved to ccaudit/archived/ in Phase 8
  * - disable: MCP servers (definite-ghost OR likely-ghost per D-11a) -> key-renamed in Phase 8
  * - flag:    memory files (any stale tier) -> frontmatter added in Phase 8
  */
@@ -39,6 +40,7 @@ export interface ChangePlan {
     skills: number;
     mcp: number;
     memory: number;
+    commands: number;
   };
   savings: {
     tokens: number;
@@ -77,6 +79,12 @@ export function buildChangePlan(enriched: TokenCostResult[]): ChangePlan {
       }
       continue;
     }
+    if (r.item.category === 'command') {
+      if (r.tier === 'definite-ghost') {
+        archive.push({ action: 'archive', ...base });
+      }
+      continue;
+    }
     if (r.item.category === 'mcp-server') {
       if (r.tier !== 'used') {
         disable.push({ action: 'disable', ...base });
@@ -96,12 +104,56 @@ export function buildChangePlan(enriched: TokenCostResult[]): ChangePlan {
     skills: archive.filter((i) => i.category === 'skill').length,
     mcp: disable.length,
     memory: flag.length,
+    commands: archive.filter((i) => i.category === 'command').length,
   };
 
   // Compute savings AFTER lists are built -- delegates to savings.ts
   const partial: ChangePlan = { archive, disable, flag, counts, savings: { tokens: 0 } };
   partial.savings.tokens = calculateDryRunSavings(partial);
   return partial;
+}
+
+/**
+ * Apply an optional subset filter to a ChangePlan (Phase 1 / D-03).
+ *
+ * - `selectedItems === undefined`  → return the plan unchanged
+ *   (full-inventory bust; v1.4.0 contract preserved byte-for-byte).
+ * - `selectedItems === new Set([...])` → return a new ChangePlan whose
+ *   archive/disable/flag arrays contain only items whose canonicalItemId
+ *   is in the set. Counts + savings are recomputed from the filtered
+ *   lists. Unknown ids in the set are silently ignored.
+ *
+ * The filter uses `canonicalItemId` (checkpoint.ts) for identity so the
+ * ids produced by `computeGhostHash`'s key derivation, the TUI picker,
+ * and the integration-test CCAUDIT_SELECT_IDS parser all line up.
+ */
+export function filterChangePlan(
+  plan: ChangePlan,
+  selectedItems: Set<string> | undefined,
+): ChangePlan {
+  if (selectedItems === undefined) {
+    return plan;
+  }
+
+  // canonicalItemId now accepts CanonicalItemInput (a Pick of InventoryItem),
+  // so ChangePlanItem satisfies it directly — no intermediate cast needed.
+  const keep = (i: ChangePlanItem): boolean => selectedItems.has(canonicalItemId(i));
+
+  const archive = plan.archive.filter(keep);
+  const disable = plan.disable.filter(keep);
+  const flag = plan.flag.filter(keep);
+
+  const counts = {
+    agents: archive.filter((i) => i.category === 'agent').length,
+    skills: archive.filter((i) => i.category === 'skill').length,
+    mcp: disable.length,
+    memory: flag.length,
+    commands: archive.filter((i) => i.category === 'command').length,
+  };
+
+  const filtered: ChangePlan = { archive, disable, flag, counts, savings: { tokens: 0 } };
+  filtered.savings.tokens = calculateDryRunSavings(filtered);
+  return filtered;
 }
 
 if (import.meta.vitest) {
@@ -147,6 +199,20 @@ if (import.meta.vitest) {
       const plan = buildChangePlan([makeResult({ category: 'skill', tier: 'definite-ghost' })]);
       expect(plan.archive).toHaveLength(1);
       expect(plan.counts.skills).toBe(1);
+    });
+
+    it('archives definite-ghost commands', () => {
+      const plan = buildChangePlan([makeResult({ category: 'command', tier: 'definite-ghost' })]);
+      expect(plan.archive).toHaveLength(1);
+      expect(plan.counts.commands).toBe(1);
+      expect(plan.archive[0]!.action).toBe('archive');
+      expect(plan.archive[0]!.category).toBe('command');
+    });
+
+    it('excludes likely-ghost commands', () => {
+      const plan = buildChangePlan([makeResult({ category: 'command', tier: 'likely-ghost' })]);
+      expect(plan.archive).toHaveLength(0);
+      expect(plan.counts.commands).toBe(0);
     });
 
     it('excludes likely-ghost agents (Phase 5 D-12 monitor-only)', () => {
@@ -219,8 +285,76 @@ if (import.meta.vitest) {
         makeResult({ category: 'mcp-server', tier: 'definite-ghost', name: 'm1' }),
         makeResult({ category: 'mcp-server', tier: 'definite-ghost', name: 'm2' }),
         makeResult({ category: 'memory', tier: 'likely-ghost', name: 'mem1' }),
+        makeResult({ category: 'command', tier: 'definite-ghost', name: 'cmd1' }),
       ]);
-      expect(plan.counts).toEqual({ agents: 2, skills: 0, mcp: 2, memory: 1 });
+      expect(plan.counts).toEqual({ agents: 2, skills: 0, mcp: 2, memory: 1, commands: 1 });
+    });
+  });
+
+  describe('filterChangePlan', () => {
+    // Build a plan with 3 items: agent A, agent B, mcp C
+    function makePlan3() {
+      return buildChangePlan([
+        makeResult({ category: 'agent', tier: 'definite-ghost', name: 'agentA' }),
+        makeResult({ category: 'agent', tier: 'definite-ghost', name: 'agentB' }),
+        makeResult({ category: 'mcp-server', tier: 'definite-ghost', name: 'mcpC' }),
+      ]);
+    }
+
+    it('Test 1: undefined selectedItems returns the plan unchanged (reference-equal)', () => {
+      const plan = makePlan3();
+      const result = filterChangePlan(plan, undefined);
+      expect(result).toBe(plan);
+    });
+
+    it('Test 2: Set with 2 of 3 ids returns only those items', () => {
+      const plan = makePlan3();
+      // Build canonical ids for agentA and agentB (category|scope|projectPath|path)
+      const idA = `agent|global||/tmp/agentA`;
+      const idB = `agent|global||/tmp/agentB`;
+      const result = filterChangePlan(plan, new Set([idA, idB]));
+      expect(result.archive).toHaveLength(2);
+      expect(result.disable).toHaveLength(0);
+      expect(result.archive.map((i) => i.name).sort()).toEqual(['agentA', 'agentB']);
+    });
+
+    it('Test 3: filtered plan has recomputed counts and savings', () => {
+      const plan = buildChangePlan([
+        makeResult({ category: 'agent', tier: 'definite-ghost', name: 'a1', tokens: 100 }),
+        makeResult({ category: 'agent', tier: 'definite-ghost', name: 'a2', tokens: 200 }),
+        makeResult({ category: 'mcp-server', tier: 'definite-ghost', name: 'm1', tokens: 500 }),
+      ]);
+      const idA1 = `agent|global||/tmp/a1`;
+      // mcp-server canonical id: mcp-server|scope|projectPath|name|path
+      // makeResult produces: name='m1', path='/tmp/m1', scope='global', projectPath=null
+      const idM1 = `mcp-server|global||m1|/tmp/m1`;
+      const result = filterChangePlan(plan, new Set([idA1, idM1]));
+      // counts: 1 agent + 1 mcp
+      expect(result.counts.agents).toBe(1);
+      expect(result.counts.mcp).toBe(1);
+      expect(result.counts.agents + result.counts.mcp).toBe(2); // == set.size
+      // savings = archive(100) + disable(500) = 600
+      expect(result.savings.tokens).toBe(600);
+    });
+
+    it('Test 4: empty Set returns zero-item plan with counts=0 and savings=0', () => {
+      const plan = makePlan3();
+      const result = filterChangePlan(plan, new Set());
+      expect(result.archive).toHaveLength(0);
+      expect(result.disable).toHaveLength(0);
+      expect(result.flag).toHaveLength(0);
+      expect(result.counts).toEqual({ agents: 0, skills: 0, mcp: 0, memory: 0, commands: 0 });
+      expect(result.savings.tokens).toBe(0);
+    });
+
+    it('Test 5: unknown ids in the set are silently ignored (no throw)', () => {
+      const plan = makePlan3();
+      const unknownId = 'agent|global||/nonexistent/path';
+      // Should not throw; the unknown id just matches nothing
+      expect(() => filterChangePlan(plan, new Set([unknownId]))).not.toThrow();
+      const result = filterChangePlan(plan, new Set([unknownId]));
+      expect(result.archive).toHaveLength(0);
+      expect(result.disable).toHaveLength(0);
     });
   });
 }

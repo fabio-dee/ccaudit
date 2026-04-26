@@ -9,6 +9,9 @@ export default tseslint.config(
       parserOptions: {
         projectService: {
           allowDefaultProject: ['apps/ccaudit/scripts/*.mjs', 'scripts/*.mjs'],
+          // Bumped from default 8 to accommodate the growing number of .mjs
+          // build/release scripts under apps/ccaudit/scripts (currently 5+).
+          maximumDefaultProjectFileMatchCount_THIS_WILL_SLOW_DOWN_LINTING: 20,
         },
         tsconfigRootDir: import.meta.dirname,
       },
@@ -35,6 +38,6 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ['**/dist/**', '**/node_modules/**', '**/coverage/**'],
+    ignores: ['**/dist/**', '**/node_modules/**', '**/coverage/**', '.claude/**'],
   },
 );

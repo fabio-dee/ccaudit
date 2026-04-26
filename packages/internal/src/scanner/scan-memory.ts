@@ -85,7 +85,9 @@ async function scanImportChain(
 ): Promise<InventoryItem[]> {
   const imports = await resolveMarkdownImports(rootPath);
   return imports.map((imp) => {
-    const relPath = projRoot ? path.relative(projRoot, imp.path) : path.basename(imp.path);
+    const relPath = projRoot
+      ? path.relative(projRoot, imp.path).replace(/\\/g, '/')
+      : path.basename(imp.path);
     return {
       name: `${rootName} @ ${relPath}`,
       path: imp.path,

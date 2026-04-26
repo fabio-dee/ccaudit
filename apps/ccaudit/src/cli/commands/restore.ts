@@ -13,6 +13,7 @@ import { readFile, rename, mkdir, stat, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { define } from 'gunshi';
+import { Result } from '@praha/byethrow';
 import { recordHistory } from '@ccaudit/internal';
 import { CCAUDIT_VERSION } from '../../_version.ts';
 import {
@@ -24,6 +25,12 @@ import {
   setFrontmatterValue,
   defaultProcessDeps,
   extractServerName,
+  findManifestsForRestore,
+  dedupManifestOps,
+  collectRestoreableItems,
+  filterRestoreableItems,
+  matchByName,
+  isNoInteractiveEnv,
 } from '@ccaudit/internal';
 import type {
   RestoreDeps,
@@ -34,7 +41,13 @@ import type {
   DisableOp,
   ManifestOp,
 } from '@ccaudit/internal';
-import { initColor, colorize, renderHeader } from '@ccaudit/terminal';
+import {
+  initColor,
+  colorize,
+  renderHeader,
+  openRestorePicker,
+  type RestoreItem,
+} from '@ccaudit/terminal';
 import { outputArgs } from '../_shared-args.ts';
 import { resolveOutputMode, buildJsonEnvelope } from '../_output-mode.ts';
 
@@ -91,6 +104,63 @@ function buildProductionRestoreDeps(warnings: string[]): RestoreDeps {
   };
 }
 
+// -- Pure helpers (Plan 08-03) ----------------------------------------------
+
+/**
+ * Format the D8-09 ambiguity block for `--name` matches.
+ *
+ * Returns `''` when there is no ambiguity (0 or 1 candidate). For ≥2
+ * candidates returns the verbatim block (em-dash preserved) ending in a
+ * trailing newline.
+ */
+export function formatAmbiguityError(pattern: string, candidates: string[]): string {
+  if (candidates.length < 2) return '';
+  const lines = [
+    `"${pattern}" is ambiguous \u2014 candidates:`,
+    ...candidates.map((c) => `  ${c}`),
+    `Use --all-matching to restore every candidate.`,
+  ];
+  return lines.join('\n') + '\n';
+}
+
+/**
+ * D8-11 mutual-exclusion gate for the three restore mode flags.
+ * Returns Err with a fixed message when ≥2 of {--interactive, --name,
+ * --all-matching} are set; otherwise Ok.
+ */
+export function validateRestoreFlagExclusion(flags: {
+  interactive?: boolean;
+  name?: string;
+  allMatching?: string;
+}): Result.Result<void, string> {
+  const active = [flags.interactive, flags.name, flags.allMatching].filter(
+    (v) => v !== undefined && v !== false && v !== '',
+  ).length;
+  if (active >= 2) {
+    return Result.fail('flags are mutually exclusive: --interactive, --name, --all-matching');
+  }
+  return Result.succeed();
+}
+
+// -- Preflight error -----------------------------------------------------------
+
+/**
+ * Typed error for pre-dispatch validation failures (mutual-exclusion check,
+ * CCAUDIT_NO_INTERACTIVE refusal, TTY guard, no-match / ambiguity, empty
+ * interactive archive). The catch block recognises this type and short-circuits
+ * without printing a stack trace, emitting the JSON envelope when --json is
+ * active and calling safeRecordHistory before exiting.
+ */
+class RestorePreflightError extends Error {
+  constructor(
+    public readonly exitCode: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'RestorePreflightError';
+  }
+}
+
 // -- Gunshi command definition -----------------------------------------------
 
 export const restoreCommand = define({
@@ -108,12 +178,11 @@ export const restoreCommand = define({
     json: {
       type: 'boolean' as const,
       short: 'j',
-      description: 'Output as JSON (see docs/JSON-SCHEMA.md for schema)',
+      description: 'JSON output (docs/JSON-SCHEMA.md)',
       default: false,
     },
     verbose: {
       type: 'boolean' as const,
-      short: 'v',
       description: 'Show detailed output including warnings',
       default: false,
     },
@@ -121,6 +190,22 @@ export const restoreCommand = define({
       type: 'boolean' as const,
       description: 'List all archived items across all busts (read-only)',
       default: false,
+    },
+    interactive: {
+      type: 'boolean' as const,
+      short: 'i',
+      description: 'Open interactive picker to select items to restore',
+      default: false,
+    },
+    name: {
+      type: 'string' as const,
+      metavar: 'pattern',
+      description: 'Restore item matching this substring (fuzzy, case-insensitive)',
+    },
+    allMatching: {
+      type: 'string' as const,
+      metavar: 'pattern',
+      description: 'Restore every item matching this substring (bulk)',
     },
   },
   async run(ctx) {
@@ -158,27 +243,177 @@ export const restoreCommand = define({
     // ctx._ is the FULL argv — same indexing issue, do NOT use ctx._[0] either.
     const positionalName = ctx.positionals[ctx.commandPath.length] ?? null;
     const listFlag = ctx.values.list === true;
-
-    const mode: RestoreMode = listFlag
-      ? { kind: 'list' }
-      : positionalName !== null
-        ? { kind: 'single', name: String(positionalName) }
-        : { kind: 'full' };
+    const interactiveFlag = ctx.values.interactive === true;
+    const nameFlag =
+      typeof ctx.values.name === 'string' && ctx.values.name.length > 0
+        ? ctx.values.name
+        : undefined;
+    const allMatchingFlag =
+      typeof ctx.values.allMatching === 'string' && ctx.values.allMatching.length > 0
+        ? ctx.values.allMatching
+        : undefined;
 
     const warnings: string[] = [];
     const deps = buildProductionRestoreDeps(warnings);
 
+    // M4: The outer try/catch covers ALL pre-dispatch flows including preflight
+    // validation (mutual-exclusion, CCAUDIT_NO_INTERACTIVE, TTY guard) as well
+    // as discovery (findManifestsForRestore, readManifest, openRestorePicker)
+    // and executeRestore itself. RestorePreflightError is caught here and
+    // short-circuits gracefully without a stack trace.
+    let nameResolvedId: string | null = null;
+    let allMatchingResolvedIds: string[] | null = null;
+    let interactiveIds: string[] | null = null;
     let result: RestoreResult;
     try {
+      // D8-11: mutual exclusion between --interactive / --name / --all-matching.
+      const exclusion = validateRestoreFlagExclusion({
+        interactive: interactiveFlag,
+        name: nameFlag,
+        allMatching: allMatchingFlag,
+      });
+      if (exclusion.type === 'Failure') {
+        throw new RestorePreflightError(1, exclusion.error);
+      }
+      // --interactive + --list is also a hard error (list is read-only; picker
+      // is an executing flow — no sensible combination).
+      if (interactiveFlag && listFlag) {
+        throw new RestorePreflightError(1, 'flags are mutually exclusive: --interactive, --list');
+      }
+
+      // Phase 9 D2 (SC2): CCAUDIT_NO_INTERACTIVE=1 hard-refuses explicit --interactive
+      // with exit code 2. Mirrors the ghost.ts gate so refusal behavior is uniform.
+      if (interactiveFlag && isNoInteractiveEnv()) {
+        throw new RestorePreflightError(2, 'refusing: CCAUDIT_NO_INTERACTIVE is set');
+      }
+
+      // TTY guard (mirrors ghost.ts Site A). CCAUDIT_FORCE_TTY=1 is the
+      // test-only hook; otherwise require a real interactive TTY on both
+      // stdout and stdin.
+      const forceTty = process.env['CCAUDIT_FORCE_TTY'] === '1';
+      const isTty = forceTty || (Boolean(process.stdout.isTTY) && Boolean(process.stdin.isTTY));
+      if (interactiveFlag && !isTty) {
+        throw new RestorePreflightError(
+          1,
+          '--interactive requires a TTY. Use --name <pattern> or --all-matching <pattern> in non-interactive contexts.',
+        );
+      }
+      // --name client-side resolution (D8-09): exact 1 match → single-id
+      // subset restore; 0 → no-match error; ≥2 → verbatim ambiguity block.
+      // NEVER auto-picks the newest on ambiguity.
+      if (nameFlag !== undefined) {
+        const entries = await findManifestsForRestore(deps);
+        const pairs = await Promise.all(
+          entries.map(async (entry) => ({ entry, ops: (await readManifest(entry.path)).ops })),
+        );
+        const deduped = dedupManifestOps(pairs);
+        const matches = matchByName(deduped, nameFlag);
+        if (matches.length === 0) {
+          throw new RestorePreflightError(1, `no archived item matches "${nameFlag}"`);
+        }
+        if (matches.length > 1) {
+          throw new RestorePreflightError(
+            1,
+            formatAmbiguityError(
+              nameFlag,
+              matches.map((m) => m.canonical_id),
+            ).trimEnd(),
+          );
+        }
+        nameResolvedId = matches[0]!.canonical_id;
+      }
+
+      // D81-03: --all-matching CLI-side pre-dispatch gate mirroring --name.
+      // 0 matches → stderr + exit 1 (fixes the legacy executor path that
+      // mapped name-not-found → exit 0 silently succeeding on typos).
+      // ≥1 match → collect canonical_ids and route through { kind:
+      // 'interactive', ids: [...] }. The executor's all-matching branch
+      // stays for API consumers but becomes CLI-unreachable.
+      if (allMatchingFlag !== undefined) {
+        const entries = await findManifestsForRestore(deps);
+        const pairs = await Promise.all(
+          entries.map(async (entry) => ({ entry, ops: (await readManifest(entry.path)).ops })),
+        );
+        const deduped = dedupManifestOps(pairs);
+        const matches = matchByName(deduped, allMatchingFlag);
+        if (matches.length === 0) {
+          throw new RestorePreflightError(1, `no archived item matches "${allMatchingFlag}"`);
+        }
+        allMatchingResolvedIds = matches.map((m) => m.canonical_id);
+      }
+
+      // Plan 08-04: --interactive dispatch — discover archive inventory,
+      // run the TUI picker, and translate confirmed selection into an
+      // { kind: 'interactive', ids } RestoreMode. Cancelled/empty paths
+      // must NOT reach executeRestore (INV-S2 mirror — zero manifest
+      // writes on abort).
+      if (interactiveFlag) {
+        const entries = await findManifestsForRestore(deps);
+        const pairs = await Promise.all(
+          entries.map(async (entry) => ({ entry, ops: (await readManifest(entry.path)).ops })),
+        );
+        // Phase 8.1 D81-01 C1a: collectRestoreableItems (not dedupManifestOps)
+        // so memory (flag/refresh) ops surface in the picker.
+        // Phase 8.2: strip stale archive ops before populating the picker.
+        const { kept: collected } = await filterRestoreableItems(
+          collectRestoreableItems(pairs),
+          deps.pathExists,
+        );
+        if (collected.length === 0) {
+          throw new RestorePreflightError(0, 'Nothing to restore — archive is empty.');
+        }
+        const pickerItems: RestoreItem[] = collected.map((d) => {
+          let category: RestoreItem['category'];
+          if (d.op.op_type === 'archive') {
+            category = d.op.category;
+          } else if (d.op.op_type === 'disable') {
+            category = 'mcp';
+          } else {
+            // flag / refresh — memory frontmatter ops
+            category = 'memory';
+          }
+          return { canonical_id: d.canonical_id, op: d.op, category };
+        });
+        const outcome = await openRestorePicker(pickerItems);
+        if (outcome.kind === 'cancelled') {
+          process.stderr.write('No changes made.\n');
+          process.exit(0);
+        }
+        interactiveIds = outcome.selectedIds;
+      }
+
+      const mode: RestoreMode = listFlag
+        ? { kind: 'list' }
+        : interactiveIds !== null
+          ? { kind: 'interactive', ids: interactiveIds }
+          : nameResolvedId !== null
+            ? { kind: 'interactive', ids: [nameResolvedId] }
+            : allMatchingResolvedIds !== null
+              ? { kind: 'interactive', ids: allMatchingResolvedIds }
+              : positionalName !== null
+                ? { kind: 'single', name: String(positionalName) }
+                : { kind: 'full' };
+
       result = await executeRestore(mode, deps);
     } catch (err) {
-      // Defensive catch: executeRestore uses injectable deps that shouldn't
-      // throw outside their own error paths, but guard against unexpected errors.
+      // Defensive catch: covers both pre-dispatch flows (findManifestsForRestore,
+      // readManifest, openRestorePicker) and executeRestore itself. Any failure
+      // routes into the graceful degradation path: structured stderr/JSON output,
+      // history write, and nonzero exit.
+      //
+      // RestorePreflightError: typed validation failures (mutual-exclusion,
+      // CCAUDIT_NO_INTERACTIVE, TTY guard, no-match, ambiguity, empty archive).
+      // Emit JSON envelope when --json is active; plain stderr otherwise.
+      // No stack trace in either case.
+      const isPreflight = err instanceof RestorePreflightError;
+      const exitCode = isPreflight ? err.exitCode : 2;
       const message = err instanceof Error ? err.message : String(err);
       if (outMode.json) {
         process.stdout.write(
-          JSON.stringify(buildJsonEnvelope('restore', 'n/a', 2, { error: message })) + '\n',
+          JSON.stringify(buildJsonEnvelope('restore', 'n/a', exitCode, { error: message })) + '\n',
         );
+      } else if (isPreflight) {
+        process.stderr.write(message + '\n');
       } else {
         process.stderr.write(`ccaudit restore failed: ${message}\n`);
       }
@@ -186,17 +421,25 @@ export const restoreCommand = define({
         homeDir: _homeDir,
         command: 'restore',
         argv: _argv,
-        exitCode: 2,
+        exitCode,
         durationMs: Date.now() - _historyStartMs,
         cwd: process.cwd(),
         result: null,
         errors: [message],
         ccauditVersion: CCAUDIT_VERSION,
       });
-      process.exit(2);
+      process.exit(exitCode);
     }
 
     const exitCode = restoreResultToExitCode(result);
+
+    // Emit one stderr warning per skipped item BEFORE any stdout output so
+    // --json / --csv / --quiet stdout streams remain pure (D8-16/17).
+    if (result.status === 'success' || result.status === 'partial-success') {
+      for (const entry of result.skipped ?? []) {
+        process.stderr.write(`warning: skipped ${entry.path} — source already exists\n`);
+      }
+    }
 
     // Output mode matrix (precedence: json > csv > quiet > rendered)
     if (outMode.json) {
@@ -290,6 +533,9 @@ function restoreResultToJson(result: RestoreResult, warnings: string[]): Record<
         manifest_path: result.manifestPath,
         duration_ms: result.duration_ms,
         failed: 0,
+        selection_filter: result.selectionFilter ?? null,
+        skipped: result.skipped ?? [],
+        filtered_stale_count: result.filteredStaleCount ?? 0,
       };
     case 'partial-success':
       return {
@@ -299,6 +545,9 @@ function restoreResultToJson(result: RestoreResult, warnings: string[]): Record<
         manifest_path: result.manifestPath,
         duration_ms: result.duration_ms,
         failed: result.failed,
+        selection_filter: result.selectionFilter ?? null,
+        skipped: result.skipped ?? [],
+        filtered_stale_count: result.filteredStaleCount ?? 0,
       };
     case 'no-manifests':
       return {
@@ -320,6 +569,7 @@ function restoreResultToJson(result: RestoreResult, warnings: string[]): Record<
         ...base,
         status: 'list',
         entries: result.entries.map(summarizeListEntry),
+        filtered_stale_count: result.filteredStaleCount,
       };
     case 'running-process':
       return {
@@ -571,12 +821,13 @@ if (import.meta.vitest) {
           manifestPath: '/p',
           manifestPaths: ['/p'],
           duration_ms: 10,
+          skipped: [],
         },
         0,
       ],
       [{ status: 'no-manifests' }, 0],
       [{ status: 'name-not-found', name: 'x' }, 0],
-      [{ status: 'list', entries: [] }, 0],
+      [{ status: 'list', entries: [], filteredStaleCount: 0 }, 0],
       [
         {
           status: 'partial-success',
@@ -589,6 +840,7 @@ if (import.meta.vitest) {
           manifestPath: '/p',
           manifestPaths: ['/p'],
           duration_ms: 5,
+          skipped: [],
         },
         1,
       ],
@@ -618,6 +870,7 @@ if (import.meta.vitest) {
         manifestPath: '/m',
         manifestPaths: ['/m'],
         duration_ms: 50,
+        skipped: [],
       };
       expect(renderRestoreQuiet(result)).toBe('restore\tsuccess\t2\t1\t1\t3\n');
     });
@@ -645,6 +898,7 @@ if (import.meta.vitest) {
         manifestPath: '/m',
         manifestPaths: ['/m'],
         duration_ms: 10,
+        skipped: [],
       };
       const rows = renderRestoreCsv(result).trim().split('\n');
       expect(rows.length).toBe(4); // header + 3 rows
@@ -658,6 +912,77 @@ if (import.meta.vitest) {
 
     it('handles nested projects path key', () => {
       expect(extractServerName('projects./foo.mcpServers.my.server')).toBe('my.server');
+    });
+  });
+
+  describe('formatAmbiguityError', () => {
+    it('returns empty string for 0 candidates', () => {
+      expect(formatAmbiguityError('pencil', [])).toBe('');
+    });
+
+    it('returns empty string for 1 candidate (no ambiguity)', () => {
+      expect(formatAmbiguityError('pencil', ['agent:pencil-sharpener'])).toBe('');
+    });
+
+    it('renders the verbatim D8-09 block for 2 candidates (em-dash preserved)', () => {
+      const out = formatAmbiguityError('pencil', ['agent:pencil-a', 'agent:pencil-b']);
+      expect(out).toBe(
+        '"pencil" is ambiguous \u2014 candidates:\n' +
+          '  agent:pencil-a\n' +
+          '  agent:pencil-b\n' +
+          'Use --all-matching to restore every candidate.\n',
+      );
+    });
+
+    it('includes every candidate on its own indented line for ≥3 matches', () => {
+      const out = formatAmbiguityError('x', ['a', 'b', 'c']);
+      const lines = out.split('\n');
+      expect(lines[0]).toBe('"x" is ambiguous \u2014 candidates:');
+      expect(lines[1]).toBe('  a');
+      expect(lines[2]).toBe('  b');
+      expect(lines[3]).toBe('  c');
+      expect(lines[4]).toBe('Use --all-matching to restore every candidate.');
+      expect(lines[5]).toBe('');
+    });
+  });
+
+  describe('validateRestoreFlagExclusion', () => {
+    const ERR = 'flags are mutually exclusive: --interactive, --name, --all-matching';
+    it('Ok for no flags', () => {
+      expect(validateRestoreFlagExclusion({}).type).toBe('Success');
+    });
+    it('Ok for --interactive alone', () => {
+      expect(validateRestoreFlagExclusion({ interactive: true }).type).toBe('Success');
+    });
+    it('Ok for --name alone', () => {
+      expect(validateRestoreFlagExclusion({ name: 'x' }).type).toBe('Success');
+    });
+    it('Ok for --all-matching alone', () => {
+      expect(validateRestoreFlagExclusion({ allMatching: 'y' }).type).toBe('Success');
+    });
+    it('Err for interactive + name', () => {
+      const r = validateRestoreFlagExclusion({ interactive: true, name: 'x' });
+      expect(r.type).toBe('Failure');
+      if (r.type === 'Failure') expect(r.error).toBe(ERR);
+    });
+    it('Err for interactive + allMatching', () => {
+      const r = validateRestoreFlagExclusion({ interactive: true, allMatching: 'y' });
+      expect(r.type).toBe('Failure');
+      if (r.type === 'Failure') expect(r.error).toBe(ERR);
+    });
+    it('Err for name + allMatching', () => {
+      const r = validateRestoreFlagExclusion({ name: 'x', allMatching: 'y' });
+      expect(r.type).toBe('Failure');
+      if (r.type === 'Failure') expect(r.error).toBe(ERR);
+    });
+    it('Err for all three set', () => {
+      const r = validateRestoreFlagExclusion({
+        interactive: true,
+        name: 'x',
+        allMatching: 'y',
+      });
+      expect(r.type).toBe('Failure');
+      if (r.type === 'Failure') expect(r.error).toBe(ERR);
     });
   });
 }

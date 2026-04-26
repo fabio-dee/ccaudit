@@ -41,6 +41,12 @@ CI is tag-triggered only. Pre-push hook runs format + lint (not tests). Run `pnp
 
 ## Safety invariants
 
+**Approach A** — ship the archive flow as a reversible move + manifest +
+checkpoint-hash gate, not a destructive edit. Every invariant below enforces
+this principle: nothing is deleted, every action is logged to a manifest,
+and every mutation is gated by a prior dry-run checkpoint whose SHA-256
+inventory hash matches the current scan.
+
 These are user-visible behaviors that must not regress. Each was hard-won; the fix history is in the [v1.4.0 changelog entry](./CHANGELOG.md).
 
 - **Nothing is deleted.** Agents and skills are _moved_ to `~/.claude/ccaudit/archived/`. MCP servers are _key-renamed_ in-place (`name` → `ccaudit-disabled:name`). Memory files get a _frontmatter flag_, never destructive rewrites.
@@ -50,6 +56,19 @@ These are user-visible behaviors that must not regress. Each was hard-won; the f
 - **`restore` walks every manifest** in `~/.claude/ccaudit/manifests/`, deduplicated by `archive_path` (newer wins). Single-manifest restore was a bug, not a feature: items archived by older busts must be reachable.
 - **`reclaim` never overwrites an existing source path.** If the inferred source already exists, skip with a warning. Same for any future recovery command.
 - **History writes never crash the main command.** `recordHistory` is wrapped in try/catch at the outermost layer; on failure emit one stderr warning and continue. `CCAUDIT_NO_HISTORY=1` short-circuits before any filesystem work.
+
+### Invariant register (INV-S1..INV-S6)
+
+Identifier-stable register for the v1.5 interactive archive surface. Each
+ID maps to a fixture-backed integration test — regressions here are ship
+blockers.
+
+- **INV-S1** — Unselected MCP server keys are byte-preserved in `~/.claude.json` across a subset bust (no whitespace churn, no key reordering).
+- **INV-S2** — SIGINT / Ctrl+C during any TUI flow produces zero manifest writes: aborted picker sessions leave `~/.claude/ccaudit/manifests/` untouched.
+- **INV-S3** — `restore` round-trips both subset and full manifests: items archived by a subset bust and items archived by a later full bust are both reachable from a single `restore` invocation.
+- **INV-S4** — `manifest.header.planned_ops` counts reflect the filtered plan, not the full plan: a subset bust of N items writes exactly `archive + disable + flag === N` operation records.
+- **INV-S5** — `bust.summary.freedTokens` is subset-accurate; the additive `bust.summary.totalPlannedTokens` preserves the full-plan figure for consumers. Full-inventory busts satisfy `freedTokens === totalPlannedTokens`.
+- **INV-S6** — Framework-as-unit protection blocks partial busts by default: members of a partially-used framework are not selectable in the TUI and are skipped by the non-interactive bust path unless `--force-partial` is explicitly set on both `--dry-run` and `--dangerously-bust-ghosts`.
 
 ## Where things live
 

@@ -1,0 +1,290 @@
+/**
+ * Safety-invariant integration tests for INV-S6: framework-as-unit bust protection.
+ *
+ * Spawns the built binary (apps/ccaudit/dist/index.js) with HOME overridden to a
+ * tmpdir fixture. Uses the Phase 3 helpers from _test-helpers.ts:
+ *   - createFrameworkFixture: partial-use GSD framework (1 used + 2 ghost agents)
+ *   - buildFakePs: fake `ps` shim so preflight passes inside a Claude Code session
+ *   - runCcauditGhost: subprocess runner returning live child + done promise
+ *   - agentItemId: canonical ID for a global agent file
+ *
+ * Coverage:
+ *   INV-S6 Test A: framework protection is enforced by default — ghost member of a
+ *                  partially-used framework is NOT archived; source file survives;
+ *                  dry-run JSON envelope carries changePlan.protected[]; bust JSON
+ *                  envelope carries bust.protectionWarnings[].
+ *   INV-S6 Test B: --force-partial unlocks protection — ghost member IS archived;
+ *                  manifest planned_ops.archive === 1.
+ *   INV-S6 Test C: TUI picker locking is a deferred placeholder (Phase 6 TUI-05).
+ *
+ * Local-vs-CI note
+ * ─────────────────
+ * Same fake-ps shim as bust-command.test.ts: each test writes a FAKE `ps` script
+ * into `<tmpHome>/bin/ps` so the bust preflight finds no running Claude Code
+ * process and proceeds. Without it, tests run from inside a Claude Code session
+ * would fail with exit 3 every time.
+ */
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
+import { existsSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  buildFakePs,
+  createFrameworkFixture,
+  createMultiFrameworkFixture,
+  runCcauditGhost,
+  agentItemId,
+} from './_test-helpers.ts';
+
+// ── Resolve dist path ──────────────────────────────────────────────────────
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const distPath = path.resolve(here, '..', '..', 'dist', 'index.js');
+
+// ── Guard: dist must exist before any test runs ────────────────────────────
+
+beforeAll(() => {
+  if (!existsSync(distPath)) {
+    throw new Error(
+      `dist binary not found at ${distPath}. Run \`pnpm -F ccaudit build\` before running this test.`,
+    );
+  }
+});
+
+// ── INV-S6 framework protection tests ─────────────────────────────────────
+
+// Windows: fake `ps` shell scripts require /bin/sh — skip on win32.
+describe.skipIf(process.platform === 'win32')('INV-S6: framework-as-unit bust protection', () => {
+  let tmpHome: string;
+
+  beforeEach(async () => {
+    tmpHome = await mkdtemp(path.join(tmpdir(), 'ccaudit-inv-s6-'));
+    // Install fake-ps shim so the bust preflight passes when run inside
+    // a Claude Code session (same pattern as bust-command.test.ts).
+    await buildFakePs(tmpHome);
+    // Build the partial-use GSD framework fixture:
+    //   gsd-planner.md  → used (recent mtime + Task invocation in session JSONL)
+    //   gsd-researcher.md → ghost (60-day-old mtime)
+    //   gsd-verifier.md   → ghost (60-day-old mtime)
+    await createFrameworkFixture(tmpHome);
+  });
+
+  afterEach(async () => {
+    await rm(tmpHome, { recursive: true, force: true });
+  });
+
+  // ── Test A: protection enforced by default ─────────────────────────────
+
+  it('Test A — INV-S6: protected ghost is excluded by default; source file survives', async () => {
+    // Compute the canonical ID for the ghost we want to select.
+    const ghostId = agentItemId(tmpHome, 'gsd-researcher.md');
+
+    // Step 1: dry-run to create the checkpoint.
+    // Protected items appear in changePlan.protected[]; archive count is 0.
+    const dryResult = await runCcauditGhost(tmpHome, ['--dry-run', '--json'], {}).done;
+    expect(dryResult.exitCode, `dry-run stderr: ${dryResult.stderr}`).toBe(0);
+
+    const dryEnvelope = JSON.parse(dryResult.stdout) as {
+      dryRun: boolean;
+      changePlan: {
+        archive: unknown[];
+        counts: { agents: number };
+        protected?: Array<{ name: string; tier: string }>;
+        protectionWarnings?: Array<{ frameworkId: string; status: string }>;
+      };
+    };
+
+    // The dry-run archive list is empty — the ghosts are protected.
+    expect(dryEnvelope.dryRun).toBe(true);
+    expect(dryEnvelope.changePlan.counts.agents).toBe(0);
+    expect(dryEnvelope.changePlan.archive).toHaveLength(0);
+
+    // changePlan.protected[] is populated with the two framework-protected ghosts.
+    expect(dryEnvelope.changePlan.protected).toBeDefined();
+    expect(dryEnvelope.changePlan.protected!.length).toBeGreaterThanOrEqual(1);
+    const protectedNames = dryEnvelope.changePlan.protected!.map((p) => p.name);
+    expect(protectedNames).toContain('gsd-researcher');
+
+    // protectionWarnings[] carries the framework audit trail.
+    expect(dryEnvelope.changePlan.protectionWarnings).toBeDefined();
+    expect(dryEnvelope.changePlan.protectionWarnings!).toHaveLength(1);
+    expect(dryEnvelope.changePlan.protectionWarnings![0]!.frameworkId).toBe('gsd');
+    expect(dryEnvelope.changePlan.protectionWarnings![0]!.status).toBe('partially-used');
+
+    // Step 2: bust — select the protected ghost via CCAUDIT_SELECT_IDS.
+    // Without --force-partial the item is removed from the eligible set before
+    // reaching runBust, so it is never archived.
+    const bustResult = await runCcauditGhost(
+      tmpHome,
+      ['--dangerously-bust-ghosts', '--yes-proceed-busting', '--json'],
+      { env: { CCAUDIT_SELECT_IDS: ghostId } },
+    ).done;
+    expect(bustResult.exitCode, `bust stderr: ${bustResult.stderr}`).toBe(0);
+
+    const bustEnvelope = JSON.parse(bustResult.stdout) as {
+      bust: {
+        status: string;
+        counts: { archive: { agents: number } };
+        protectionWarnings?: Array<{ frameworkId: string; status: string }>;
+      };
+    };
+    expect(bustEnvelope.bust.status).toBe('success');
+
+    // No agents were archived — protection held.
+    expect(bustEnvelope.bust.counts.archive.agents).toBe(0);
+
+    // The bust JSON envelope emits protectionWarnings for the audit trail.
+    expect(bustEnvelope.bust.protectionWarnings).toBeDefined();
+    expect(bustEnvelope.bust.protectionWarnings!).toHaveLength(1);
+    expect(bustEnvelope.bust.protectionWarnings![0]!.frameworkId).toBe('gsd');
+
+    // Source file is still on disk — nothing was moved.
+    expect(
+      existsSync(path.join(tmpHome, '.claude', 'agents', 'gsd-researcher.md')),
+      'gsd-researcher.md must still exist after protection-blocked bust',
+    ).toBe(true);
+  });
+
+  // ── Test B: --force-partial unlocks protection ─────────────────────────
+
+  it('Test B — INV-S6: --force-partial unlocks protected ghost; file is archived', async () => {
+    // Compute the canonical ID for the ghost we want to select.
+    const ghostId = agentItemId(tmpHome, 'gsd-researcher.md');
+
+    // Step 1: dry-run WITH --force-partial so the checkpoint hash covers the
+    // expanded eligible set (protection bypassed at dry-run time too).
+    const dryResult = await runCcauditGhost(tmpHome, ['--dry-run', '--force-partial', '--json'], {})
+      .done;
+    expect(dryResult.exitCode, `dry-run stderr: ${dryResult.stderr}`).toBe(0);
+
+    const dryEnvelope = JSON.parse(dryResult.stdout) as {
+      dryRun: boolean;
+      changePlan: { counts: { agents: number } };
+    };
+    // With --force-partial both ghost agents are eligible → counts > 0.
+    expect(dryEnvelope.dryRun).toBe(true);
+    expect(dryEnvelope.changePlan.counts.agents).toBeGreaterThanOrEqual(1);
+
+    // Step 2: bust WITH --force-partial and CCAUDIT_SELECT_IDS targeting the researcher.
+    const bustResult = await runCcauditGhost(
+      tmpHome,
+      ['--dangerously-bust-ghosts', '--force-partial', '--yes-proceed-busting', '--json'],
+      { env: { CCAUDIT_SELECT_IDS: ghostId } },
+    ).done;
+    expect(bustResult.exitCode, `bust stderr: ${bustResult.stderr}`).toBe(0);
+
+    const bustEnvelope = JSON.parse(bustResult.stdout) as {
+      bust: {
+        status: string;
+        counts: { archive: { agents: number } };
+        manifestPath: string;
+      };
+    };
+    expect(bustEnvelope.bust.status).toBe('success');
+
+    // Exactly 1 agent was archived — the force-partial override worked.
+    expect(bustEnvelope.bust.counts.archive.agents).toBe(1);
+
+    // Source file moved to archive; no longer at original path.
+    expect(
+      existsSync(path.join(tmpHome, '.claude', 'agents', 'gsd-researcher.md')),
+      'gsd-researcher.md must NOT exist at original path after --force-partial bust',
+    ).toBe(false);
+
+    // Archive destination exists.
+    expect(
+      existsSync(
+        path.join(tmpHome, '.claude', 'ccaudit', 'archived', 'agents', 'gsd-researcher.md'),
+      ),
+      'gsd-researcher.md must exist in the archive directory after --force-partial bust',
+    ).toBe(true);
+  });
+
+  // ── Test C: INV-S6 with a multi-framework fixture (Phase 6 strengthening) ──
+  //
+  // Converts the former `it.todo` Phase 6 pointer into a real test. Uses
+  // `createMultiFrameworkFixture` to stand up TWO curated frameworks, each
+  // in partially-used state, and asserts that:
+  //   - Without `--force-partial`, selecting a ghost member via
+  //     `CCAUDIT_SELECT_IDS` is filtered by framework protection: no archive,
+  //     source files survive on disk, `protectionWarnings[]` emitted for
+  //     BOTH frameworks in the JSON envelope.
+  //   - With `--force-partial`, selection succeeds and the manifest reflects
+  //     exactly the selected subset (1 item archived, not the whole group).
+  //
+  // This is the canonical Phase 6 INV-S6 regression: multi-framework trust
+  // boundary (2 independent partially-used groups) plus the interactive
+  // selection gate (selection Set ≠ filtered list).
+
+  it('Test C — INV-S6 multi-framework: both frameworks blocked; --force-partial archives only the selected subset', async () => {
+    // Clean up the tmpHome created by beforeEach before replacing it with the
+    // multi-framework fixture, so the original temp directory is not leaked.
+    await rm(tmpHome, { recursive: true, force: true });
+    tmpHome = await (async () => {
+      const p = await mkdtemp(path.join(tmpdir(), 'ccaudit-inv-s6-multi-'));
+      await buildFakePs(p);
+      await createMultiFrameworkFixture(p, [
+        { prefix: 'gsd', usedMembers: ['planner'], ghostMembers: ['researcher', 'verifier'] },
+        { prefix: 'sc', usedMembers: ['analyze'], ghostMembers: ['audit', 'improve'] },
+      ]);
+      return p;
+    })();
+
+    // ── Without --force-partial: dry-run sees BOTH frameworks protected. ──
+    const dryResult = await runCcauditGhost(tmpHome, ['--dry-run', '--json'], {}).done;
+    expect(dryResult.exitCode, `dry-run stderr: ${dryResult.stderr}`).toBe(0);
+    const dry = JSON.parse(dryResult.stdout) as {
+      changePlan: {
+        archive: unknown[];
+        protected?: Array<{ name: string }>;
+        protectionWarnings?: Array<{ frameworkId: string; status: string }>;
+      };
+    };
+    expect(dry.changePlan.archive).toHaveLength(0);
+    const warnings = dry.changePlan.protectionWarnings ?? [];
+    const warnIds = warnings.map((w) => w.frameworkId).sort();
+    expect(warnIds).toContain('gsd');
+    expect(warnIds).toContain('superclaude');
+    // protected[] carries all 4 ghost members across both frameworks.
+    expect(dry.changePlan.protected!.length).toBeGreaterThanOrEqual(4);
+
+    // ── Selecting one ghost without --force-partial is blocked. ──
+    const ghostId = agentItemId(tmpHome, 'sc-audit.md');
+    const blockedBust = await runCcauditGhost(
+      tmpHome,
+      ['--dangerously-bust-ghosts', '--yes-proceed-busting', '--json'],
+      { env: { CCAUDIT_SELECT_IDS: ghostId } },
+    ).done;
+    expect(blockedBust.exitCode, `stderr: ${blockedBust.stderr}`).toBe(0);
+    const blockedEnv = JSON.parse(blockedBust.stdout) as {
+      bust: { counts: { archive: { agents: number } } };
+    };
+    expect(blockedEnv.bust.counts.archive.agents).toBe(0);
+    // Source still on disk.
+    expect(existsSync(path.join(tmpHome, '.claude', 'agents', 'sc-audit.md'))).toBe(true);
+
+    // ── With --force-partial: dry-run + bust one specific ghost. ──
+    const dryForce = await runCcauditGhost(tmpHome, ['--dry-run', '--force-partial', '--json'], {})
+      .done;
+    expect(dryForce.exitCode).toBe(0);
+
+    const busted = await runCcauditGhost(
+      tmpHome,
+      ['--dangerously-bust-ghosts', '--force-partial', '--yes-proceed-busting', '--json'],
+      { env: { CCAUDIT_SELECT_IDS: ghostId } },
+    ).done;
+    expect(busted.exitCode, `stderr: ${busted.stderr}`).toBe(0);
+    const bustedEnv = JSON.parse(busted.stdout) as {
+      bust: { counts: { archive: { agents: number } } };
+    };
+    // Exactly 1 archived — the selected subset, NOT the whole framework group.
+    expect(bustedEnv.bust.counts.archive.agents).toBe(1);
+    expect(existsSync(path.join(tmpHome, '.claude', 'agents', 'sc-audit.md'))).toBe(false);
+    // The other framework's ghosts + the sibling sc-improve stay untouched.
+    expect(existsSync(path.join(tmpHome, '.claude', 'agents', 'sc-improve.md'))).toBe(true);
+    expect(existsSync(path.join(tmpHome, '.claude', 'agents', 'gsd-researcher.md'))).toBe(true);
+    expect(existsSync(path.join(tmpHome, '.claude', 'agents', 'gsd-verifier.md'))).toBe(true);
+  });
+});

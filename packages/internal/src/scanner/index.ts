@@ -1,5 +1,16 @@
 // Scanner types
-export type { InventoryItem, ScanResult, ScannerOptions, InvocationSummary } from './types.ts';
+export type {
+  InventoryItem,
+  ScanResult,
+  ScannerOptions,
+  InvocationSummary,
+  FrameworkProtection,
+} from './types.ts';
+
+// Phase 6 pure helpers (D6-02 / D6-18 / D6-19)
+export { presentPath } from './_present-path.ts';
+export { computeConfigRefs, compareConfigRef, isProtected } from './_config-refs.ts';
+export type { ScannedMcpServer } from './_config-refs.ts';
 
 // Classification
 export { classifyGhost, LIKELY_GHOST_MS, DEFINITE_GHOST_MS } from './classify.ts';
