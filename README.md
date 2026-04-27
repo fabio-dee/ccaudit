@@ -239,6 +239,7 @@ restore by name. See the `restore` section below.
 | `trend`         | Invocation frequency over time                                                         | `--since`                                                                                                                                                                                                 |
 | `restore`       | Revert a previous bust                                                                 | `[name]`, `--list`, `--interactive` / `-i`, `--name <pattern>`, `--all-matching <pattern>`                                                                                                                |
 | `reclaim`       | Recover orphaned files in `~/.claude/ccaudit/archived/` not referenced by any manifest | `--dry-run`                                                                                                                                                                                               |
+| `purge-archive` | Drain `~/.claude/ccaudit/archived/` of reclaimed and stale entries                     | `--dry-run`, `--yes`, `--json`                                                                                                                                                                            |
 | `install-skill` | Install the `/ccaudit-bust` Claude Code skill                                          | `--dry-run`, `--force`, `--project`                                                                                                                                                                       |
 
 ---
@@ -323,7 +324,7 @@ Notes:
 | Flag / Arg                 | Short | Description                                                                                                                                                                  |
 | -------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | _(no args)_                |       | Restore all items from **every** bust manifest (deduplicated, newer-wins).                                                                                                   |
-| `<name>`                   |       | Restore a single archived item by exact canonical id (e.g. `restore code-reviewer`).                                                                                         |
+| `<name>`                   |       | Restore a single archived item by name: basename without extension for agents/skills/commands (e.g. `restore code-reviewer`), or server name for MCP entries.                |
 | `--interactive`            | `-i`  | Open a TUI picker listing every archived item across all manifests. Select a subset to restore. Requires a TTY; may be combined with `--json` for the final result envelope. |
 | `--name <pattern>`         |       | Fuzzy single-match restore (case-insensitive substring). Ambiguous patterns error with a candidate list — never auto-resolve.                                                |
 | `--all-matching <pattern>` |       | Bulk restore of every item matching the fuzzy pattern. Exits `1` with `no archived item matches "<pattern>"` on stderr if nothing matches.                                   |

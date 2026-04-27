@@ -88,18 +88,35 @@ fields surfacing the subset-restore surface landed in v1.5:
   the invocation restored the full inventory. Populated as
   `{ "mode": "subset", "ids": [...] }` for the three subset entry points:
   `--interactive`, `--name <pattern>` (single-match), and `--all-matching <pattern>`.
-  `ids` are canonical item identifiers (e.g. `agent:code-reviewer`,
-  `mcp:playwright`).
+  `ids` are op-shaped canonical identifier strings — one per restored operation.
+  Three shapes exist, matching the three op types:
+  - **Archive ops** (agents, skills, commands): `<category>:<archive_path>` —
+    e.g. `agent:/home/user/.claude/ccaudit/archived/code-reviewer.md`
+  - **Disable ops** (MCP servers): `mcp:<config_path>:<renamed_key>` —
+    e.g. `mcp:/home/user/.claude.json:ccaudit-disabled:playwright`
+  - **Memory ops** (flag / refresh): `memory:<op_type>:<file_path>:<op_id>` —
+    e.g. `memory:flag:/home/user/.claude/projects/myproject/CLAUDE.md:3fa85f64-5717-4562-b3fc-2c963f66afa6`
 - **`skipped`** — type `Array<{ "reason": "source_exists", "path": string, "canonicalId": string }>`.
   Always present on success + partial-success (may be empty `[]`). One entry
   per item whose source path already existed on disk at restore time — those
   items are never overwritten (safety invariant). Each entry is also surfaced
   as a single stderr warning line: `warning: skipped <path> — source already exists`.
+  `canonicalId` follows the same op-shaped format as `selectionFilter.ids`.
 
 ```json
-"selectionFilter": { "mode": "subset", "ids": ["agent:code-reviewer", "mcp:playwright"] },
+"selectionFilter": {
+  "mode": "subset",
+  "ids": [
+    "agent:/home/user/.claude/ccaudit/archived/code-reviewer.md",
+    "mcp:/home/user/.claude.json:ccaudit-disabled:playwright"
+  ]
+},
 "skipped": [
-  { "reason": "source_exists", "path": "/Users/me/.claude/agents/code-reviewer.md", "canonicalId": "agent:code-reviewer" }
+  {
+    "reason": "source_exists",
+    "path": "/home/user/.claude/agents/code-reviewer.md",
+    "canonicalId": "agent:/home/user/.claude/ccaudit/archived/code-reviewer.md"
+  }
 ]
 ```
 

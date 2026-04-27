@@ -13,6 +13,11 @@
  * Note: `restore --list` silently skips corrupt manifests (header===null) by
  * design (that code path is unchanged). The crash risk M4 addresses is in the
  * pre-dispatch dedup flows that call readManifest then iterate the ops.
+ *
+ * M4-subset — when a corrupt manifest coexists with a valid one, subset
+ * restore paths (--name, --all-matching, --interactive pre-check) must skip
+ * the corrupt file with a warning and continue — not hard-fail the whole
+ * restore (CodeRabbit finding 3c50af1d-2a62-412a-bd4e-9fda9d53a388).
  */
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { existsSync } from 'node:fs';
@@ -97,6 +102,107 @@ describe.skipIf(process.platform === 'win32')(
         env: { PATH: `${path.join(tmpHome, 'bin')}:${process.env.PATH ?? ''}` },
       });
       expect(r.exitCode, `stdout:\n${r.stdout}\nstderr:\n${r.stderr}`).not.toBe(0);
+      expect(r.stderr).not.toContain('at Object.');
+      expect(r.stdout).not.toContain('at Object.');
+    });
+  },
+);
+
+// ---------------------------------------------------------------------------
+// M4-subset: corrupt manifest coexists with a valid one
+// ---------------------------------------------------------------------------
+
+/**
+ * Write a minimal valid manifest (header + one archive op + footer).
+ * The archive_path does NOT need to exist on disk — --name / --all-matching
+ * only need to resolve the canonical_id; the actual file moves happen later.
+ */
+async function writeValidManifestWithKnownItem(tmpHome: string): Promise<void> {
+  const manifestsDir = path.join(tmpHome, '.claude', 'ccaudit', 'manifests');
+  await mkdir(manifestsDir, { recursive: true });
+  const archivePath = path.join(tmpHome, '.claude', 'ccaudit', 'archived', 'agents', 'canary.md');
+  const sourcePath = path.join(tmpHome, '.claude', 'agents', 'canary.md');
+  const manifestPath = path.join(manifestsDir, 'bust-2026-04-19T10-00-00-000Z-vld1.jsonl');
+  const lines = [
+    JSON.stringify({
+      record_type: 'header',
+      manifest_version: 1,
+      ccaudit_version: '1.5.0-test',
+      checkpoint_ghost_hash: 'cafebabe',
+      checkpoint_timestamp: '2026-04-19T09:59:59.000Z',
+      since_window: '30d',
+      os: 'darwin',
+      node_version: 'v20.0.0',
+      planned_ops: { archive: 1, disable: 0, flag: 0 },
+    }),
+    JSON.stringify({
+      op_id: 'op-canary',
+      op_type: 'archive',
+      timestamp: '2026-04-19T10:00:00.000Z',
+      status: 'completed',
+      category: 'agent',
+      scope: 'global',
+      source_path: sourcePath,
+      archive_path: archivePath,
+      content_sha256: '0'.repeat(64),
+    }),
+    JSON.stringify({ record_type: 'footer', completed_at: '2026-04-19T10:00:01.000Z' }),
+  ];
+  await writeFile(manifestPath, lines.join('\n') + '\n', 'utf8');
+}
+
+describe.skipIf(process.platform === 'win32')(
+  'M4-subset — corrupt manifest alongside valid one: subset paths skip corrupt and proceed',
+  () => {
+    let tmpHome: string;
+
+    beforeEach(async () => {
+      tmpHome = await makeTmpHome();
+      await buildFakePs(tmpHome);
+      // Corrupt manifest first (lexicographically newer = listed first by mtime logic)
+      await writeCorruptManifest(tmpHome);
+      // Valid manifest with a known item
+      await writeValidManifestWithKnownItem(tmpHome);
+    });
+
+    afterEach(async () => {
+      await cleanupTmpHome(tmpHome);
+    });
+
+    it('restore --name <known> skips corrupt manifest and exits with no-match or success (no crash)', async () => {
+      const r = await runCcauditCli(tmpHome, ['restore', '--name', 'canary'], {
+        env: { PATH: `${path.join(tmpHome, 'bin')}:${process.env.PATH ?? ''}` },
+      });
+      // No stack trace regardless of exit code
+      expect(r.stderr).not.toContain('at Object.');
+      expect(r.stdout).not.toContain('at Object.');
+      // Must not be a hard crash (exit code 2 = unhandled exception in our ladder)
+      expect(r.exitCode, `stderr:\n${r.stderr}`).not.toBe(2);
+    });
+
+    it('restore --all-matching <known> skips corrupt manifest and exits with no-match or success (no crash)', async () => {
+      const r = await runCcauditCli(tmpHome, ['restore', '--all-matching', 'canary'], {
+        env: { PATH: `${path.join(tmpHome, 'bin')}:${process.env.PATH ?? ''}` },
+      });
+      expect(r.stderr).not.toContain('at Object.');
+      expect(r.stdout).not.toContain('at Object.');
+      expect(r.exitCode, `stderr:\n${r.stderr}`).not.toBe(2);
+    });
+
+    it('restore --name <unknown> with mixed manifests: exits 1 (no-match), no crash', async () => {
+      const r = await runCcauditCli(tmpHome, ['restore', '--name', 'does-not-exist'], {
+        env: { PATH: `${path.join(tmpHome, 'bin')}:${process.env.PATH ?? ''}` },
+      });
+      expect(r.exitCode, `stderr:\n${r.stderr}`).toBe(1);
+      expect(r.stderr).not.toContain('at Object.');
+      expect(r.stdout).not.toContain('at Object.');
+    });
+
+    it('restore --all-matching <unknown> with mixed manifests: exits 1 (no-match), no crash', async () => {
+      const r = await runCcauditCli(tmpHome, ['restore', '--all-matching', 'does-not-exist'], {
+        env: { PATH: `${path.join(tmpHome, 'bin')}:${process.env.PATH ?? ''}` },
+      });
+      expect(r.exitCode, `stderr:\n${r.stderr}`).toBe(1);
       expect(r.stderr).not.toContain('at Object.');
       expect(r.stdout).not.toContain('at Object.');
     });

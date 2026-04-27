@@ -978,12 +978,22 @@ async function executeInteractiveOps(
   const allEntries = await findManifestsForRestore(deps);
   if (allEntries.length === 0) return { status: 'no-manifests' };
 
-  // Zip (entry, ops) for each valid manifest; silently skip corrupt ones
-  // in the middle of the list (the full-restore path warns via onWarning;
-  // subset restore keeps the invariant by also warning).
+  // Zip (entry, ops) for each valid manifest; skip unreadable or corrupt ones
+  // with a warning — mirrors the full-restore / --list tolerant pattern so a
+  // single bad manifest never hard-fails a subset restore.
   const zipped: Array<{ entry: ManifestEntry; ops: readonly ManifestOp[] }> = [];
   for (const e of allEntries) {
-    const m = await deps.readManifest(e.path);
+    let m: Awaited<ReturnType<RestoreDeps['readManifest']>>;
+    try {
+      m = await deps.readManifest(e.path);
+    } catch (err) {
+      deps.onWarning?.(
+        `⚠️  Skipping unreadable manifest ${path.basename(e.path)}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      continue;
+    }
     if (m.header === null) {
       deps.onWarning?.(`⚠️  Skipping corrupt manifest ${path.basename(e.path)} (no header record)`);
       continue;
@@ -1302,8 +1312,23 @@ export async function executeRestore(mode: RestoreMode, deps: RestoreDeps): Prom
     if (allEntries.length === 0) return { status: 'no-manifests' };
     const zipped: Array<{ entry: ManifestEntry; ops: readonly ManifestOp[] }> = [];
     for (const e of allEntries) {
-      const m = await deps.readManifest(e.path);
-      if (m.header === null) continue;
+      let m: Awaited<ReturnType<RestoreDeps['readManifest']>>;
+      try {
+        m = await deps.readManifest(e.path);
+      } catch (err) {
+        deps.onWarning?.(
+          `⚠️  Skipping unreadable manifest ${path.basename(e.path)}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        continue;
+      }
+      if (m.header === null) {
+        deps.onWarning?.(
+          `⚠️  Skipping corrupt manifest ${path.basename(e.path)} (no header record)`,
+        );
+        continue;
+      }
       zipped.push({ entry: e, ops: m.ops });
     }
     const deduped = dedupManifestOps(zipped);

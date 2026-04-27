@@ -303,9 +303,25 @@ export const restoreCommand = define({
       // NEVER auto-picks the newest on ambiguity.
       if (nameFlag !== undefined) {
         const entries = await findManifestsForRestore(deps);
-        const pairs = await Promise.all(
-          entries.map(async (entry) => ({ entry, ops: (await readManifest(entry.path)).ops })),
-        );
+        const pairs: Array<{ entry: (typeof entries)[number]; ops: readonly ManifestOp[] }> = [];
+        for (const entry of entries) {
+          try {
+            const m = await readManifest(entry.path);
+            if (m.header === null) {
+              deps.onWarning?.(
+                `⚠️  Skipping corrupt manifest ${path.basename(entry.path)} (no header record)`,
+              );
+              continue;
+            }
+            pairs.push({ entry, ops: m.ops });
+          } catch (err) {
+            deps.onWarning?.(
+              `⚠️  Skipping unreadable manifest ${path.basename(entry.path)}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          }
+        }
         const deduped = dedupManifestOps(pairs);
         const matches = matchByName(deduped, nameFlag);
         if (matches.length === 0) {
@@ -331,9 +347,25 @@ export const restoreCommand = define({
       // stays for API consumers but becomes CLI-unreachable.
       if (allMatchingFlag !== undefined) {
         const entries = await findManifestsForRestore(deps);
-        const pairs = await Promise.all(
-          entries.map(async (entry) => ({ entry, ops: (await readManifest(entry.path)).ops })),
-        );
+        const pairs: Array<{ entry: (typeof entries)[number]; ops: readonly ManifestOp[] }> = [];
+        for (const entry of entries) {
+          try {
+            const m = await readManifest(entry.path);
+            if (m.header === null) {
+              deps.onWarning?.(
+                `⚠️  Skipping corrupt manifest ${path.basename(entry.path)} (no header record)`,
+              );
+              continue;
+            }
+            pairs.push({ entry, ops: m.ops });
+          } catch (err) {
+            deps.onWarning?.(
+              `⚠️  Skipping unreadable manifest ${path.basename(entry.path)}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          }
+        }
         const deduped = dedupManifestOps(pairs);
         const matches = matchByName(deduped, allMatchingFlag);
         if (matches.length === 0) {
@@ -349,9 +381,25 @@ export const restoreCommand = define({
       // writes on abort).
       if (interactiveFlag) {
         const entries = await findManifestsForRestore(deps);
-        const pairs = await Promise.all(
-          entries.map(async (entry) => ({ entry, ops: (await readManifest(entry.path)).ops })),
-        );
+        const pairs: Array<{ entry: (typeof entries)[number]; ops: readonly ManifestOp[] }> = [];
+        for (const entry of entries) {
+          try {
+            const m = await readManifest(entry.path);
+            if (m.header === null) {
+              deps.onWarning?.(
+                `⚠️  Skipping corrupt manifest ${path.basename(entry.path)} (no header record)`,
+              );
+              continue;
+            }
+            pairs.push({ entry, ops: m.ops });
+          } catch (err) {
+            deps.onWarning?.(
+              `⚠️  Skipping unreadable manifest ${path.basename(entry.path)}: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          }
+        }
         // Phase 8.1 D81-01 C1a: collectRestoreableItems (not dedupManifestOps)
         // so memory (flag/refresh) ops surface in the picker.
         // Phase 8.2: strip stale archive ops before populating the picker.
