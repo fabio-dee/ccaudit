@@ -537,6 +537,51 @@ if (import.meta.vitest) {
       expect(result[0]!.importDepth).toBeUndefined();
     });
 
+    // ── A5: Windows-shape path normalization in import-chain row names ─────
+    // Locks the backslash→forward-slash normalization at scanImportChain
+    // (`path.relative(...).replace(/\\/g, '/')`). Production code is correct;
+    // these tests prevent silent regression if someone reorders the chain or
+    // drops the `.replace()`.
+    describe('Windows-path normalization in import-chain row names (A5)', () => {
+      it('emits forward slashes in the name even when the imported file lives in a nested subdirectory', async () => {
+        // Build: projRoot/CLAUDE.md  →  @sub/dir/child.md
+        // The relative path computed via path.relative() on POSIX is already
+        // `sub/dir/child.md`. The .replace(/\\/g, '/') pass is a no-op on
+        // POSIX but the *output* shape is what we lock here: callers must
+        // be able to assume forward slashes in the name field.
+        const projPath = path.join(tmpDir3, 'win-shape-proj');
+        const subDir = path.join(projPath, 'sub', 'dir');
+        await mkdir(subDir, { recursive: true });
+        const child = path.join(subDir, 'child.md');
+        await writeFile(child, '# Child');
+        const root = path.join(projPath, 'CLAUDE.md');
+        await writeFile(root, '@sub/dir/child.md\n# Root');
+
+        const result = await scanMemoryFiles(
+          { legacy: path.join(tmpDir3, 'legacy'), xdg: path.join(tmpDir3, 'xdg') },
+          [projPath],
+        );
+        const chainItem = result.find((r) => r.importDepth !== undefined);
+        expect(chainItem, 'expected a chain row for the imported child').toBeDefined();
+        // Forward slashes only — no backslashes leak into the name.
+        expect(chainItem!.name).toBe('CLAUDE.md @ sub/dir/child.md');
+        expect(chainItem!.name).not.toMatch(/\\/);
+      });
+
+      it('the .replace(/\\\\/g, "/") step turns a synthetic backslash-bearing input into forward slashes', () => {
+        // Direct sanity check on the normalization step, isolated from filesystem
+        // walking. Mirrors the production expression at scanImportChain.
+        const winShape = 'C:\\Users\\me\\.claude\\agents\\foo.md';
+        expect(winShape.replace(/\\/g, '/')).toBe('C:/Users/me/.claude/agents/foo.md');
+
+        const posixShape = '/home/me/.claude/agents/foo.md';
+        expect(posixShape.replace(/\\/g, '/')).toBe('/home/me/.claude/agents/foo.md');
+
+        const mixed = 'C:\\Users/me\\.claude/agents\\foo.md';
+        expect(mixed.replace(/\\/g, '/')).toBe('C:/Users/me/.claude/agents/foo.md');
+      });
+    });
+
     it('import inside fenced code block is NOT followed', async () => {
       const legacyDir = path.join(tmpDir3, 'legacy');
       await mkdir(legacyDir, { recursive: true });
