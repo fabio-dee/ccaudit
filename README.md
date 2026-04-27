@@ -701,21 +701,10 @@ context, lets you multi-select with the same keybindings as the archive
 picker, and signals selected processes (TERM by default, KILL on confirm).
 For when one rogue session is pinning context across half your machine.
 
-### v1.6 game CLI API contract
+### v1.6 stable CLI/JSON API contract
 
-A separate, stable JSON CLI surface scoped to embedding tools — initial
-consumer is the standalone **ccaudit Ghost Town** game. The contract:
-
-```bash
-ccaudit game scan --json
-ccaudit game bust --ids <file> --json
-ccaudit game vault --json
-ccaudit game restore --ids <file> --json
-ccaudit game agent-context --id <id> --json
-ccaudit game dry-run --ids <file> --json   # optional
-```
-
-Stability guarantees external consumers will rely on:
+v1.6 will freeze a public JSON CLI surface scoped to embedding tools and
+downstream consumers. Stability guarantees external consumers will rely on:
 
 - TUI behavior is **not** part of the contract.
 - Human-rendered tables are **not** part of the contract.
@@ -724,8 +713,9 @@ Stability guarantees external consumers will rely on:
 - Path-shaped canonical IDs are not public unless explicitly declared.
 
 The envelope follows the existing `--json` shape (see
-[docs/JSON-SCHEMA.md](./docs/JSON-SCHEMA.md)) with a `command: "game.*"` and
-`apiVersion` field for forward compatibility.
+[docs/JSON-SCHEMA.md](./docs/JSON-SCHEMA.md)) with an `apiVersion` field for
+forward compatibility. Subcommand names and the full contract surface will land
+in the v1.6 release notes.
 
 ### A new frontend — surprise
 
