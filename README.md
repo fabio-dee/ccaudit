@@ -1,6 +1,6 @@
 # ccaudit
 
-**~11% of your Opus 4.7 1M-token context is gone before you type a word.** (~108k tokens of ghost inventory — roughly half a Sonnet 4.6 200k context. See snapshot below.)
+**~11% of your Opus 4.7 1M-token context is gone before you type a word.** (~108k tokens of ghost inventory - roughly half a Sonnet 4.6 200k context. See snapshot below.)
 
 Unused agents, skills, MCP servers, commands, hooks, and memory files (call them ghosts) load into context every session.<br>
 ccaudit finds them, shows you the cost, and moves them to `~/.claude/ccaudit/archived/` in one command.<br>
@@ -13,14 +13,14 @@ ccaudit does. None of them cover the full picture:
 
 | Tool                    | Covers                                        | Doesn't cover                                                                                    |
 | ----------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `/skills t-sort`        | Skills only — list, reorder.                  | Agents, MCP servers, hooks, memory, commands. No token math. No archive / rollback.              |
+| `/skills t-sort`        | Skills only - list, reorder.                  | Agents, MCP servers, hooks, memory, commands. No token math. No archive / rollback.              |
 | `/usage`                | Aggregate token + cost reporting per session. | Per-component ghost identification. Doesn't tell you what to remove or move anything.            |
 | `claude plugin disable` | Plugin-level on/off.                          | Granular agent / skill / MCP / hook visibility. No token cost. No manifest of what was disabled. |
 
 ccaudit's differentiator: **cross-component scope** (agents + skills + MCP +
 memory + commands + hooks in one pass), **regime-aware token math** (eager
 vs deferred-tools once `cc ≥ 2.1.7` flips the ToolSearch threshold), and
-**archive-with-rollback** — every action is manifest-logged and reversible
+**archive-with-rollback** - every action is manifest-logged and reversible
 via `ccaudit restore`.
 
 ```bash
@@ -31,12 +31,12 @@ npx ccaudit-cli --dangerously-bust-ghosts  # archive ghosts (nothing deleted, un
 
 > ccusage tells you what you spent. ccaudit tells you what's wasting it.
 
-Current release: **v1.5.0** — interactive archive picker, interactive restore picker, fuzzy-match restore by name, archive purge. See [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v1.5.0** - interactive archive picker, interactive restore picker, fuzzy-match restore by name, archive purge. See [CHANGELOG.md](./CHANGELOG.md).
 
 ![Image](https://github.com/user-attachments/assets/2afbe339-539b-4a8d-9f73-8d43746c9ace)
 
 > **"But doesn't `/context` already do this?"**
-> `/context` shows what's loaded _right now_ in the current session. ccaudit shows what's been ghost-loading for _weeks_ — agents, skills, MCP servers, and memory files you forgot you installed, silently eating your context budget every session. One is a live snapshot; the other is the longitudinal audit.
+> `/context` shows what's loaded _right now_ in the current session. ccaudit shows what's been ghost-loading for _weeks_ - agents, skills, MCP servers, and memory files you forgot you installed, silently eating your context budget every session. One is a live snapshot; the other is the longitudinal audit.
 
 ---
 
@@ -74,7 +74,7 @@ A typical audit looks like this (default mode, hooks advisory, not included in t
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ CCAUDIT - ~64k tokens/session wasted                                         │
-│ 👻 Ghost Inventory — Last 7 days                                             │
+│ 👻 Ghost Inventory - Last 7 days                                             │
 ├──────────────┬──────────────┬─────────────┬──────────────────────────────────┤
 │ Agents       │ Defined: 177 │ Used: 12    │ Ghost: 165 ~24k tokens/session   │
 │              │              │             │ (70 in frameworks above)         │
@@ -93,7 +93,7 @@ A typical audit looks like this (default mode, hooks advisory, not included in t
 │ Total ghost overhead: ~64k tokens (~32% of 200k context window)              │
 │ (global: ~62k tokens + worst project ~/projects/my-project: ~2.1k tokens)   │
 │ Health grade: D (Poor)                                                       │
-│ Hooks (advisory — not included in total): ~18k tokens upper-bound (9 hooks) │
+│ Hooks (advisory - not included in total): ~18k tokens upper-bound (9 hooks) │
 │ Pass --include-hooks to add to grand total.                                  │
 │ 💡 Potential savings after ccaudit --dangerously-bust-ghosts: ~64k           │
 │ tokens/session reclaimed                                                     │
@@ -177,7 +177,7 @@ npx ccaudit-cli ghost --interactive
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-> Hook archival deferred — selectable archive coming in a future phase.
+> Hook archival deferred - selectable archive coming in a future phase.
 
 ### The confirmation screen
 
@@ -214,8 +214,8 @@ npx ccaudit-cli ghost --interactive
 | `Esc` / `Ctrl+C` / `q` | Cancel with "No changes made." (exit 0)         |
 
 Framework-protected rows render dimmed with a `[🔒]` glyph and are not
-selectable by default — pass `--force-partial` to unlock them for the
-current run (a `--force-partial active — partial-framework busts allowed`
+selectable by default - pass `--force-partial` to unlock them for the
+current run (a `--force-partial active - partial-framework busts allowed`
 banner appears at the top of the picker). See `CLAUDE.md`'s Safety
 invariants section for the full rationale behind framework-as-unit
 protection.
@@ -326,10 +326,10 @@ Notes:
 | _(no args)_                |       | Restore all items from **every** bust manifest (deduplicated, newer-wins).                                                                                                   |
 | `<name>`                   |       | Restore a single archived item by name: basename without extension for agents/skills/commands (e.g. `restore code-reviewer`), or server name for MCP entries.                |
 | `--interactive`            | `-i`  | Open a TUI picker listing every archived item across all manifests. Select a subset to restore. Requires a TTY; may be combined with `--json` for the final result envelope. |
-| `--name <pattern>`         |       | Fuzzy single-match restore (case-insensitive substring). Ambiguous patterns error with a candidate list — never auto-resolve.                                                |
+| `--name <pattern>`         |       | Fuzzy single-match restore (case-insensitive substring). Ambiguous patterns error with a candidate list - never auto-resolve.                                                |
 | `--all-matching <pattern>` |       | Bulk restore of every item matching the fuzzy pattern. Exits `1` with `no archived item matches "<pattern>"` on stderr if nothing matches.                                   |
 | `--list`                   |       | List all archived items across all bust manifests (read-only).                                                                                                               |
-| `--json`                   | `-j`  | Output as JSON with a `meta` envelope. Includes additive `selectionFilter`, `skipped[]`, and `filteredStaleCount` fields — see [docs/JSON-SCHEMA.md](./docs/JSON-SCHEMA.md). |
+| `--json`                   | `-j`  | Output as JSON with a `meta` envelope. Includes additive `selectionFilter`, `skipped[]`, and `filteredStaleCount` fields - see [docs/JSON-SCHEMA.md](./docs/JSON-SCHEMA.md). |
 | `--csv`                    |       | RFC 4180 CSV export.                                                                                                                                                         |
 | `--quiet`                  | `-q`  | Machine-readable TSV only.                                                                                                                                                   |
 | `--verbose`                | `-v`  | Show detailed output including warnings.                                                                                                                                     |
@@ -408,7 +408,7 @@ Everything is reversible:
 
 ```bash
 npx ccaudit-cli restore                        # restore every archived item across all manifests
-npx ccaudit-cli restore --interactive          # TUI picker — select a subset to restore (v1.5)
+npx ccaudit-cli restore --interactive          # TUI picker - select a subset to restore (v1.5)
 npx ccaudit-cli restore --name code-reviewer   # fuzzy single-match restore (v1.5)
 npx ccaudit-cli restore --all-matching gsd-    # bulk-restore everything matching the pattern (v1.5)
 npx ccaudit-cli restore <exact-id>             # restore one archived item by exact canonical id
@@ -463,12 +463,12 @@ ccaudit purge-archive --json     # structured envelope, combinable with --yes
 
 Classification per manifest-union archive op:
 
-- **Reclaim** — archive exists, source path is free. The archive is moved back to source (same shared mover as `reclaim`).
-- **Drop / source_occupied** — archive exists, source path is already occupied. The archive is unlinked. The source file is **never** overwritten.
-- **Drop / stale_archive_missing** — archive is already gone, source exists (already-restored or test residue). No disk mutation; a follow-up manifest op is still appended so restore listings stop surfacing it.
-- **Skip / both_missing** — both paths are absent. Preserved for diagnosis; never auto-resolved.
+- **Reclaim** - archive exists, source path is free. The archive is moved back to source (same shared mover as `reclaim`).
+- **Drop / source_occupied** - archive exists, source path is already occupied. The archive is unlinked. The source file is **never** overwritten.
+- **Drop / stale_archive_missing** - archive is already gone, source exists (already-restored or test residue). No disk mutation; a follow-up manifest op is still appended so restore listings stop surfacing it.
+- **Skip / both_missing** - both paths are absent. Preserved for diagnosis; never auto-resolved.
 
-Scope is **archive ops only**. Flag ops (memory frontmatter) and MCP disable ops (the `name → ccaudit-disabled:name` key-rename written by `bust`) are untouched by this command. Each executed mutation is recorded as an append-only `archive_purge` op in a fresh `purge-<ts>-<rand>.jsonl` manifest — the original archive op stays intact for audit. Real purge requires an **explicit `--yes`**; there is no prompt fallback. Failures on individual items are reported in `purge.failures[]` but do not abort the batch.
+Scope is **archive ops only**. Flag ops (memory frontmatter) and MCP disable ops (the `name → ccaudit-disabled:name` key-rename written by `bust`) are untouched by this command. Each executed mutation is recorded as an append-only `archive_purge` op in a fresh `purge-<ts>-<rand>.jsonl` manifest - the original archive op stays intact for audit. Real purge requires an **explicit `--yes`**; there is no prompt fallback. Failures on individual items are reported in `purge.failures[]` but do not abort the batch.
 
 See [docs/JSON-SCHEMA.md § Purge](./docs/JSON-SCHEMA.md) for the `purge.summary` / `purge.failures[]` envelope contract.
 
@@ -690,7 +690,7 @@ wins. Place more-specific entries before more-general ones to avoid shadowing.
 
 ## Roadmap
 
-Items planned for upcoming releases. No firm dates — order may shift.
+Items planned for upcoming releases. No firm dates - order may shift.
 
 ### Interactive process killer
 
@@ -717,7 +717,7 @@ The envelope follows the existing `--json` shape (see
 forward compatibility. Subcommand names and the full contract surface will land
 in the v1.6 release notes.
 
-### A new frontend — surprise
+### A new frontend - surprise
 
 Something visual is in the works. More when it lands.
 
