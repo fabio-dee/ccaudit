@@ -884,6 +884,112 @@ if (import.meta.vitest) {
       }
     });
 
+    it('audit-trail invariant — disk mutation succeeds, writeOp throws → failure carries manifest_write_failed: prefix and is counted in failure tally (not success tally)', async () => {
+      // Locks the "if it isn't journaled, it didn't happen" contract
+      // documented in the top-of-file block comment. Two-op plan so the
+      // success channel stays open and we can observe BOTH the prefix on
+      // the failure record AND the tally separation. The single-op
+      // all-failed companion case is covered immediately below.
+      const goodOp = archiveOp({
+        op_id: 'audit-trail-good',
+        archive_path: '/a/audit-good',
+        source_path: '/s/audit-good',
+      });
+      const badOp = archiveOp({
+        op_id: 'audit-trail-bad',
+        archive_path: '/a/audit-bad',
+        source_path: '/s/audit-bad',
+      });
+      const unlinkFile = vi.fn(async () => undefined);
+
+      let writeOpCallCount = 0;
+      const writeOpFn = vi.fn(async () => {
+        writeOpCallCount += 1;
+        // First call (goodOp) succeeds; second call (badOp) throws.
+        if (writeOpCallCount === 2) throw new Error('synthetic writer failure');
+      });
+      const mockWriter = {
+        writeOp: writeOpFn,
+        close: vi.fn(async () => undefined),
+        filePath: '/fake/manifests/purge-audit-trail.jsonl',
+        elapsedMs: 0,
+      } as unknown as ManifestWriter;
+      const createPurgeManifestWriter = vi.fn(async () => ({
+        writer: mockWriter,
+        path: '/fake/manifests/purge-audit-trail.jsonl',
+      }));
+      const plan: PurgePlan = {
+        reclaim: [],
+        drop: [
+          { op: goodOp, reason: 'source_occupied' },
+          { op: badOp, reason: 'source_occupied' },
+        ],
+        skip: [],
+      };
+
+      const result = await executePurge(plan, fakeDeps({ unlinkFile, createPurgeManifestWriter }), {
+        dryRun: false,
+      });
+
+      // Both disk mutations were attempted (the loop continues after writeOp throw).
+      expect(unlinkFile).toHaveBeenCalledTimes(2);
+      // writeOp was invoked twice (once per successful unlink).
+      expect(writeOpFn).toHaveBeenCalledTimes(2);
+
+      expect(Result.isSuccess(result)).toBe(true);
+      if (Result.isSuccess(result)) {
+        // Tally separation: the writeOp-throw op counts in failures, NOT in successes.
+        expect(result.value.summary.purgedCount).toBe(1);
+        expect(result.value.failures).toHaveLength(1);
+        expect(result.value.failures[0]!.op_id).toBe('audit-trail-bad');
+        // Exact prefix (case-sensitive, includes the trailing colon).
+        expect(result.value.failures[0]!.reason.startsWith('manifest_write_failed:')).toBe(true);
+        // appendedOps reflects only the journaled mutation.
+        expect(result.value.appendedOps).toHaveLength(1);
+        expect(result.value.appendedOps[0]!.original_op_id).toBe('audit-trail-good');
+      }
+    });
+
+    it('audit-trail invariant — single-op plan: writeOp throw fires the all-failed gate (Result.fail)', async () => {
+      // Companion to the prefix/tally test above. With one op, a
+      // manifest_write_failed: failure must trip the all-failed gate
+      // identically to a disk-mutation failure — this is the carve-out
+      // the invariant forbids.
+      const op = archiveOp({ op_id: 'audit-trail-solo' });
+      const unlinkFile = vi.fn(async () => undefined);
+      const writeOpFn = vi.fn(async () => {
+        throw new Error('synthetic writer failure');
+      });
+      const mockWriter = {
+        writeOp: writeOpFn,
+        close: vi.fn(async () => undefined),
+        filePath: '/fake/manifests/purge-audit-solo.jsonl',
+        elapsedMs: 0,
+      } as unknown as ManifestWriter;
+      const createPurgeManifestWriter = vi.fn(async () => ({
+        writer: mockWriter,
+        path: '/fake/manifests/purge-audit-solo.jsonl',
+      }));
+      const plan: PurgePlan = {
+        reclaim: [],
+        drop: [{ op, reason: 'source_occupied' }],
+        skip: [],
+      };
+
+      const result = await executePurge(plan, fakeDeps({ unlinkFile, createPurgeManifestWriter }), {
+        dryRun: false,
+      });
+
+      expect(unlinkFile).toHaveBeenCalledTimes(1);
+      expect(writeOpFn).toHaveBeenCalledTimes(1);
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        // The all-failed gate counts manifest_write_failed: identically to
+        // disk-mutation failures (the invariant we are locking).
+        expect(result.error.message).toMatch(/all 1 purge ops failed/);
+      }
+    });
+
     it('empty plan does not open the writer (no orphan empty manifest file)', async () => {
       const createPurgeManifestWriter = vi.fn(async () => ({
         writer: makeMockWriter().writer,
