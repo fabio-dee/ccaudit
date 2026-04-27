@@ -24,12 +24,12 @@
 // 5. Non-regular files (directories) in archived/: skip with warning.
 
 import path from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 
 import { Result } from '@praha/byethrow';
 import type { ManifestEntry } from './manifest.ts';
 import { readManifest } from './manifest.ts';
-import { moveArchiveToSource } from './_archive-move.ts';
+import { moveArchiveToSource } from './archive-move.ts';
 
 // -- Deps interface ---------------------------------------------------
 
@@ -372,7 +372,7 @@ if (import.meta.vitest) {
   describe('reclaim unit tests', () => {
     it('returns empty result when archived root does not exist (ENOENT)', async () => {
       const deps: Partial<ReclaimDeps> = {
-        homeDir: '/home/user',
+        homeDir: path.join(tmpdir(), 'fake-home'),
         discoverManifests: async () => [],
         readManifest,
         readDirRecursive: async () => {
@@ -391,7 +391,7 @@ if (import.meta.vitest) {
     it('rethrows non-ENOENT errors from readDirRecursive', async () => {
       const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
       const deps: Partial<ReclaimDeps> = {
-        homeDir: '/home/user',
+        homeDir: path.join(tmpdir(), 'fake-home'),
         discoverManifests: async () => [],
         readManifest,
         readDirRecursive: async () => {
@@ -407,9 +407,9 @@ if (import.meta.vitest) {
 
     it('rethrows non-ENOENT errors from discoverManifests', async () => {
       const eio = Object.assign(new Error('EIO: i/o error'), { code: 'EIO' });
-      const home = '/home/user';
-      const archivedRoot = `${home}/.claude/ccaudit/archived`;
-      const archivePath = `${archivedRoot}/.claude/agents/foo.md`;
+      const home = path.join(tmpdir(), 'fake-home');
+      const archivedRoot = path.join(home, '.claude', 'ccaudit', 'archived');
+      const archivePath = path.join(archivedRoot, '.claude', 'agents', 'foo.md');
       const deps: Partial<ReclaimDeps> = {
         homeDir: home,
         discoverManifests: async () => {
@@ -426,9 +426,9 @@ if (import.meta.vitest) {
     });
 
     it('treats all files as orphans when manifests dir is empty', async () => {
-      const home = '/home/user';
-      const archivedRoot = `${home}/.claude/ccaudit/archived`;
-      const archivePath = `${archivedRoot}/.claude/agents/foo.md`;
+      const home = path.join(tmpdir(), 'fake-home');
+      const archivedRoot = path.join(home, '.claude', 'ccaudit', 'archived');
+      const archivePath = path.join(archivedRoot, '.claude', 'agents', 'foo.md');
 
       const deps: Partial<ReclaimDeps> = {
         homeDir: home,
@@ -449,9 +449,9 @@ if (import.meta.vitest) {
     });
 
     it('symlinks are skipped with a warning (never followed)', async () => {
-      const home = '/home/user';
-      const archivedRoot = `${home}/.claude/ccaudit/archived`;
-      const symlinkPath = `${archivedRoot}/.claude/agents/link.md`;
+      const home = path.join(tmpdir(), 'fake-home');
+      const archivedRoot = path.join(home, '.claude', 'ccaudit', 'archived');
+      const symlinkPath = path.join(archivedRoot, '.claude', 'agents', 'link.md');
       const warnings: string[] = [];
 
       const deps: Partial<ReclaimDeps> = {
@@ -474,9 +474,9 @@ if (import.meta.vitest) {
     });
 
     it('directories in archived/ are silently skipped', async () => {
-      const home = '/home/user';
-      const archivedRoot = `${home}/.claude/ccaudit/archived`;
-      const dirEntry = makeDir(`${archivedRoot}/.claude/agents`);
+      const home = path.join(tmpdir(), 'fake-home');
+      const archivedRoot = path.join(home, '.claude', 'ccaudit', 'archived');
+      const dirEntry = makeDir(path.join(archivedRoot, '.claude', 'agents'));
 
       const deps: Partial<ReclaimDeps> = {
         homeDir: home,
@@ -493,9 +493,9 @@ if (import.meta.vitest) {
     });
 
     it('SAFETY: never overwrites existing source file', async () => {
-      const home = '/home/user';
-      const archivedRoot = `${home}/.claude/ccaudit/archived`;
-      const archivePath = `${archivedRoot}/.claude/agents/bar.md`;
+      const home = path.join(tmpdir(), 'fake-home');
+      const archivedRoot = path.join(home, '.claude', 'ccaudit', 'archived');
+      const archivePath = path.join(archivedRoot, '.claude', 'agents', 'bar.md');
       const renameFile = vi.fn(async () => undefined);
 
       const deps: Partial<ReclaimDeps> = {
@@ -516,9 +516,9 @@ if (import.meta.vitest) {
     });
 
     it('dry-run: detects orphans but never calls renameFile', async () => {
-      const home = '/home/user';
-      const archivedRoot = `${home}/.claude/ccaudit/archived`;
-      const archivePath = `${archivedRoot}/.claude/agents/baz.md`;
+      const home = path.join(tmpdir(), 'fake-home');
+      const archivedRoot = path.join(home, '.claude', 'ccaudit', 'archived');
+      const archivePath = path.join(archivedRoot, '.claude', 'agents', 'baz.md');
       const renameFile = vi.fn(async () => undefined);
 
       const deps: Partial<ReclaimDeps> = {
@@ -544,10 +544,10 @@ if (import.meta.vitest) {
       // materialises at the source path. The forwarded deps.pathExists now returns
       // true, moveArchiveToSource's INVARIANT check fires, and the move is refused.
       // Expected: reclaimed === 0, failed contains one entry, renameFile never called.
-      const home = '/home/user';
-      const archivedRoot = `${home}/.claude/ccaudit/archived`;
-      const archivePath = `${archivedRoot}/.claude/agents/toctou.md`;
-      const inferredSource = `${home}/.claude/agents/toctou.md`;
+      const home = path.join(tmpdir(), 'fake-home');
+      const archivedRoot = path.join(home, '.claude', 'ccaudit', 'archived');
+      const archivePath = path.join(archivedRoot, '.claude', 'agents', 'toctou.md');
+      const inferredSource = path.join(home, '.claude', 'agents', 'toctou.md');
       const renameFile = vi.fn(async () => undefined);
       let callCount = 0;
 
@@ -558,12 +558,11 @@ if (import.meta.vitest) {
         readDirRecursive: async () => [makeFile(archivePath)],
         // First call (during orphan scan): source does NOT exist → sourceExists=false.
         // Subsequent calls (forwarded from moveArchiveToSource): source NOW exists.
-        // Normalize separators so the test passes on Windows where path.join
-        // inside moveArchiveToSource may return backslash-formatted strings.
+        // Use path.resolve() for comparison so the test is correct on both POSIX
+        // and Windows regardless of separator differences.
         pathExists: async (p: string) => {
-          const norm = p.replace(/\\/g, '/');
-          if (norm === archivePath) return true; // archive always present
-          if (norm === inferredSource) {
+          if (path.resolve(p) === path.resolve(archivePath)) return true; // archive always present
+          if (path.resolve(p) === path.resolve(inferredSource)) {
             callCount++;
             return callCount > 1; // scan-time: false; move-time: true
           }
@@ -582,10 +581,16 @@ if (import.meta.vitest) {
     });
 
     it('manifest-referenced file is NOT an orphan', async () => {
-      const home = '/home/user';
-      const archivedRoot = `${home}/.claude/ccaudit/archived`;
-      const archivePath = `${archivedRoot}/.claude/agents/referenced.md`;
-      const manifestPath = `${home}/.claude/ccaudit/manifests/bust-2026-01-01T00-00-00Z.jsonl`;
+      const home = path.join(tmpdir(), 'fake-home');
+      const archivedRoot = path.join(home, '.claude', 'ccaudit', 'archived');
+      const archivePath = path.join(archivedRoot, '.claude', 'agents', 'referenced.md');
+      const manifestPath = path.join(
+        home,
+        '.claude',
+        'ccaudit',
+        'manifests',
+        'bust-2026-01-01T00-00-00Z.jsonl',
+      );
 
       const fakeManifestResult = {
         header: {
@@ -607,7 +612,7 @@ if (import.meta.vitest) {
             status: 'completed' as const,
             category: 'agent' as const,
             scope: 'global' as const,
-            source_path: `${home}/.claude/agents/referenced.md`,
+            source_path: path.join(home, '.claude', 'agents', 'referenced.md'),
             archive_path: archivePath,
             content_sha256: 'deadbeef',
           },

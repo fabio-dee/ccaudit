@@ -146,7 +146,6 @@ describe.skipIf(process.platform === 'win32')(
       expect(preEnterFrame).toContain('2 of 3 selected across all tabs');
       const pickerTokensK = parsePickerTokensK(preEnterFrame);
       if (pickerTokensK === null || pickerTokensK === 0) {
-        // eslint-disable-next-line no-console
         console.warn('[phase-4 parity test] fixture produced 0 tokens; skipping');
         await sendKeys(spawned.child, ['\x03']);
         spawned.child.stdin!.end();

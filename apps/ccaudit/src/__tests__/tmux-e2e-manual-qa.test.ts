@@ -11,6 +11,7 @@
  * GitHub README rendering.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
@@ -26,19 +27,20 @@ import {
   stageInteractiveBustFixture,
   stagePaginationFixture,
 } from './fixtures/manual-qa-followups.ts';
-import { hasTmux, startTmuxE2E, TMUX_KEYS, type TmuxE2ESession } from './fixtures/tmux-e2e.ts';
+import { startTmuxE2E, TMUX_KEYS, type TmuxE2ESession } from './fixtures/tmux-e2e.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const distPath = path.resolve(here, '..', '..', 'dist', 'index.js');
 const optIn = process.env['CCAUDIT_TMUX_E2E'] === '1';
-
-beforeAll(() => {
-  if (!existsSync(distPath)) {
-    throw new Error(
-      `dist binary not found at ${distPath}. Run \`pnpm -F ccaudit build\` before running this test.`,
-    );
+const tmuxAvailable = (() => {
+  if (!optIn || process.platform === 'win32') return false;
+  try {
+    execFileSync('tmux', ['-V'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
   }
-});
+})();
 
 function sessionName(suffix: string): string {
   return `ccaudit-${suffix}-${process.pid}-${Date.now()}`;
@@ -61,12 +63,18 @@ async function cleanup(session: TmuxE2ESession | null, tmpHome: string): Promise
   await cleanupTmpHome(tmpHome);
 }
 
-describe.skipIf(process.platform === 'win32' || !optIn)(
+describe.skipIf(process.platform === 'win32' || !optIn || !tmuxAvailable)(
   'tmux E2E manual-QA coverage (opt-in)',
   () => {
-    it('Phase 8.1 R1/R2: restore picker shows MEMORY tab and restore footer wording', async () => {
-      if (!(await hasTmux())) return;
+    beforeAll(() => {
+      if (!existsSync(distPath)) {
+        throw new Error(
+          `dist binary not found at ${distPath}. Run \`pnpm -F ccaudit build\` before running this test.`,
+        );
+      }
+    });
 
+    it('Phase 8.1 R1/R2: restore picker shows MEMORY tab and restore footer wording', async () => {
       const tmpHome = await makeTmpHome();
       let session: TmuxE2ESession | null = null;
       try {
@@ -93,8 +101,6 @@ describe.skipIf(process.platform === 'win32' || !optIn)(
     }, 20_000);
 
     it('Phase 9 D1/F1-partial: large picker scrolls and survives tmux resize', async () => {
-      if (!(await hasTmux())) return;
-
       const tmpHome = await makeTmpHome();
       let session: TmuxE2ESession | null = null;
       try {
@@ -132,8 +138,6 @@ describe.skipIf(process.platform === 'win32' || !optIn)(
     }, 20_000);
 
     it('Phase 9 E1: renders protected, multi-config MCP, and stale-memory glyph states', async () => {
-      if (!(await hasTmux())) return;
-
       const tmpHome = await makeTmpHome();
       let session: TmuxE2ESession | null = null;
       try {
@@ -167,8 +171,6 @@ describe.skipIf(process.platform === 'win32' || !optIn)(
     }, 20_000);
 
     it('Phase 9 H2: interactive archive via tmux then restore by name round-trips', async () => {
-      if (!(await hasTmux())) return;
-
       const tmpHome = await makeTmpHome();
       let session: TmuxE2ESession | null = null;
       try {
@@ -211,8 +213,6 @@ describe.skipIf(process.platform === 'win32' || !optIn)(
     }, 30_000);
 
     it('Phase 9 D2: Esc clears an active filter without exiting the picker', async () => {
-      if (!(await hasTmux())) return;
-
       const tmpHome = await makeTmpHome();
       let session: TmuxE2ESession | null = null;
       try {
@@ -255,8 +255,6 @@ describe.skipIf(process.platform === 'win32' || !optIn)(
     }, 25_000);
 
     it('Phase 9 E4: ? help overlay includes a glyph legend', async () => {
-      if (!(await hasTmux())) return;
-
       const tmpHome = await makeTmpHome();
       let session: TmuxE2ESession | null = null;
       try {

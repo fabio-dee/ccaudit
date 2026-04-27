@@ -6,7 +6,7 @@
  *   - exit 0 (partial-skip is success, not failure — D8-18)
  *   - `data.status === 'success'`
  *   - `data.skipped` contains exactly one entry with
- *       `{ reason: 'source_exists', canonical_id: 'agent:.../pencil-review.md' }`
+ *       `{ reason: 'source_exists', canonicalId: 'agent:.../pencil-review.md' }`
  *   - stderr contains `warning: skipped <path> — source already exists`
  *   - pencil-dev.md IS restored to its source path (the other match wasn't skipped)
  *   - the pre-existing pencil-review.md content is preserved byte-for-byte
@@ -40,7 +40,7 @@ beforeAll(() => {
 
 interface RestoreEnvelope {
   status: string;
-  skipped: Array<{ reason: string; path: string; canonical_id: string }>;
+  skipped: Array<{ reason: string; path: string; canonicalId: string }>;
 }
 
 describe.skipIf(process.platform === 'win32')(
@@ -79,7 +79,7 @@ describe.skipIf(process.platform === 'win32')(
       expect(parsed.skipped).toHaveLength(1);
       expect(parsed.skipped[0]?.reason).toBe('source_exists');
       expect(parsed.skipped[0]?.path).toBe(reviewSource);
-      expect(parsed.skipped[0]?.canonical_id).toMatch(/^agent:.*pencil-review\.md$/);
+      expect(parsed.skipped[0]?.canonicalId).toMatch(/^agent:.*pencil-review\.md$/);
 
       // stderr carries the human-readable warning (D8-14).
       expect(r.stderr).toContain('source already exists');

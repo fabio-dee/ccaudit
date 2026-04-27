@@ -7,7 +7,8 @@
  *
  * `restore --list --json` must return exactly one entry whose `path` ends with
  * the bust manifest filename. The purge manifest must be silently skipped and
- * must NOT appear in the entries array.
+ * the archive op referenced by `archive_purge.original_op_id` must not appear
+ * in the entry's items array.
  */
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { existsSync } from 'node:fs';
@@ -37,7 +38,7 @@ interface RestoreListEnvelope {
     op_count: number;
     items: Array<{ category: string; name: string }>;
   }>;
-  filtered_stale_count: number;
+  filteredStaleCount: number;
 }
 
 describe.skipIf(process.platform === 'win32')('M9 — restore --list skips purge manifests', () => {
@@ -68,7 +69,7 @@ describe.skipIf(process.platform === 'win32')('M9 — restore --list skips purge
       manifest_version: 1,
       ccaudit_version: '1.5.0-test',
       checkpoint_ghost_hash: 'deadbeef-m9',
-      checkpoint_timestamp: '2026-04-20T10-00-00-000Z',
+      checkpoint_timestamp: '2026-04-20T10:00:00.000Z',
       since_window: '30d',
       os: 'darwin',
       node_version: 'v20.0.0',
@@ -133,7 +134,7 @@ describe.skipIf(process.platform === 'win32')('M9 — restore --list skips purge
     await cleanupTmpHome(tmpHome);
   });
 
-  it('restore --list --json returns exactly 1 entry for the bust manifest (not the purge)', async () => {
+  it('restore --list --json returns the bust manifest but suppresses purged items', async () => {
     const r = await runCcauditCli(tmpHome, ['restore', '--list', '--json'], {
       env: { PATH: `${path.join(tmpHome, 'bin')}:${process.env.PATH ?? ''}` },
     });
@@ -153,6 +154,8 @@ describe.skipIf(process.platform === 'win32')('M9 — restore --list skips purge
     // The entry must point to the bust manifest, not the purge manifest
     expect(path.basename(parsed.entries[0]!.path)).toBe(bustManifestName);
     expect(path.basename(parsed.entries[0]!.path).startsWith('bust-')).toBe(true);
+
+    expect(parsed.entries[0]!.items).toEqual([]);
 
     // Defensive: purge manifest must not appear anywhere
     const allPaths = parsed.entries.map((e) => path.basename(e.path));

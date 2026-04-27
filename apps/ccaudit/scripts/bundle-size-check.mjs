@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // bundle-size-check.mjs — D-04 verification: dist/index.js gzipped size must not exceed
-// bundle-baseline.txt by more than 15 KB (15360 bytes). Uses node:fs + node:zlib only.
+// bundle-baseline.txt by more than the configured budget. Uses node:fs + node:zlib only.
 // Run after `pnpm -w build`. Part of `pnpm verify` chain.
 import { readFileSync, existsSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
@@ -39,7 +39,9 @@ if (!Number.isFinite(baseline) || baseline <= 0) {
 }
 
 const delta = actual - baseline;
-console.log(`[bundle-size] actual=${actual}B baseline=${baseline}B delta=${delta}B budget=15360B`);
+console.log(
+  `[bundle-size] actual=${actual}B baseline=${baseline}B delta=${delta}B budget=${BUDGET_BYTES}B`,
+);
 
 if (delta > BUDGET_BYTES) {
   console.error(`[bundle-size] FAIL: delta exceeds 15 KB budget (${delta} > ${BUDGET_BYTES})`);
@@ -67,7 +69,7 @@ if (phaseBaselinePath) {
   }
   const phaseBudgetRaw = process.env.CCAUDIT_PHASE_BUDGET_BYTES ?? '10240';
   const phaseBudget = Number.parseInt(phaseBudgetRaw, 10);
-  if (!Number.isFinite(phaseBudget) || phaseBudget < 0) {
+  if (!Number.isFinite(phaseBudget) || phaseBudget <= 0) {
     console.error(
       `[bundle-size] FAIL: invalid CCAUDIT_PHASE_BUDGET_BYTES: ${JSON.stringify(phaseBudgetRaw)}`,
     );

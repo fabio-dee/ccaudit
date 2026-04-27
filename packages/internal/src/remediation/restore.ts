@@ -474,30 +474,63 @@ async function executeListMode(deps: RestoreDeps): Promise<RestoreResult> {
   const entries = await deps.discoverManifests();
   const listEntries: ManifestListEntry[] = [];
   let filteredStaleCount = 0;
+
+  // Two-pass list mode: read purge manifests first to collect archive_purge
+  // follow-ups, then suppress the referenced archive ops from bust manifests.
+  // This keeps `restore --list` consistent with full/subset restore after
+  // `purge-archive` has drained archived files.
+  const manifestCache = new Map<
+    string,
+    { manifest: Awaited<ReturnType<RestoreDeps['readManifest']>>; isPurge: boolean }
+  >();
+  const purgedOriginalOpIds = new Set<string>();
+
   for (const entry of entries) {
-    // M9: skip purge manifests — their archive_purge records are not restoreable
-    // items and should not appear in --list output as additional "busts".
-    // Two-tier detection: canonical filename prefix (primary) + ops-shape check
-    // (defense-in-depth for hand-named files).
-    const basename = path.basename(entry.path);
-    if (basename.startsWith('purge-')) continue;
-
-    const manifest = await deps.readManifest(entry.path);
-    if (manifest.header === null) continue; // corrupt: silently skip in list mode
-
-    // Defense-in-depth: if all ops are archive_purge, skip regardless of filename.
-    if (manifest.ops.length > 0 && manifest.ops.every((op) => op.op_type === 'archive_purge')) {
+    let manifest: Awaited<ReturnType<RestoreDeps['readManifest']>>;
+    try {
+      manifest = await deps.readManifest(entry.path);
+    } catch (err) {
+      deps.onWarning?.(
+        `⚠️  Skipping unreadable manifest ${path.basename(entry.path)}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
       continue;
     }
+    const basename = path.basename(entry.path);
+    const isPurge =
+      basename.startsWith('purge-') ||
+      (manifest.ops.length > 0 && manifest.ops.every((op) => op.op_type === 'archive_purge'));
+    manifestCache.set(entry.path, { manifest, isPurge });
+    if (isPurge) {
+      for (const op of manifest.ops) {
+        if (op.op_type === 'archive_purge') purgedOriginalOpIds.add(op.original_op_id);
+      }
+    }
+  }
+
+  for (const entry of entries) {
+    const cached = manifestCache.get(entry.path);
+    if (cached === undefined) continue;
+
+    // M9: skip purge manifests — their archive_purge records are not restoreable
+    // items and should not appear in --list output as additional "busts".
+    if (cached.isPurge) continue;
+
+    const { manifest } = cached;
+    if (manifest.header === null) continue; // corrupt: silently skip in list mode
 
     // Phase 8.2: drop stale archive ops (archive_missing + source_exists)
     // from per-entry op lists so `--list` mirrors the listing hygiene
     // applied in the interactive picker and full-restore paths.
     const kept: ManifestOp[] = [];
     for (const op of manifest.ops) {
-      if (op.op_type === 'archive' && (await isStaleArchiveOp(op, deps.pathExists))) {
-        filteredStaleCount += 1;
-        continue;
+      if (op.op_type === 'archive') {
+        if (purgedOriginalOpIds.has(op.op_id)) continue;
+        if (await isStaleArchiveOp(op, deps.pathExists)) {
+          filteredStaleCount += 1;
+          continue;
+        }
       }
       kept.push(op);
     }
@@ -1140,9 +1173,11 @@ export async function executeRestore(mode: RestoreMode, deps: RestoreDeps): Prom
     const allEntries = await findManifestsForRestore(deps);
     if (allEntries.length === 0) return { status: 'no-manifests' };
 
-    // Validate the newest manifest's header (D-07). If the newest is corrupt,
-    // refuse entirely rather than silently falling back to an older one.
-    const newestEntry = allEntries[0]!;
+    // Validate the newest NON-PURGE manifest's header (D-07). `purge-*`
+    // manifests are follow-up audit records used only for archive_purge
+    // suppression; they must not become the full-restore integrity anchor.
+    const newestEntry = allEntries.find((entry) => !path.basename(entry.path).startsWith('purge-'));
+    if (newestEntry === undefined) return { status: 'no-manifests' };
     const newestManifest = await deps.readManifest(newestEntry.path);
     if (newestManifest.header === null) {
       return { status: 'manifest-corrupt', path: newestEntry.path };
@@ -1166,8 +1201,22 @@ export async function executeRestore(mode: RestoreMode, deps: RestoreDeps): Prom
       { manifest: Awaited<ReturnType<RestoreDeps['readManifest']>>; isPurge: boolean }
     >();
     for (const entry of allEntries) {
-      const manifest = entry === newestEntry ? newestManifest : await deps.readManifest(entry.path);
       const isPurge = path.basename(entry.path).startsWith('purge-');
+      let manifest: Awaited<ReturnType<RestoreDeps['readManifest']>>;
+      if (entry.path === newestEntry.path) {
+        manifest = newestManifest;
+      } else {
+        try {
+          manifest = await deps.readManifest(entry.path);
+        } catch (err) {
+          deps.onWarning?.(
+            `⚠️  Skipping unreadable manifest ${path.basename(entry.path)}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+          continue;
+        }
+      }
       manifestCache.set(entry.path, { manifest, isPurge });
     }
 
@@ -1187,7 +1236,8 @@ export async function executeRestore(mode: RestoreMode, deps: RestoreDeps): Prom
     let filteredStaleCount = 0;
 
     for (const entry of allEntries) {
-      const cached = manifestCache.get(entry.path)!;
+      const cached = manifestCache.get(entry.path);
+      if (cached === undefined) continue;
 
       // RE-M9: skip purge manifests entirely — their archive_purge records are
       // not restoreable ops; we already harvested their original_op_ids above.
@@ -1605,9 +1655,9 @@ if (import.meta.vitest) {
       expect(result.status).toBe('success');
     });
 
-    it('Test 7c: corrupt newest manifest hard-fails even when older manifests are valid (regression)', async () => {
-      // Counterpart regression: a corrupt *newest* manifest must produce
-      // manifest-corrupt, not silently fall back to older ones.
+    it('Test 7c: corrupt newest non-purge manifest hard-fails even when older manifests are valid (regression)', async () => {
+      // Counterpart regression: a corrupt *newest non-purge* manifest must
+      // produce manifest-corrupt, not silently fall back to older ones.
       const newerEntry: ManifestEntry = {
         path: '/fake/.claude/ccaudit/manifests/bust-2026-04-10T10-00-00Z.jsonl',
         mtime: new Date('2026-04-10T10:00:00Z'),
@@ -1636,10 +1686,47 @@ if (import.meta.vitest) {
 
       const result = await executeRestore({ kind: 'full' }, deps);
 
-      // Hard failure on corrupt newest -- must not silently continue.
+      // Hard failure on corrupt newest non-purge -- must not silently continue.
       expect(result.status).toBe('manifest-corrupt');
       if (result.status === 'manifest-corrupt') {
         expect(result.path).toBe(newerEntry.path);
+      }
+    });
+
+    it('Test 7d: newest purge manifest is not used as the full-restore integrity anchor', async () => {
+      const purgeEntry: ManifestEntry = {
+        path: '/fake/.claude/ccaudit/manifests/purge-2026-04-11T10-00-00Z.jsonl',
+        mtime: new Date('2026-04-11T10:00:00Z'),
+      };
+      const bustEntry: ManifestEntry = {
+        path: '/fake/.claude/ccaudit/manifests/bust-2026-04-10T10-00-00Z.jsonl',
+        mtime: new Date('2026-04-10T10:00:00Z'),
+      };
+      const warnings: string[] = [];
+      const deps = makeFakeDeps({
+        discoverManifests: async () => [purgeEntry, bustEntry],
+        readManifest: async (p) => {
+          if (p === purgeEntry.path) {
+            return { header: null, ops: [], footer: null, truncated: true };
+          }
+          return { header: fakeHeader, ops: [], footer: fakeFooter, truncated: false };
+        },
+        processDetector: {
+          runCommand: async () => '',
+          getParentPid: async () => null,
+          platform: 'linux',
+        },
+        onWarning: (msg) => {
+          warnings.push(msg);
+        },
+      });
+
+      const result = await executeRestore({ kind: 'full' }, deps);
+
+      expect(result.status).toBe('success');
+      expect(warnings).toEqual([]);
+      if (result.status === 'success') {
+        expect(result.manifestPath).toBe(bustEntry.path);
       }
     });
   });

@@ -49,7 +49,7 @@ interface RestoreJsonEnvelope {
     reenabled: { completed: number; failed: number };
     stripped: { completed: number; failed: number };
   };
-  selection_filter: { mode: string; ids: string[] } | null;
+  selectionFilter: { mode: string; ids: string[] } | null;
 }
 
 function spawnRestoreInteractive(tmpHome: string, extraArgs: string[] = []): SpawnedRestore {
@@ -180,14 +180,14 @@ describe.skipIf(process.platform === 'win32')('restore --interactive memory roun
     const afterMemoryStat = await stat(memoryPath);
     expect(Math.abs(afterMemoryStat.mtimeMs - beforeMemoryStat.mtimeMs)).toBeLessThan(1);
 
-    expect(plain).toContain('3 agents/skills restored to their original locations');
+    expect(plain).toContain('3 items restored to their original locations');
     expect(plain).toContain('1 memory files cleaned (ccaudit flags removed)');
 
     const postManifests = await listManifestsDir(tmpHome);
     expect(postManifests).toEqual(baselineManifests);
   }, 20_000);
 
-  it('interactive --json keeps selection_filter aligned with executed memory ops', async () => {
+  it('interactive --json keeps selectionFilter aligned with executed memory ops', async () => {
     const baselineManifests = await listManifestsDir(tmpHome);
     const memoryPath = path.join(tmpHome, '.claude', 'CLAUDE.md');
 
@@ -206,14 +206,14 @@ describe.skipIf(process.platform === 'win32')('restore --interactive memory roun
     expect(parsed.meta.command).toBe('restore');
     expect(parsed.meta.exitCode).toBe(0);
     expect(parsed.status).toBe('success');
-    expect(parsed.selection_filter).not.toBeNull();
-    expect(parsed.selection_filter?.mode).toBe('subset');
-    expect(parsed.selection_filter?.ids).toHaveLength(4);
+    expect(parsed.selectionFilter).not.toBeNull();
+    expect(parsed.selectionFilter?.mode).toBe('subset');
+    expect(parsed.selectionFilter?.ids).toHaveLength(4);
     // M8: canonical_id for memory ops now includes op_type + op_id for uniqueness (INV-S3).
     // The fixture flag op has op_id='op-stale-memo-flag'; match by prefix to avoid
     // hardcoding the full id while still verifying the memory file is included.
     expect(
-      parsed.selection_filter?.ids.some((id) => id.startsWith(`memory:flag:${memoryPath}:`)),
+      parsed.selectionFilter?.ids.some((id) => id.startsWith(`memory:flag:${memoryPath}:`)),
     ).toBe(true);
     expect(parsed.counts.unarchived.moved).toBe(3);
     expect(parsed.counts.stripped.completed).toBe(1);

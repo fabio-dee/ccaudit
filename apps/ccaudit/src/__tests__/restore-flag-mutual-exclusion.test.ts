@@ -62,5 +62,15 @@ describe.skipIf(process.platform === 'win32')(
       expect(r.exitCode).toBe(1);
       expect(r.stderr).toContain('flags are mutually exclusive');
     });
+
+    it('--interactive --all-matching foo → exit 1, "flags are mutually exclusive" on stderr', async () => {
+      const r = await runCcauditCli(
+        tmpHome,
+        ['restore', '--interactive', '--all-matching', 'foo'],
+        { env: { PATH: `${path.join(tmpHome, 'bin')}:${process.env.PATH ?? ''}` } },
+      );
+      expect(r.exitCode).toBe(1);
+      expect(r.stderr).toContain('flags are mutually exclusive');
+    });
   },
 );

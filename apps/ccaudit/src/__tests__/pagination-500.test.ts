@@ -11,13 +11,13 @@
  *   1. With 500 ghosts and a bounded viewport, the rendered frame contains
  *      only a viewport-sized slice of agent rows (no terminal overflow).
  *   2. End jumps cursor to last row; an above-indicator is visible.
- *   3. Scroll state (cursor position) persists across simulated `/` filter
- *      on/off: filter-on saves cursor → Esc restores original cursor.
- *   4. Sort cycle preserves cursor when rowsLen does not shrink.
- *   5. The applyScroll reducer clamps cursor on heavy filter narrowing.
+ *   3. The applyScroll reducer round-trips cursor position across filter
+ *      on/off and clamps when the row set narrows below the saved cursor.
+ *   4. Toggling many rows keeps the rendered frame bounded.
  */
 import { describe, it, expect } from 'vitest';
 import { TabbedGhostPicker } from '../../../../packages/terminal/src/tui/tabbed-picker.ts';
+import { applyScroll } from '../../../../packages/terminal/src/tui/_viewport.ts';
 import { buildGhosts500 } from './fixtures/ghost-500-items.ts';
 
 // Strip ANSI — `_renderFrame()` returns strings with picocolors escapes.
@@ -60,46 +60,17 @@ describe('Phase 9 Plan 02 — 500-item pagination (D3 / SC3)', () => {
     expect(frame).toMatch(/\bmore\b/);
   });
 
-  it('simulated filter-on saves cursor; simulated Esc restores it (scroll persistence)', () => {
-    const picker = makePicker(500);
-    for (let i = 0; i < 250; i++) picker.cursorDown();
-    expect(picker.tabs[0]!.cursor).toBe(250);
-
-    // Mirror the '/' handler: set filterMode and savedCursorPreFilter.
-    const tab = picker.tabs[0]!;
-    picker.filterMode = true;
-    if (tab.savedCursorPreFilter === null) tab.savedCursorPreFilter = tab.cursor;
-    expect(tab.savedCursorPreFilter).toBe(250);
-
-    // User types: cursor resets to 0 (per D5-01 convention) and the view
-    // narrows. We DON'T actually run the filter here — the save/restore
-    // invariant is independent of filter engine.
-    tab.cursor = 0;
-
-    // Mirror the Esc handler: restore saved cursor, clamp to full row list.
-    picker.filterMode = false;
-    const rowsLen = picker.tabs[0]!.items.length; // full list = 500
-    const max = Math.max(0, rowsLen - 1);
-    tab.cursor = Math.max(0, Math.min(max, tab.savedCursorPreFilter ?? 0));
-    tab.savedCursorPreFilter = null;
-
-    expect(tab.cursor).toBe(250);
-    expect(tab.savedCursorPreFilter).toBeNull();
-  });
-
-  it('applyScroll reducer round-trips cursor across filter on/off', async () => {
-    // Uses the pure reducer directly — lives in @ccaudit/terminal via the
-    // _viewport.ts helper module. Import through the barrel if exposed,
-    // else exercise via picker state above. Here we re-test the reducer
-    // contract end-to-end from the integration-test boundary to lock the
-    // cross-module shape.
-    const { applyScroll } = await import('../../../../packages/terminal/src/tui/_viewport.ts');
+  it('applyScroll reducer round-trips cursor across filter on/off and clamps on narrowing', () => {
     const s0 = { cursor: 300, savedCursorPreFilter: null as number | null };
     const s1 = applyScroll(s0, { type: 'filterOn' });
     const s2 = applyScroll(s1, { type: 'filterQueryChange' });
     const s3 = applyScroll(s2, { type: 'filterOff', rowsLen: 500 });
     expect(s3.cursor).toBe(300);
     expect(s3.savedCursorPreFilter).toBeNull();
+
+    const narrowed = applyScroll(s2, { type: 'filterOff', rowsLen: 50 });
+    expect(narrowed.cursor).toBeLessThanOrEqual(49);
+    expect(narrowed.savedCursorPreFilter).toBeNull();
   });
 
   it('toggling across 500 items keeps the rendered frame bounded', () => {

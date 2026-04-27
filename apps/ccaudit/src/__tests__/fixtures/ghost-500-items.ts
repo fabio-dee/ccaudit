@@ -4,9 +4,9 @@
  * Produces deterministic `TokenCostResult[]` for pagination tests. No file
  * I/O, no filesystem state — the picker is driven in-process.
  *
- * Names are `agent-001..agent-500`, tokens decrement by 1 each (1000, 999, …)
- * so sort-by-tokens is unambiguous. Mtime is a fixed epoch so staleness
- * logic is deterministic.
+ * Names are zero-padded within the supported 1..999 count range, tokens
+ * decrement by 1 each (1000, 999, …) so sort-by-tokens is unambiguous. Mtime
+ * is a fixed epoch so staleness logic is deterministic.
  */
 
 import type { TokenCostResult } from '@ccaudit/internal';
@@ -44,7 +44,7 @@ export function buildGhosts500(opts: BuildGhosts500Opts = {}): TokenCostResult[]
         category,
         scope: 'global',
         projectPath: null,
-        path: `/fake/${category}s/${name}.md`,
+        path: `/fake/${categoryDir(category)}/${name}.md`,
         mtimeMs: baseMtime + i, // unique per item
       },
       tier: 'definite-ghost',
@@ -54,4 +54,21 @@ export function buildGhosts500(opts: BuildGhosts500Opts = {}): TokenCostResult[]
     });
   }
   return out;
+}
+
+function categoryDir(category: TokenCostResult['item']['category']): string {
+  switch (category) {
+    case 'agent':
+      return 'agents';
+    case 'skill':
+      return 'skills';
+    case 'command':
+      return 'commands';
+    case 'mcp-server':
+      return 'mcp';
+    case 'memory':
+      return 'memory';
+    case 'hook':
+      return 'hooks';
+  }
 }

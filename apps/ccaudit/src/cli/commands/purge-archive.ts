@@ -98,19 +98,6 @@ export const purgeArchiveCommand = define({
     initColor();
     const outMode = resolveOutputMode(ctx.values);
 
-    // -- Argument parsing + validation ----------------------------
-    const dryRunFlag = ctx.values['dry-run'] === true;
-    const yesFlag = ctx.values.yes === true;
-
-    // D6 safety gate: --yes and --dry-run are mutually exclusive.
-    if (dryRunFlag && yesFlag) {
-      process.stderr.write('flags are mutually exclusive: --dry-run, --yes\n');
-      process.exit(1);
-    }
-
-    // Effective mode: dry-run unless --yes is explicitly set.
-    const dryRun = !yesFlag;
-
     // -- History instrumentation ---------------------------------
     const historyStartMs = Date.now();
     const argv = process.argv.slice(2);
@@ -129,6 +116,51 @@ export const purgeArchiveCommand = define({
         );
       }
     };
+
+    // -- Argument parsing + validation ----------------------------
+    const dryRunFlag = ctx.values['dry-run'] === true;
+    const yesFlag = ctx.values.yes === true;
+
+    // D6 safety gate: --yes and --dry-run are mutually exclusive.
+    if (dryRunFlag && yesFlag) {
+      const message = 'flags are mutually exclusive: --dry-run, --yes';
+      if (outMode.json) {
+        process.stdout.write(
+          JSON.stringify(
+            buildJsonEnvelope('purge-archive', 'n/a', 1, {
+              purge: {
+                summary: {
+                  purgedCount: 0,
+                  reclaimedCount: 0,
+                  skippedOccupiedCount: 0,
+                  staleFilteredCount: 0,
+                },
+                failures: [{ path: '', reason: message }],
+                dryRun: true,
+                manifestPath: null,
+              },
+            }),
+          ) + '\n',
+        );
+      } else {
+        process.stderr.write(`${message}\n`);
+      }
+      await safeRecordHistory({
+        homeDir,
+        command: 'purge-archive',
+        argv,
+        exitCode: 1,
+        durationMs: Date.now() - historyStartMs,
+        cwd: process.cwd(),
+        result: null,
+        errors: [message],
+        ccauditVersion: CCAUDIT_VERSION,
+      });
+      process.exit(1);
+    }
+
+    // Effective mode: dry-run unless --yes is explicitly set.
+    const dryRun = !yesFlag;
 
     // -- Load manifest union + classify ---------------------------
     let plan: PurgePlan;
@@ -178,7 +210,9 @@ export const purgeArchiveCommand = define({
                   staleFilteredCount: 0,
                 },
                 failures: [{ path: '', reason: message }],
+                ...(manifestErrors.length > 0 ? { manifestErrors } : {}),
                 dryRun,
+                manifestPath: null,
               },
             }),
           ) + '\n',
@@ -220,7 +254,9 @@ export const purgeArchiveCommand = define({
                   staleFilteredCount: 0,
                 },
                 failures: [{ path: '', reason: message }],
+                ...(manifestErrors.length > 0 ? { manifestErrors } : {}),
                 dryRun,
+                manifestPath: null,
               },
             }),
           ) + '\n',

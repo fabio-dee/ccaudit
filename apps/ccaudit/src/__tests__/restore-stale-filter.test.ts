@@ -10,7 +10,7 @@
  *
  * Asserts:
  *   - `restore --list --json` exits 0 and lists only `live-agent`
- *   - envelope.filtered_stale_count === 1
+ *   - envelope.filteredStaleCount === 1
  *   - INV-S3 is not regressed: fixture mirrors the mixed-manifest shape
  *     that restore-interactive-roundtrip.test.ts guards
  */
@@ -47,7 +47,7 @@ interface RestoreListEnvelope {
       archive_path?: string;
     }>;
   }>;
-  filtered_stale_count: number;
+  filteredStaleCount: number;
 }
 
 /**
@@ -81,7 +81,7 @@ async function buildManifestFixture(
     manifest_version: 1,
     ccaudit_version: '1.5.0-test',
     checkpoint_ghost_hash: `deadbeef-${opts.agentName}`,
-    checkpoint_timestamp: opts.mtime.toISOString().replace(/[:.]/g, '-'),
+    checkpoint_timestamp: opts.mtime.toISOString(),
     since_window: '30d',
     os: 'darwin',
     node_version: 'v20.0.0',
@@ -156,7 +156,7 @@ describe.skipIf(process.platform === 'win32')(
       await cleanupTmpHome(tmpHome);
     });
 
-    it('restore --list --json lists only the live item and reports filtered_stale_count=1', async () => {
+    it('restore --list --json lists only the live item and reports filteredStaleCount=1', async () => {
       const r = await runCcauditCli(tmpHome, ['restore', '--list', '--json'], {
         env: { PATH: `${path.join(tmpHome, 'bin')}:${process.env.PATH ?? ''}` },
       });
@@ -167,8 +167,8 @@ describe.skipIf(process.platform === 'win32')(
       expect(parsed.meta.exitCode).toBe(0);
       expect(parsed.status).toBe('list');
 
-      // filtered_stale_count reflects the suppressed stale archive op.
-      expect(parsed.filtered_stale_count).toBe(1);
+      // filteredStaleCount reflects the suppressed stale archive op.
+      expect(parsed.filteredStaleCount).toBe(1);
 
       // Aggregate archive-op items across all entries: exactly one (live-agent).
       const allItems = parsed.entries.flatMap((e) => e.items);

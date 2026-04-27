@@ -133,8 +133,6 @@ function extractHookItems(
         if (leafType !== 'command' && leafType !== 'mcp_tool') continue;
 
         // Privacy-critical: hash the identifier, never expose the raw string.
-        // For mcp_tool, the canonical field per cc 2.1.118 is unconfirmed; accept
-        // 'tool', 'tool_name', or 'name' (first string wins) defensively.
         let payload: string;
         if (leafType === 'command') {
           const command = leafObj['command'];
@@ -142,18 +140,8 @@ function extractHookItems(
           payload = command;
         } else {
           const tool = leafObj['tool'];
-          const toolName = leafObj['tool_name'];
-          const nameField = leafObj['name'];
-          const candidate =
-            typeof tool === 'string'
-              ? tool
-              : typeof toolName === 'string'
-                ? toolName
-                : typeof nameField === 'string'
-                  ? nameField
-                  : null;
-          if (candidate === null) continue;
-          payload = candidate;
+          if (typeof tool !== 'string') continue;
+          payload = tool;
         }
         const hash = shortHash(payload);
 
@@ -531,7 +519,7 @@ if (import.meta.vitest) {
       expect(names.some((n) => /^PreToolUse:Bash:tool:[0-9a-f]{8}$/.test(n))).toBe(true);
     });
 
-    it('mcp_tool accepts tool_name and name as fallback identifier fields', async () => {
+    it('mcp_tool ignores non-canonical tool_name and name identifier fields', async () => {
       const settingsPath = path.join(tmpDir, 'settings.json');
       await writeFile(
         settingsPath,
@@ -540,18 +528,20 @@ if (import.meta.vitest) {
             PostToolUse: [
               { hooks: [{ type: 'mcp_tool', tool_name: 'mcp__a__x' }] },
               { hooks: [{ type: 'mcp_tool', name: 'mcp__b__y' }] },
+              { hooks: [{ type: 'mcp_tool', tool: 'mcp__canonical__z' }] },
             ],
           },
         }),
       );
 
       const items = await extractHookItemsFromFile(settingsPath, 'global', null);
-      expect(items).toHaveLength(2);
-      for (const item of items) {
-        expect(item.hookEvent).toBe('PostToolUse');
-        expect(item.injectCapable).toBe(true);
-        expect(item.name).toMatch(/^PostToolUse:\*:tool:[0-9a-f]{8}$/);
-      }
+      expect(items).toHaveLength(1);
+      expect(items[0].hookEvent).toBe('PostToolUse');
+      expect(items[0].injectCapable).toBe(true);
+      expect(items[0].name).toMatch(/^PostToolUse:\*:tool:[0-9a-f]{8}$/);
+      expect(noCommandLeak(items, 'mcp__canonical__z')).toBe(true);
+      expect(noCommandLeak(items, 'mcp__a__x')).toBe(true);
+      expect(noCommandLeak(items, 'mcp__b__y')).toBe(true);
     });
 
     it('mcp_tool leaf without identifier is silently skipped', async () => {

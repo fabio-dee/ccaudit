@@ -31,7 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   appends a new `archive_purge` op to a fresh `purge-<ts>-<rand>.jsonl`
   manifest — originals are never rewritten. JSON envelope:
   `purge.summary.{purgedCount, reclaimedCount, skippedOccupiedCount,
-staleFilteredCount}` + `purge.failures[]`. See
+staleFilteredCount}` + `purge.failures[]` + additive `purge.manifestPath`
+  and `purge.manifestErrors[]`. See
   [docs/JSON-SCHEMA.md § Purge](./docs/JSON-SCHEMA.md).
 - Empty-inventory short-circuit (Phase 9 SC1): `ghost` and
   `ghost --interactive` exit 0 with a clean single-line message on an empty
@@ -62,10 +63,10 @@ staleFilteredCount}` + `purge.failures[]`. See
 - `restore --all-matching <pattern>`: bulk restore of every item matching
   the fuzzy pattern.
 - JSON envelope: restore success/partial-success results now include
-  additive `selection_filter` (`null | { mode: "subset", ids: string[] }`)
-  and `skipped[]` (source_exists skips) fields. See
+  additive `selectionFilter` (`null | { mode: "subset", ids: string[] }`)
+  and `skipped[]` (source_exists skips with `canonicalId`) fields. See
   `docs/JSON-SCHEMA.md`.
-- `restore.filtered_stale_count` JSON field — additive non-negative
+- `restore.filteredStaleCount` JSON field — additive non-negative
   integer on success / partial-success / list envelopes counting
   archive ops suppressed from the restore listing because
   `archive_path` is missing AND `source_path` exists
@@ -77,14 +78,14 @@ staleFilteredCount}` + `purge.failures[]`. See
 - `restore --interactive` now executes selected MEMORY items in the subset
   restore path instead of dropping them after picker confirmation. Selected
   memory files have their `ccaudit-stale` / `ccaudit-flagged` frontmatter
-  cleaned as expected, and `selection_filter.ids` now reflects only the
+  cleaned as expected, and `selectionFilter.ids` now reflects only the
   ids that actually resolved/executed.
 - `restore --help` and `ghost --help` no longer leak gunshi's raw
   negatable-placeholder lines (`Negatable of --color`,
   `Negatable of --group-frameworks`). The public `--no-color` and
   `--no-group-frameworks` flags now render as clean user-facing help rows.
 
-## [1.5.0-beta.0] — 2026-04-19
+## [1.5.0-beta.0] - 2026-04-19
 
 v1.5 "Interactive Archive" — response to Reddit feedback asking for a surgical
 alternative to the full-inventory bust. Threads an optional subset filter
@@ -96,11 +97,12 @@ phase (not shipped in this entry — see Phase 8 tracking in `.planning/`).
 ### Added
 
 - `ghost --interactive` / `-i`: tabbed TUI picker for selective archival.
-  Six category tabs (agents / skills / MCP / memory / commands / hooks) with
+  Five category tabs (agents / skills / MCP / memory / commands) with
   bounded viewport, cross-tab selection persistence, and an inline
   confirmation screen that replaces the 3-prompt readline ceremony. Requires
   a TTY; non-TTY sessions fall back to `--dry-run`. `--interactive` combined
-  with `--json` is a hard error.
+  with `--json` is a hard error. Hook archival is deferred to a future
+  phase.
 - Keyboard model: `/` filter (case-insensitive substring), `s` sort cycle
   (staleness → tokens → name), `?` help overlay, `Space` toggle, `a`
   toggle-all-within-tab, `Tab` / `Shift-Tab` / `←` / `→` tab navigation,
@@ -136,7 +138,7 @@ phase (not shipped in this entry — see Phase 8 tracking in `.planning/`).
   busts (the default non-interactive path) the value is unchanged —
   `freedTokens === totalPlannedTokens` and the v1.4 contract is preserved.
   **Migration note**: consumers that compared `freedTokens` across runs
-  must now consult `selection_filter.mode` to distinguish subset vs full
+  must now consult `manifest.header.selection_filter.mode` to distinguish subset vs full
   busts. Dashboards that want "what was the full opportunity?" should read
   `totalPlannedTokens`.
 

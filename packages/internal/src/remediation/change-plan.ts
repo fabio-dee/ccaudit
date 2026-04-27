@@ -99,13 +99,7 @@ export function buildChangePlan(enriched: TokenCostResult[]): ChangePlan {
     }
   }
 
-  const counts = {
-    agents: archive.filter((i) => i.category === 'agent').length,
-    skills: archive.filter((i) => i.category === 'skill').length,
-    mcp: disable.length,
-    memory: flag.length,
-    commands: archive.filter((i) => i.category === 'command').length,
-  };
+  const counts = recomputeCounts(archive, disable, flag);
 
   // Compute savings AFTER lists are built -- delegates to savings.ts
   const partial: ChangePlan = { archive, disable, flag, counts, savings: { tokens: 0 } };
@@ -143,17 +137,25 @@ export function filterChangePlan(
   const disable = plan.disable.filter(keep);
   const flag = plan.flag.filter(keep);
 
-  const counts = {
+  const counts = recomputeCounts(archive, disable, flag);
+
+  const filtered: ChangePlan = { archive, disable, flag, counts, savings: { tokens: 0 } };
+  filtered.savings.tokens = calculateDryRunSavings(filtered);
+  return filtered;
+}
+
+function recomputeCounts(
+  archive: ChangePlanItem[],
+  disable: ChangePlanItem[],
+  flag: ChangePlanItem[],
+): ChangePlan['counts'] {
+  return {
     agents: archive.filter((i) => i.category === 'agent').length,
     skills: archive.filter((i) => i.category === 'skill').length,
     mcp: disable.length,
     memory: flag.length,
     commands: archive.filter((i) => i.category === 'command').length,
   };
-
-  const filtered: ChangePlan = { archive, disable, flag, counts, savings: { tokens: 0 } };
-  filtered.savings.tokens = calculateDryRunSavings(filtered);
-  return filtered;
 }
 
 if (import.meta.vitest) {

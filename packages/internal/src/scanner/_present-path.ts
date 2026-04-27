@@ -7,16 +7,16 @@
  *   1. If `projectRoot` is provided AND `absPath` lives under it, return the
  *      project-relative remainder (project-root precedence over home).
  *   2. Else if `absPath` lives under `homeDir`, return `~/<remainder>`.
- *   3. Else return the input unchanged (non-home absolute, already relative,
- *      or the `/` root edge).
+ *   3. Else return the forward-slash-normalized input (non-home absolute,
+ *      already relative, or the `/` root edge).
  *
  * The function is pure: no `fs`, no `os`. Callers must pass `homeDir` and
  * (optionally) `projectRoot` explicitly — this keeps `presentPath` snapshot-
  * testable without mocking `os.homedir()`.
  *
- * Forward slashes only (tinyglobby / CLAUDE.md convention). On Windows,
- * callers are expected to normalize to forward slashes upstream before
- * handing paths to the scanner.
+ * Forward slashes only (tinyglobby / CLAUDE.md convention). Windows
+ * backslashes are normalized before prefix matching and in the passthrough
+ * return value.
  */
 
 /**
@@ -25,7 +25,7 @@
  * @param absPath   Path to render. May be absolute, `~`-prefixed, or relative.
  * @param homeDir   Absolute path to the user's home directory (no trailing slash).
  * @param projectRoot Optional absolute path to the current project root (no trailing slash).
- * @returns         `"~/..."`, `"<project-relative>"`, or `absPath` unchanged.
+ * @returns         `"~/..."`, `"<project-relative>"`, or normalized `absPath`.
  */
 export function presentPath(absPath: string, homeDir: string, projectRoot?: string): string {
   // Normalize Windows backslashes to forward slashes before prefix-matching.

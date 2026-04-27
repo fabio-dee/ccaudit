@@ -712,8 +712,14 @@ function findTopLevelMcpServersBlock(text: string): { start: number; end: number
       continue;
     }
     if (ch === '"') {
-      if (depth === 1 && text.startsWith('"mcpServers":', i)) {
-        let j = i + '"mcpServers":'.length;
+      if (depth === 1 && text.startsWith('"mcpServers"', i)) {
+        let j = i + '"mcpServers"'.length;
+        while (j < text.length && /\s/.test(text[j]!)) j++;
+        if (text[j] !== ':') {
+          inString = true;
+          continue;
+        }
+        j++;
         while (j < text.length && /\s/.test(text[j]!)) j++;
         if (text[j] !== '{') return null;
         let d = 0;
@@ -749,6 +755,39 @@ function findTopLevelMcpServersBlock(text: string): { start: number; end: number
   return null;
 }
 
+function findDirectJsonKeyInObject(
+  text: string,
+  key: string,
+  block: { start: number; end: number },
+): { keyStart: number; valueStart: number } | null {
+  const quotedKey = JSON.stringify(key);
+  let depth = 0;
+  let inString = false;
+  for (let i = block.start; i < block.end; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (ch === '\\') {
+        i++;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      if (depth === 1 && text.startsWith(quotedKey, i)) {
+        let j = i + quotedKey.length;
+        while (j < block.end && /\s/.test(text[j]!)) j++;
+        if (text[j] === ':') return { keyStart: i, valueStart: j + 1 };
+      }
+      inString = true;
+      continue;
+    }
+    if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+  }
+  return null;
+}
+
 /**
  * Apply surgical text-level mutations to a JSON config string so that
  * unmodified keys are byte-identical in the output (INV-S1).
@@ -770,18 +809,17 @@ export function patchMcpConfigText(
   let text = raw;
 
   for (const { name, newKey, value } of mutations) {
-    const needle = `"${name}":`;
     // C2: scope the key search to the root-level mcpServers block so a
     // project-level `projects.<p>.mcpServers.<name>` that appears textually
     // earlier cannot be matched instead of the global entry.
     const block = findTopLevelMcpServersBlock(text);
     if (!block) return null;
-    const localIdx = text.indexOf(needle, block.start);
-    if (localIdx === -1 || localIdx >= block.end) return null;
-    const keyStart = localIdx;
+    const found = findDirectJsonKeyInObject(text, name, block);
+    if (found === null) return null;
+    const keyStart = found.keyStart;
 
     // Find the opening `{` of the value object.
-    let i = keyStart + needle.length;
+    let i = found.valueStart;
     while (i < text.length && (text[i] === ' ' || text[i] === '\n' || text[i] === '\t')) i++;
     if (text[i] !== '{') return null;
 
@@ -2436,6 +2474,26 @@ if (import.meta.vitest) {
       // serverB preserved in mcpServers
       expect(parsed.mcpServers?.serverB).toEqual({ command: 'node' });
       // disabled key at root
+      expect(parsed['ccaudit-disabled:serverA']).toEqual({ command: 'npx' });
+    });
+
+    it('tolerates JSON whitespace between object keys and colons', () => {
+      const input = `{
+  "mcpServers" : {
+    "serverA" : {
+      "command": "npx"
+    },
+    "serverB" : {
+      "command": "node"
+    }
+  }
+}
+`;
+      const result = patch(input, 'serverA');
+      expect(result).not.toBeNull();
+      const parsed = JSON.parse(result!);
+      expect(parsed.mcpServers?.serverA).toBeUndefined();
+      expect(parsed.mcpServers?.serverB).toEqual({ command: 'node' });
       expect(parsed['ccaudit-disabled:serverA']).toEqual({ command: 'npx' });
     });
 

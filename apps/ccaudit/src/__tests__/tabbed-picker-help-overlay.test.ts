@@ -2,11 +2,14 @@
  * Phase 5 SC3 — help overlay (`?`) integration test (pty harness).
  *
  * Asserts:
- *   - `?` opens a modal overlay containing the four headings Navigation /
- *     Selection / View / Exit (D5-14).
- *   - `Esc` closes the overlay and restores the underlying picker footer.
- *   - `Space` is swallowed while the overlay is open (D5-13): on close, the
- *     global counter still shows 0 selections.
+ *   - `?` opens a modal overlay containing the visible help groups and glyph
+ *     legend (Selection / View / Glyphs / Exit in the 30-row test viewport;
+ *     the Navigation section is clipped by the non-TTY 20-row render limit).
+ *   - `?` toggles the overlay closed and restores the underlying picker footer
+ *     (test 1). `Esc` also closes the overlay without canceling the picker
+ *     (test 2 — D5-13 gap-closure).
+ *   - `Space` is swallowed while the overlay is open (D5-13): the overlay stays
+ *     open after Space, and on close the global counter still shows 0 selections.
  *
  * Uses ASCII mode (NO_COLOR=1) so the help-overlay tests expect the `# Heading`
  * formatting the renderer emits in that mode.
@@ -90,7 +93,11 @@ describe.skipIf(process.platform === 'win32')('Phase 5 SC3 — help overlay inte
     // line-diff renderer may suppress some overlay lines between renders, so
     // we pick assertions from the stable visible group sections.
     await sendKeys(spawned.child, ['?']);
-    await new Promise((r) => setTimeout(r, 500));
+    await waitForMarker(
+      () => stripAnsi(stdoutBuf),
+      () => spawned.child.exitCode !== null,
+      '(Press ? or Esc to close)',
+    );
     const afterOpen = stripAnsi(stdoutBuf);
     expect(afterOpen).toContain('Selection');
     expect(afterOpen).toContain('View');
@@ -103,16 +110,27 @@ describe.skipIf(process.platform === 'win32')('Phase 5 SC3 — help overlay inte
     expect(afterOpen).toContain('Exit');
 
     // While overlay open, press Space — must be swallowed per D5-13.
+    let beforeLen = stdoutBuf.length;
     await sendKeys(spawned.child, [' ']);
-    await new Promise((r) => setTimeout(r, 250));
+    await waitForMarker(
+      () => stripAnsi(stdoutBuf),
+      () => spawned.child.exitCode !== null,
+      '(Press ? or Esc to close)',
+    );
+    expect(stripAnsi(stdoutBuf)).toContain('(Press ? or Esc to close)');
+    expect(spawned.child.exitCode).toBeNull();
 
     // Close overlay via `?` toggle. After the Phase 5 gap-closure fix,
     // Esc also safely closes the overlay (see the dedicated test below);
     // this original SC3 path exercises the `?` toggle for regression
     // coverage of the idempotent toggle gesture.
-    let beforeLen = stdoutBuf.length;
+    beforeLen = stdoutBuf.length;
     await sendKeys(spawned.child, ['?']);
-    await new Promise((r) => setTimeout(r, 400));
+    await waitForMarker(
+      () => stripAnsi(stdoutBuf.slice(beforeLen)),
+      () => spawned.child.exitCode !== null,
+      '0 of 3 selected across all tabs',
+    );
     const afterClose = stripAnsi(stdoutBuf.slice(beforeLen));
     expect(
       afterClose.includes('0 of 3 selected across all tabs'),
@@ -122,9 +140,17 @@ describe.skipIf(process.platform === 'win32')('Phase 5 SC3 — help overlay inte
     // Re-open, close via `?` again (toggle).
     beforeLen = stdoutBuf.length;
     await sendKeys(spawned.child, ['?']);
-    await new Promise((r) => setTimeout(r, 300));
+    await waitForMarker(
+      () => stripAnsi(stdoutBuf),
+      () => spawned.child.exitCode !== null,
+      '(Press ? or Esc to close)',
+    );
     await sendKeys(spawned.child, ['?']);
-    await new Promise((r) => setTimeout(r, 300));
+    await waitForMarker(
+      () => stripAnsi(stdoutBuf.slice(beforeLen)),
+      () => spawned.child.exitCode !== null,
+      '0 of 3 selected across all tabs',
+    );
     const afterToggle = stripAnsi(stdoutBuf.slice(beforeLen));
     expect(
       afterToggle.includes('0 of 3 selected across all tabs'),
@@ -135,7 +161,7 @@ describe.skipIf(process.platform === 'win32')('Phase 5 SC3 — help overlay inte
     await sendKeys(spawned.child, ['\x03']);
     spawned.child.stdin!.end();
     const result = await spawned.done;
-    expect([0, 130, null].includes(result.exitCode)).toBe(true);
+    expect([0, 130, null]).toContain(result.exitCode);
   }, 30_000);
 
   it('D5-13: `Esc` closes the help overlay without canceling the picker (gap-closure)', async () => {
@@ -169,7 +195,11 @@ describe.skipIf(process.platform === 'win32')('Phase 5 SC3 — help overlay inte
     // Esc should close the overlay and return to the picker — NOT cancel.
     const beforeLen = stdoutBuf.length;
     await sendKeys(spawned.child, ['\x1b']);
-    await new Promise((r) => setTimeout(r, 500));
+    await waitForMarker(
+      () => stripAnsi(stdoutBuf.slice(beforeLen)),
+      () => spawned.child.exitCode !== null,
+      '0 of 3 selected across all tabs',
+    );
     expect(spawned.child.exitCode).toBeNull();
     const afterEsc = stripAnsi(stdoutBuf.slice(beforeLen));
     expect(afterEsc).not.toContain('No changes made');
@@ -182,6 +212,6 @@ describe.skipIf(process.platform === 'win32')('Phase 5 SC3 — help overlay inte
     await sendKeys(spawned.child, ['\x03']);
     spawned.child.stdin!.end();
     const result = await spawned.done;
-    expect([0, 130, null].includes(result.exitCode)).toBe(true);
+    expect([0, 130, null]).toContain(result.exitCode);
   }, 30_000);
 });

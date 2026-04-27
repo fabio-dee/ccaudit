@@ -320,23 +320,23 @@ Notes:
 
 ### `restore`
 
-| Flag / Arg                 | Short | Description                                                                                                                                                                     |
-| -------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| _(no args)_                |       | Restore all items from **every** bust manifest (deduplicated, newer-wins).                                                                                                      |
-| `<name>`                   |       | Restore a single archived item by exact canonical id (e.g. `restore code-reviewer`).                                                                                            |
-| `--interactive`            | `-i`  | Open a TUI picker listing every archived item across all manifests. Select a subset to restore. Requires a TTY. Mutually exclusive with `--json`.                               |
-| `--name <pattern>`         |       | Fuzzy single-match restore (case-insensitive substring). Ambiguous patterns error with a candidate list — never auto-resolve.                                                   |
-| `--all-matching <pattern>` |       | Bulk restore of every item matching the fuzzy pattern. Exits `1` with `no archived item matches "<pattern>"` on stderr if nothing matches.                                      |
-| `--list`                   |       | List all archived items across all bust manifests (read-only).                                                                                                                  |
-| `--json`                   | `-j`  | Output as JSON with a `meta` envelope. Includes additive `selection_filter`, `skipped[]`, and `filtered_stale_count` fields — see [docs/JSON-SCHEMA.md](./docs/JSON-SCHEMA.md). |
-| `--csv`                    |       | RFC 4180 CSV export.                                                                                                                                                            |
-| `--quiet`                  | `-q`  | Machine-readable TSV only.                                                                                                                                                      |
-| `--verbose`                | `-v`  | Show detailed output including warnings.                                                                                                                                        |
+| Flag / Arg                 | Short | Description                                                                                                                                                                  |
+| -------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| _(no args)_                |       | Restore all items from **every** bust manifest (deduplicated, newer-wins).                                                                                                   |
+| `<name>`                   |       | Restore a single archived item by exact canonical id (e.g. `restore code-reviewer`).                                                                                         |
+| `--interactive`            | `-i`  | Open a TUI picker listing every archived item across all manifests. Select a subset to restore. Requires a TTY; may be combined with `--json` for the final result envelope. |
+| `--name <pattern>`         |       | Fuzzy single-match restore (case-insensitive substring). Ambiguous patterns error with a candidate list — never auto-resolve.                                                |
+| `--all-matching <pattern>` |       | Bulk restore of every item matching the fuzzy pattern. Exits `1` with `no archived item matches "<pattern>"` on stderr if nothing matches.                                   |
+| `--list`                   |       | List all archived items across all bust manifests (read-only).                                                                                                               |
+| `--json`                   | `-j`  | Output as JSON with a `meta` envelope. Includes additive `selectionFilter`, `skipped[]`, and `filteredStaleCount` fields — see [docs/JSON-SCHEMA.md](./docs/JSON-SCHEMA.md). |
+| `--csv`                    |       | RFC 4180 CSV export.                                                                                                                                                         |
+| `--quiet`                  | `-q`  | Machine-readable TSV only.                                                                                                                                                   |
+| `--verbose`                | `-v`  | Show detailed output including warnings.                                                                                                                                     |
 
 **Listing hygiene (v1.5):** `restore --interactive`, `restore --list`, and full
 `restore` automatically suppress archive ops whose `archive_path` is missing
 AND `source_path` exists (already-restored items or stale test residue). The
-count of suppressed entries is reported as `restore.filtered_stale_count` in
+count of suppressed entries is reported as `restore.filteredStaleCount` in
 the JSON envelope. Entries where both paths are missing stay listed so restore
 can fail loudly on genuinely broken state.
 
@@ -414,10 +414,10 @@ npx ccaudit-cli restore <exact-id>             # restore one archived item by ex
 npx ccaudit-cli restore --list                 # list all archived items across busts
 ```
 
-Full-mode `restore` walks **every** manifest in `~/.claude/ccaudit/manifests/` (not just the newest), with deduplication. Items archived by older busts are recovered too. Output reports `moved` and `already-at-source` separately so idempotent re-runs don't inflate the success count. In v1.5, listing paths additionally suppress entries whose archive file is gone but whose source is already restored (stale / already-done hygiene) and surface the count as `filtered_stale_count` in JSON.
+Full-mode `restore` walks **every** manifest in `~/.claude/ccaudit/manifests/` (not just the newest), with deduplication. Items archived by older busts are recovered too. Output reports `moved` and `already-at-source` separately so idempotent re-runs don't inflate the success count. In v1.5, listing paths additionally suppress entries whose archive file is gone but whose source is already restored (stale / already-done hygiene) and surface the count as `filteredStaleCount` in JSON.
 
 ```text
-159 agents/skills restored to their original locations (324 were already at source)
+159 items restored to their original locations (324 were already at source)
 ```
 
 What gets reversed:
@@ -467,7 +467,7 @@ Classification per manifest-union archive op:
 - **Drop / stale_archive_missing** — archive is already gone, source exists (already-restored or test residue). No disk mutation; a follow-up manifest op is still appended so restore listings stop surfacing it.
 - **Skip / both_missing** — both paths are absent. Preserved for diagnosis; never auto-resolved.
 
-Scope is **archive ops only**. Flag ops (memory frontmatter) and MCP re-enable ops are untouched by this command. Each executed mutation is recorded as an append-only `archive_purge` op in a fresh `purge-<ts>-<rand>.jsonl` manifest — the original archive op stays intact for audit. Real purge requires an **explicit `--yes`**; there is no prompt fallback. Failures on individual items are reported in `purge.failures[]` but do not abort the batch.
+Scope is **archive ops only**. Flag ops (memory frontmatter) and MCP disable ops (the `name → ccaudit-disabled:name` key-rename written by `bust`) are untouched by this command. Each executed mutation is recorded as an append-only `archive_purge` op in a fresh `purge-<ts>-<rand>.jsonl` manifest — the original archive op stays intact for audit. Real purge requires an **explicit `--yes`**; there is no prompt fallback. Failures on individual items are reported in `purge.failures[]` but do not abort the batch.
 
 See [docs/JSON-SCHEMA.md § Purge](./docs/JSON-SCHEMA.md) for the `purge.summary` / `purge.failures[]` envelope contract.
 

@@ -1020,7 +1020,7 @@ describe.skipIf(process.platform === 'win32')('ccaudit restore (subprocess integ
     // predicate (archive_path missing AND source_path exists) and are
     // suppressed at collection time. They no longer reach the executor,
     // so alreadyAtSource stays 0 and the suppression is surfaced via
-    // the additive `filtered_stale_count` envelope field. moved and
+    // the additive `filteredStaleCount` envelope field. moved and
     // failed remain 0 — the underlying "nothing actually moved"
     // invariant still holds.
     const counts = parsed.counts as {
@@ -1032,8 +1032,6 @@ describe.skipIf(process.platform === 'win32')('ccaudit restore (subprocess integ
       'already-at-source should be 0 (stale ops filtered upstream in Phase 8.2)',
     ).toBe(0);
     expect(counts.unarchived.failed, 'failed should be 0').toBe(0);
-    expect(parsed.filtered_stale_count, 'stale archive ops surface via filtered_stale_count').toBe(
-      2,
-    );
+    expect(parsed.filteredStaleCount, 'stale archive ops surface via filteredStaleCount').toBe(2);
   }, 60_000);
 });

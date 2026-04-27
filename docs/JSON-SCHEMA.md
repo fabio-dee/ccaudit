@@ -83,36 +83,41 @@ Bust, restore, and reclaim emit a `counts` object rather than an `items` array.
 Successful and partial-success `restore` responses carry two additional
 fields surfacing the subset-restore surface landed in v1.5:
 
-- **`selection_filter`** — type `null | { "mode": "subset", "ids": string[] }`.
+- **`selectionFilter`** — type `null | { "mode": "subset", "ids": string[] }`.
   Present on `status: "success"` and `status: "partial-success"`. `null` when
   the invocation restored the full inventory. Populated as
   `{ "mode": "subset", "ids": [...] }` for the three subset entry points:
   `--interactive`, `--name <pattern>` (single-match), and `--all-matching <pattern>`.
   `ids` are canonical item identifiers (e.g. `agent:code-reviewer`,
   `mcp:playwright`).
-- **`skipped`** — type `Array<{ "reason": "source_exists", "path": string, "canonical_id": string }>`.
+- **`skipped`** — type `Array<{ "reason": "source_exists", "path": string, "canonicalId": string }>`.
   Always present on success + partial-success (may be empty `[]`). One entry
   per item whose source path already existed on disk at restore time — those
   items are never overwritten (safety invariant). Each entry is also surfaced
   as a single stderr warning line: `warning: skipped <path> — source already exists`.
 
 ```json
-"selection_filter": { "mode": "subset", "ids": ["agent:code-reviewer", "mcp:playwright"] },
+"selectionFilter": { "mode": "subset", "ids": ["agent:code-reviewer", "mcp:playwright"] },
 "skipped": [
-  { "reason": "source_exists", "path": "/Users/me/.claude/agents/code-reviewer.md", "canonical_id": "agent:code-reviewer" }
+  { "reason": "source_exists", "path": "/Users/me/.claude/agents/code-reviewer.md", "canonicalId": "agent:code-reviewer" }
 ]
 ```
 
-> **Ambiguity is CLI-layer, not envelope-layer.** `--name <pattern>` matching
-> more than one item is a validation failure: the CLI writes a candidate block
-> to stderr (per D8-09) and exits 1 **before** dispatching to the domain
-> executor. It does NOT produce a JSON envelope — the shape matches every
-> other pre-dispatch validation error.
+> **Manifest casing exception.** Manifest JSONL headers intentionally keep
+> snake_case fields such as `manifest.header.selection_filter` for backward
+> compatibility with v1.5 dry-run/bust manifests. Public `--json` envelopes use
+> camelCase and do not expose the manifest header casing directly.
 
-### Additive field: `filtered_stale_count` (v1.5, Phase 8.2)
+> **Pre-dispatch validation envelope.** Restore preflight failures such as
+> mutually-exclusive flags, `CCAUDIT_NO_INTERACTIVE`, TTY refusal, no-match, or
+> ambiguity emit the standard envelope when `--json` is active:
+> `{ "meta": { "command": "restore", "exitCode": <code>, ... }, "error": "..." }`.
+> Without `--json`, the same message is written to stderr.
+
+### Additive field: `filteredStaleCount` (v1.5, Phase 8.2)
 
 `restore` responses on `status: "success"`, `status: "partial-success"`,
-and `status: "list"` carry an additive `filtered_stale_count` field:
+and `status: "list"` carry an additive `filteredStaleCount` field:
 
 - **Type:** non-negative integer (number).
 - **Semantics:** count of archive ops suppressed from the listing
@@ -128,14 +133,14 @@ and `status: "list"` carry an additive `filtered_stale_count` field:
   variants. Defaults to `0` when nothing is filtered. Absent on
   pre-v1.5 envelopes; consumers must tolerate `undefined`.
 - **Envelope shape note:** the field sits at the data root
-  (`envelope.filtered_stale_count`), not nested under `counts` or a
+  (`envelope.filteredStaleCount`), not nested under `counts` or a
   `summary` object — the restore envelope flattens data alongside
-  `status`, `selection_filter`, and `skipped` rather than grouping
+  `status`, `selectionFilter`, and `skipped` rather than grouping
   them under a `summary` key.
 
 ```json
 "status": "list",
-"filtered_stale_count": 3,
+"filteredStaleCount": 3,
 "entries": [ ... ]
 ```
 
@@ -180,8 +185,9 @@ additive top-level `purge` namespace in the JSON envelope (no changes to
 | `purge.failures[]`                   | `Array<{ path: string; reason: string }>` | Per-item failures. Empty `[]` on full success. Partial failures do NOT change the exit code — the CLI still exits 0 as long as ≥1 item worked.                             |
 | `purge.dryRun`                       | boolean                                   | True when `--dry-run` (the default) was active. False when `--yes` executed real mutations.                                                                                |
 | `purge.manifestPath`                 | `string \| null`                          | Absolute path of the `purge-<ts>-<rand>.jsonl` follow-up manifest (only real runs that produced ≥1 mutation). `null` on dry-run or no-op.                                  |
+| `purge.manifestErrors[]`             | `Array<{ path: string; reason: string }>` | Unreadable manifest files skipped while building the purge plan. Present only when at least one manifest was skipped.                                                      |
 
-**Scope.** Archive ops only. Flag (memory frontmatter) and disable (MCP re-enable) ops are **never** touched by purge. `classifyArchiveOps` filters by `op_type === 'archive'`.
+**Scope.** Archive ops only. Flag ops (memory frontmatter) and disable ops (MCP key-rename `name → ccaudit-disabled:name`) are **never** touched by purge. `classifyArchiveOps` filters by `op_type === 'archive'`.
 
 **Safety gate.** `--yes` is required for real purge; `--dry-run` is the default. Passing both together errors on stderr with `flags are mutually exclusive: --dry-run, --yes` and exits 1.
 

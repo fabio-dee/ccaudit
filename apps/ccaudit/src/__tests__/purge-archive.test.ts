@@ -87,7 +87,7 @@ async function stageMixedFixture(tmpHome: string, specs: ArchiveOpSpec[]): Promi
     manifest_version: 1,
     ccaudit_version: '1.5.0-test',
     checkpoint_ghost_hash: 'fixture-purge',
-    checkpoint_timestamp: '2026-04-22T09-00-00-000Z',
+    checkpoint_timestamp: '2026-04-22T09:00:00.000Z',
     since_window: '30d',
     os: 'darwin',
     node_version: 'v20.0.0',
@@ -315,10 +315,32 @@ describe.skipIf(process.platform === 'win32')('ccaudit purge-archive (Phase 9 SC
 
   // -- 4. Mutual exclusion --------------------------------------------
 
-  it('--dry-run --yes → exit 1 with mutual-exclusion error', async () => {
+  it('--dry-run --yes → exit 1 with mutual-exclusion error and records history', async () => {
     const r = await runCcauditCli(tmpHome, ['purge-archive', '--dry-run', '--yes']);
     expect(r.exitCode).toBe(1);
     expect(r.stderr).toMatch(/mutually exclusive/);
+    const history = await readFile(historyPath(tmpHome), 'utf8');
+    expect(history).toContain('"command":"purge-archive"');
+    expect(history).toContain('"exit_code":1');
+  });
+
+  it('--dry-run --yes --json → exit 1 with structured envelope', async () => {
+    const r = await runCcauditCli(tmpHome, ['purge-archive', '--dry-run', '--yes', '--json']);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr).toBe('');
+    const env = JSON.parse(r.stdout.trim()) as {
+      meta: { command: string; exitCode: number };
+      purge: {
+        failures: Array<{ path: string; reason: string }>;
+        dryRun: boolean;
+        manifestPath: string | null;
+      };
+    };
+    expect(env.meta.command).toBe('purge-archive');
+    expect(env.meta.exitCode).toBe(1);
+    expect(env.purge.dryRun).toBe(true);
+    expect(env.purge.manifestPath).toBeNull();
+    expect(env.purge.failures[0]?.reason).toMatch(/mutually exclusive/);
   });
 
   // -- 5. CCAUDIT_NO_INTERACTIVE orthogonality -------------------------
@@ -362,7 +384,7 @@ describe.skipIf(process.platform === 'win32')('ccaudit purge-archive (Phase 9 SC
       manifest_version: 1,
       ccaudit_version: '1.5.0-test',
       checkpoint_ghost_hash: 'fixture-corrupt-test',
-      checkpoint_timestamp: '2026-04-23T10-00-00-000Z',
+      checkpoint_timestamp: '2026-04-23T10:00:00.000Z',
       since_window: '30d',
       os: 'darwin',
       node_version: 'v20.0.0',

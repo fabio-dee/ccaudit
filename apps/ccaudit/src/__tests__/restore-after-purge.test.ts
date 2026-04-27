@@ -39,6 +39,7 @@ beforeAll(() => {
 interface RestoreEnvelope {
   meta: { command: string; exitCode: number };
   status: string;
+  manifest_path?: string;
   counts?: {
     unarchived: { moved: number; alreadyAtSource: number; failed: number };
     reenabled: { completed: number; failed: number };
@@ -91,7 +92,7 @@ describe.skipIf(process.platform === 'win32')(
         manifest_version: 1,
         ccaudit_version: '1.5.0-test',
         checkpoint_ghost_hash: 'deadbeef-rem9',
-        checkpoint_timestamp: '2026-04-20T10-00-00-000Z',
+        checkpoint_timestamp: '2026-04-20T10:00:00.000Z',
         since_window: '30d',
         os: 'darwin',
         node_version: 'v20.0.0',
@@ -188,6 +189,7 @@ describe.skipIf(process.platform === 'win32')(
         parsed.status,
         `expected 'success' but got '${parsed.status}'; spurious failures mean purged ops were attempted`,
       ).toBe('success');
+      expect(path.basename(parsed.manifest_path ?? '')).toMatch(/^bust-/);
     });
 
     it('counts reflect only C being restored (moved=1, failed=0)', async () => {

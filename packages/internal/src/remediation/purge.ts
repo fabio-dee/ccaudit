@@ -21,7 +21,7 @@
 import type { ArchiveOp, ArchivePurgeOp, ManifestOp, ManifestWriter } from './manifest.ts';
 import { buildArchivePurgeOp, closePurgeManifestWriter } from './manifest.ts';
 import { isStaleArchiveOp } from './restore.ts';
-import { moveArchiveToSource, type ArchiveMoveDeps } from './_archive-move.ts';
+import { moveArchiveToSource, type ArchiveMoveDeps } from './archive-move.ts';
 import { Result } from '@praha/byethrow';
 
 // -- Public types ---------------------------------------------------
@@ -189,10 +189,7 @@ export async function executePurge(
 
   if (opts.dryRun) {
     // Dry-run: compute counters from the plan; NO deps called at all.
-    for (const item of plan.reclaim) {
-      summary.reclaimedCount += 1;
-      void item; // explicit noop — satisfy no-unused-vars without mutating item
-    }
+    summary.reclaimedCount = plan.reclaim.length;
     for (const item of plan.drop) {
       summary.purgedCount += 1;
       if (item.reason === 'source_occupied') summary.skippedOccupiedCount += 1;

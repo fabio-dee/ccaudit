@@ -109,7 +109,11 @@ describe.skipIf(process.platform === 'win32')(
       // Fixture ghosts: 2 gsd-* (protected) + 1 plain-ghost = 3 total, 1 selectable.
       let before = out.length;
       await sendKeys(spawned.child, ['a']);
-      await new Promise((r) => setTimeout(r, 400));
+      await waitForMarker(
+        () => stripAnsi(out.slice(before)),
+        () => spawned.child.exitCode !== null,
+        '1 of 3 selected across all tabs',
+      );
       const afterA = stripAnsi(out.slice(before));
       expect(
         /1 of 3 selected across all tabs/.test(afterA),
@@ -121,7 +125,11 @@ describe.skipIf(process.platform === 'win32')(
       // Easier: `a` again to clear, then Down until we hit a gsd row.
       before = out.length;
       await sendKeys(spawned.child, ['a']); // toggle off
-      await new Promise((r) => setTimeout(r, 200));
+      await waitForMarker(
+        () => stripAnsi(out.slice(before)),
+        () => spawned.child.exitCode !== null,
+        '0 of 3 selected across all tabs',
+      );
       const cleared = stripAnsi(out.slice(before));
       expect(/0 of 3 selected across all tabs/.test(cleared)).toBe(true);
 
@@ -195,7 +203,11 @@ describe.skipIf(process.platform === 'win32')(
       // `a` must still exclude protected rows in ASCII mode.
       const before = out.length;
       await sendKeys(spawned.child, ['a']);
-      await new Promise((r) => setTimeout(r, 300));
+      await waitForMarker(
+        () => stripAnsi(out.slice(before)),
+        () => spawned.child.exitCode !== null,
+        '1 of 3 selected across all tabs',
+      );
       const afterA = stripAnsi(out.slice(before));
       expect(/1 of 3 selected across all tabs/.test(afterA)).toBe(true);
 

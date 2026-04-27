@@ -3,11 +3,11 @@
  * envelope contract (D8-16, D8-17).
  *
  * Asserts the v1.5 additive fields land in the envelope:
- *   - top-level `command === 'restore'`, `exit_code === 0`
- *   - `data.status === 'success'`
- *   - `data.selection_filter.mode === 'subset'`
- *   - `data.selection_filter.ids` has exactly 2 entries (pencil-dev + pencil-review)
- *   - `Array.isArray(data.skipped)` is true (empty on the happy path, but present)
+ *   - `meta.command === 'restore'`, `meta.exitCode === 0`
+ *   - `status === 'success'`
+ *   - `selectionFilter.mode === 'subset'`
+ *   - `selectionFilter.ids` has exactly 2 entries (pencil-dev + pencil-review)
+ *   - `Array.isArray(skipped)` is true (empty on the happy path, but present)
  *
  * Source-exists skip + skipped[] contents are covered by
  * restore-interactive-source-exists.test.ts.
@@ -38,7 +38,7 @@ beforeAll(() => {
 interface RestoreEnvelope {
   meta: { command: string; exitCode: number };
   status: string;
-  selection_filter: { mode: string; ids: string[] } | null;
+  selectionFilter: { mode: string; ids: string[] } | null;
   skipped: unknown[];
 }
 
@@ -57,7 +57,7 @@ describe.skipIf(process.platform === 'win32')(
       await cleanupTmpHome(tmpHome);
     });
 
-    it('envelope carries selection_filter (subset, 2 ids) + skipped[] on success', async () => {
+    it('envelope carries selectionFilter (subset, 2 ids) + skipped[] on success', async () => {
       const r = await runCcauditCli(tmpHome, ['restore', '--all-matching', 'pencil', '--json'], {
         env: { PATH: `${path.join(tmpHome, 'bin')}:${process.env.PATH ?? ''}` },
       });
@@ -70,12 +70,12 @@ describe.skipIf(process.platform === 'win32')(
       expect(parsed.meta.exitCode).toBe(0);
       expect(parsed.status).toBe('success');
 
-      // selection_filter is the v1.5 additive field (D8-16).
-      expect(parsed.selection_filter).not.toBeNull();
-      expect(parsed.selection_filter?.mode).toBe('subset');
-      expect(parsed.selection_filter?.ids).toHaveLength(2);
+      // selectionFilter is the v1.5 additive field (D8-16).
+      expect(parsed.selectionFilter).not.toBeNull();
+      expect(parsed.selectionFilter?.mode).toBe('subset');
+      expect(parsed.selectionFilter?.ids).toHaveLength(2);
       // ids reference the two pencil archive paths (agent:<abs>).
-      for (const id of parsed.selection_filter!.ids) {
+      for (const id of parsed.selectionFilter!.ids) {
         expect(id).toMatch(/^agent:.*pencil-(dev|review)\.md$/);
       }
 

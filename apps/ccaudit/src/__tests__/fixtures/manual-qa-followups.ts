@@ -221,7 +221,7 @@ export async function stagePurgeMixedFixture(
     manifest_version: 1,
     ccaudit_version: '1.5.0-test',
     checkpoint_ghost_hash: 'manual-qa-purge-fixture',
-    checkpoint_timestamp: '2026-04-22T09-00-00-000Z',
+    checkpoint_timestamp: '2026-04-22T09:00:00.000Z',
     since_window: '30d',
     os: 'darwin',
     node_version: 'v20.0.0',
@@ -293,7 +293,7 @@ export async function stageAlreadyPurgedFixture(tmpHome: string): Promise<void> 
     manifest_version: 1,
     ccaudit_version: '1.5.0-test',
     checkpoint_ghost_hash: 'manual-qa-purge-followup',
-    checkpoint_timestamp: '2026-04-22T09-01-00-000Z',
+    checkpoint_timestamp: '2026-04-22T09:01:00.000Z',
     since_window: '30d',
     os: 'darwin',
     node_version: 'v20.0.0',
@@ -393,11 +393,18 @@ export async function stagePaginationFixture(tmpHome: string, count = 550): Prom
     throw new Error(`stagePaginationFixture: count must be 1..999 (got ${count})`);
   }
   await mkdir(path.join(tmpHome, '.claude', 'agents'), { recursive: true });
-  for (let i = 1; i <= count; i++) {
-    const name = `agent-${String(i).padStart(3, '0')}`;
-    const filePath = path.join(tmpHome, '.claude', 'agents', `${name}.md`);
-    await writeFile(filePath, `# ${name} ghost\n`, 'utf8');
-    await utimes(filePath, OLD_DATE, OLD_DATE);
+  const chunkSize = 50;
+  for (let start = 1; start <= count; start += chunkSize) {
+    const end = Math.min(count, start + chunkSize - 1);
+    await Promise.all(
+      Array.from({ length: end - start + 1 }, async (_, idx) => {
+        const i = start + idx;
+        const name = `agent-${String(i).padStart(3, '0')}`;
+        const filePath = path.join(tmpHome, '.claude', 'agents', `${name}.md`);
+        await writeFile(filePath, `# ${name} ghost\n`, 'utf8');
+        await utimes(filePath, OLD_DATE, OLD_DATE);
+      }),
+    );
   }
   await writeFile(path.join(tmpHome, '.claude.json'), '{}\n', 'utf8');
   await writeRecentSession(tmpHome, '/fixture/pagination');

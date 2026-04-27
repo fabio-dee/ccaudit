@@ -376,8 +376,7 @@ export const restoreCommand = define({
         });
         const outcome = await openRestorePicker(pickerItems);
         if (outcome.kind === 'cancelled') {
-          process.stderr.write('No changes made.\n');
-          process.exit(0);
+          throw new RestorePreflightError(0, 'No changes made.');
         }
         interactiveIds = outcome.selectedIds;
       }
@@ -533,9 +532,9 @@ function restoreResultToJson(result: RestoreResult, warnings: string[]): Record<
         manifest_path: result.manifestPath,
         duration_ms: result.duration_ms,
         failed: 0,
-        selection_filter: result.selectionFilter ?? null,
-        skipped: result.skipped ?? [],
-        filtered_stale_count: result.filteredStaleCount ?? 0,
+        selectionFilter: result.selectionFilter ?? null,
+        skipped: summarizeSkipped(result.skipped ?? []),
+        filteredStaleCount: result.filteredStaleCount ?? 0,
       };
     case 'partial-success':
       return {
@@ -545,9 +544,9 @@ function restoreResultToJson(result: RestoreResult, warnings: string[]): Record<
         manifest_path: result.manifestPath,
         duration_ms: result.duration_ms,
         failed: result.failed,
-        selection_filter: result.selectionFilter ?? null,
-        skipped: result.skipped ?? [],
-        filtered_stale_count: result.filteredStaleCount ?? 0,
+        selectionFilter: result.selectionFilter ?? null,
+        skipped: summarizeSkipped(result.skipped ?? []),
+        filteredStaleCount: result.filteredStaleCount ?? 0,
       };
     case 'no-manifests':
       return {
@@ -569,7 +568,7 @@ function restoreResultToJson(result: RestoreResult, warnings: string[]): Record<
         ...base,
         status: 'list',
         entries: result.entries.map(summarizeListEntry),
-        filtered_stale_count: result.filteredStaleCount,
+        filteredStaleCount: result.filteredStaleCount,
       };
     case 'running-process':
       return {
@@ -600,6 +599,16 @@ function restoreResultToJson(result: RestoreResult, warnings: string[]): Record<
         error: result.error,
       };
   }
+}
+
+function summarizeSkipped(
+  skipped: Array<{ reason: 'source_exists'; path: string; canonical_id: string }>,
+): Array<{ reason: 'source_exists'; path: string; canonicalId: string }> {
+  return skipped.map((entry) => ({
+    reason: entry.reason,
+    path: entry.path,
+    canonicalId: entry.canonical_id,
+  }));
 }
 
 function summarizeListEntry(entry: ManifestListEntry): Record<string, unknown> {
@@ -675,7 +684,7 @@ function renderRestoreRendered(
       : '';
   const failedNote = c.unarchived.failed > 0 ? ` (${c.unarchived.failed} failed)` : '';
   lines.push(
-    `${c.unarchived.moved} agents/skills restored to their original locations${alreadyAtSourceNote}${failedNote}`,
+    `${c.unarchived.moved} items restored to their original locations${alreadyAtSourceNote}${failedNote}`,
   );
   lines.push(
     `${c.reenabled.completed} MCP servers re-enabled in configuration${c.reenabled.failed > 0 ? ` (${c.reenabled.failed} failed)` : ''}`,

@@ -27,7 +27,12 @@ if (result.error) {
 }
 
 if (result.status !== 0) {
-  console.error(`[bundle-smoke] FAIL: dist/index.js --help exited with code ${result.status}`);
+  const reason =
+    result.signal !== null
+      ? `terminated by signal ${result.signal}`
+      : `exited with code ${result.status}`;
+  console.error(`[bundle-smoke] FAIL: dist/index.js --help ${reason}`);
+  if (result.stdout) console.error(result.stdout);
   if (result.stderr) console.error(result.stderr);
   process.exit(1);
 }

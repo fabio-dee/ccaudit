@@ -144,8 +144,8 @@ export type {
 } from './purge.ts';
 
 // Shared archive→source move helper (lifted from reclaim.ts for purge reuse).
-export { moveArchiveToSource } from './_archive-move.ts';
-export type { ArchiveMoveDeps, MoveArchiveInput, MoveArchiveFailure } from './_archive-move.ts';
+export { moveArchiveToSource } from './archive-move.ts';
+export type { ArchiveMoveDeps, MoveArchiveInput, MoveArchiveFailure } from './archive-move.ts';
 
 // Phase 4: orphan reclaim command
 export { reclaim } from './reclaim.ts';

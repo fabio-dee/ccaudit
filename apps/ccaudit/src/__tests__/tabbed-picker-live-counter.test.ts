@@ -453,12 +453,14 @@ describe.skipIf(process.platform === 'win32')(
       await new Promise((r) => setTimeout(r, 250));
 
       const afterSecondSpace = stripAnsi(stdoutBuf.slice(beforeLen));
-      // Banner still present (interactivity suppressed).
+      const fullAfterSecondSpace = stripAnsi(stdoutBuf);
+      // Banner still present (interactivity suppressed), or diff renderer emitted no new frame.
       expect(
-        afterSecondSpace.includes('Terminal too small') ||
-          afterResize.includes('Terminal too small'),
-        `expected banner after suppressed Space; stdoutSlice:\n${afterSecondSpace}`,
+        afterSecondSpace.includes('Terminal too small') || afterSecondSpace.trim() === '',
+        `expected banner re-rendered or zero new bytes after suppressed Space; got:\n${afterSecondSpace}`,
       ).toBe(true);
+      expect(fullAfterSecondSpace).toContain('1 of 3 selected across all tabs');
+      expect(fullAfterSecondSpace).not.toContain('2 of 3 selected across all tabs');
 
       // Cleanup: Ctrl-C, stdin.end, await exit.
       await sendKeys(spawned.child, ['\x03']);

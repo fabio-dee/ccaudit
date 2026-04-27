@@ -12,7 +12,7 @@
  * pagination, filter/sort, and archive/restore confirmation.
  */
 import { execFile as execFileCb } from 'node:child_process';
-import { chmod, writeFile } from 'node:fs/promises';
+import { chmod, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -86,9 +86,11 @@ export const TMUX_KEYS = {
 
 export class TmuxE2ESession {
   readonly name: string;
+  private readonly runnerPath?: string;
 
-  constructor(name: string) {
+  constructor(name: string, runnerPath?: string) {
     this.name = name;
+    this.runnerPath = runnerPath;
   }
 
   async sendKeys(keys: readonly string[], opts: SendKeysOpts = {}): Promise<void> {
@@ -130,6 +132,13 @@ export class TmuxE2ESession {
       await tmux(['kill-session', '-t', this.name]);
     } catch {
       // Already gone.
+    }
+    if (this.runnerPath !== undefined) {
+      try {
+        await unlink(this.runnerPath);
+      } catch {
+        // Already gone.
+      }
     }
   }
 
@@ -188,7 +197,7 @@ export async function startTmuxE2E(opts: StartTmuxE2EOpts): Promise<TmuxE2ESessi
     String(opts.height ?? 30),
     runnerPath,
   ]);
-  return session;
+  return new TmuxE2ESession(opts.name, runnerPath);
 }
 
 export function stripAnsi(s: string): string {
@@ -213,8 +222,10 @@ function buildRunnerScript(opts: StartTmuxE2EOpts): string {
 set -euo pipefail
 cd ${shellQuote(opts.cwd)}
 ${envLines}
+set +e
 ${command}
 status=$?
+set -e
 printf '\n__CCAUDIT_TMUX_EXIT:%s__\n' "$status"
 sleep ${sleepSeconds}
 exit "$status"
@@ -228,6 +239,7 @@ function shellQuote(s: string): string {
 async function tmux(args: readonly string[]): Promise<TmuxRunResult> {
   const { stdout, stderr } = await execFile('tmux', [...args], {
     maxBuffer: 10 * 1024 * 1024,
+    timeout: 10_000,
   });
   return { stdout, stderr };
 }

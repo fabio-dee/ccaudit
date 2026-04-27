@@ -52,7 +52,12 @@ export async function waitForMarker(
     delayMs = Math.min(delayMs * 2, 500);
   }
   if (!matches(getStdout())) {
-    throw new Error(`Timed out waiting for marker: ${String(marker)}`);
+    const elapsedMs = Date.now() - startMs;
+    const stdout = getStdout();
+    throw new Error(
+      `Timed out waiting for marker: ${String(marker)} after ${elapsedMs}ms ` +
+        `(exited=${String(isExited())})\nstdout tail:\n${stdout.slice(-2000)}`,
+    );
   }
 }
 import { mkdtemp, mkdir, rm, readFile, writeFile, chmod, utimes, readdir } from 'node:fs/promises';
