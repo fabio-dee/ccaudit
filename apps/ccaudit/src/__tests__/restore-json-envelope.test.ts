@@ -2,15 +2,19 @@
  * Phase 08 Plan 06 — `ccaudit restore --all-matching <pattern> --json`
  * envelope contract (D8-16, D8-17).
  *
- * Asserts the v1.5 additive fields land in the envelope:
- *   - `meta.command === 'restore'`, `meta.exitCode === 0`
- *   - `status === 'success'`
- *   - `selectionFilter.mode === 'subset'`
- *   - `selectionFilter.ids` has exactly 2 entries (pencil-dev + pencil-review)
- *   - `Array.isArray(skipped)` is true (empty on the happy path, but present)
+ * Restore JSON envelope shape — what the tests below assert:
  *
- * Source-exists skip + skipped[] contents are covered by
- * restore-interactive-source-exists.test.ts.
+ *   - meta.command       // e.g. "restore"
+ *   - meta.exitCode      // camelCase number
+ *   - status             // top-level enum string ("success" on happy path)
+ *   - selectionFilter    // top-level object describing applied filter
+ *                        //   .mode === "subset"
+ *                        //   .ids  has exactly 2 entries (pencil-dev + pencil-review)
+ *   - skipped[]          // top-level array of items skipped at restore time
+ *                        //   (empty on the happy path, but present)
+ *
+ * See docs/JSON-SCHEMA.md for the full envelope contract. Source-exists skip
+ * + skipped[] contents are covered by restore-interactive-source-exists.test.ts.
  */
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { existsSync } from 'node:fs';
