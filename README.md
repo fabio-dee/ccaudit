@@ -215,7 +215,7 @@ npx ccaudit-cli ghost --interactive
 
 Framework-protected rows render dimmed with a `[🔒]` glyph and are not
 selectable by default - pass `--force-partial` to unlock them for the
-current run (a `--force-partial active - partial-framework busts allowed`
+current run (a `--force-partial active: framework protection DISABLED. Partial framework splits may corrupt dependent setups.`
 banner appears at the top of the picker). See `CLAUDE.md`'s Safety
 invariants section for the full rationale behind framework-as-unit
 protection.
