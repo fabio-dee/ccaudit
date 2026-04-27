@@ -17,6 +17,27 @@
 //   - Every successful mutation produces a single append-only archive_purge op.
 //   - moveArchiveToSource refuses to overwrite existing source (helper
 //     preserves the reclaim INV).
+//
+// Audit-trail invariant
+// ---------------------
+// The append-only journal at ~/.claude/ccaudit/manifests/ is the source of
+// truth for every mutation purge performs. A purge operation is only
+// "complete" when both the disk mutation AND its corresponding op record have
+// landed.
+//
+// If the disk mutation succeeds but writer.writeOp(...) subsequently throws,
+// the operation is treated as a FULL FAILURE — the failure reason is
+// prefixed with `manifest_write_failed:` and the op is counted in the
+// failure tally, not the success tally. The principle: "if it isn't
+// journaled, it didn't happen" — restore / reclaim / a future purge cannot
+// observe an undocumented mutation, so for the user-visible audit surface
+// the mutation effectively did not occur.
+//
+// That is why the all-failed gate counts manifest_write_failed: reasons
+// identically to disk-mutation failures. Carving manifest_write_failed: out
+// of the all-failed gate would mean reporting partial success for a state
+// the audit trail cannot describe — the exact failure mode this invariant
+// forbids.
 
 import type { ArchiveOp, ArchivePurgeOp, ManifestOp, ManifestWriter } from './manifest.ts';
 import { buildArchivePurgeOp, closePurgeManifestWriter } from './manifest.ts';
