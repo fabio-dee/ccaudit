@@ -7,13 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.5.1] - 2026-04-27
 
-Polish release — documentation accuracy, test reliability, and edge-case
+Polish release - documentation accuracy, test reliability, and edge-case
 observability. No user-visible behavior changes.
 
 ### Changed
 
 - README Roadmap copy refreshed: clearer framing of the v1.6 stable
-  CLI/JSON API contract section (abstract guarantees only — concrete
+  CLI/JSON API contract section (abstract guarantees only - concrete
   subcommand naming defers to the v1.6 release notes). Domain-folder
   negative list updated.
 - `_glyphs.ts` doc clarified: `NO_COLOR` is honored when set to a

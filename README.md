@@ -31,7 +31,7 @@ npx ccaudit-cli --dangerously-bust-ghosts  # archive ghosts (nothing deleted, un
 
 > ccusage tells you what you spent. ccaudit tells you what's wasting it.
 
-Current release: **v1.5.0** - interactive archive picker, interactive restore picker, fuzzy-match restore by name, archive purge. See [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v1.5.1** - interactive archive picker, interactive restore picker, fuzzy-match restore by name, archive purge. See [CHANGELOG.md](./CHANGELOG.md).
 
 ![Image](https://github.com/user-attachments/assets/2afbe339-539b-4a8d-9f73-8d43746c9ace)
 
