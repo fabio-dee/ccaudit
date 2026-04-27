@@ -152,7 +152,10 @@ export class TmuxE2ESession {
         startLine: opts.startLine ?? -200,
         ansi: opts.stripAnsi === false,
       });
-      lastCapture = opts.stripAnsi === false ? raw : stripAnsi(raw);
+      // capture() already strips ANSI internally when ansi !== true, and when
+      // opts.stripAnsi === false we explicitly want the raw bytes. Either way
+      // `raw` is in the desired shape — no second strip needed.
+      lastCapture = raw;
       const matched =
         typeof needle === 'string' ? lastCapture.includes(needle) : needle.test(lastCapture);
       if (matched) return lastCapture;
