@@ -20,7 +20,7 @@ const BASE_TEXT =
   '--force-partial active: framework protection DISABLED. ' +
   'Partial framework splits may corrupt dependent setups.';
 
-const ZERO_PROTECTED_SUFFIX = ' (no protected items in this scan)';
+const ZERO_PROTECTED_SUFFIX = '(no protected items in this scan)';
 
 export interface RenderForcePartialBannerOptions {
   active: boolean;
@@ -37,7 +37,7 @@ export function renderForcePartialBanner(opts: RenderForcePartialBannerOptions):
   if (!opts.active) return '';
   const glyph = opts.ascii ? '!' : '⚠';
   const suffix = opts.protectedCount === 0 ? ZERO_PROTECTED_SUFFIX : '';
-  return `${glyph} ${BASE_TEXT}${suffix}`;
+  return `${glyph} ${BASE_TEXT}${suffix ? ' ' + suffix : ''}`;
 }
 
 export interface BannerHeightOptions {
@@ -101,6 +101,18 @@ if (import.meta.vitest) {
       const out = renderForcePartialBanner({ active: true, protectedCount: 0, ascii: true });
       expect(out.startsWith('! ')).toBe(true);
       expect(out.endsWith('(no protected items in this scan)')).toBe(true);
+    });
+
+    it('joins ZERO_PROTECTED_SUFFIX with exactly one space (no double-space drift)', () => {
+      // Tightening test (B6): the joining whitespace between BASE_TEXT and the
+      // suffix must be exactly one character. Asserts that neither BASE_TEXT
+      // nor the suffix carries an embedded leading/trailing space that would
+      // double the gap.
+      const out = renderForcePartialBanner({ active: true, protectedCount: 0, ascii: false });
+      const tail = out.split(BASE_TEXT)[1];
+      expect(tail).toBe(' (no protected items in this scan)');
+      // No "BASE_TEXT  suffix" double-space anywhere.
+      expect(out).not.toContain('  (no protected');
     });
 
     it('contains no ANSI escape sequences (picker adds color at render time)', () => {

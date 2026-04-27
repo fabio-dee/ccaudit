@@ -87,12 +87,15 @@ describe.skipIf(process.platform === 'win32')(
       // stdout must be a parseable JSON object (structured envelope or error envelope)
       const stdout = r.stdout.trim();
       expect(stdout.length, 'stdout must not be empty for --json').toBeGreaterThan(0);
-      let parsed: Record<string, unknown>;
+      let parsed: Record<string, unknown> | null = null;
       expect(() => {
         parsed = JSON.parse(stdout) as Record<string, unknown>;
       }, `stdout must be valid JSON, got:\n${stdout}`).not.toThrow();
+      if (parsed === null) {
+        throw new Error('expected parsed envelope to be non-null at this point');
+      }
       // The envelope must have a meta block (standard ccaudit JSON envelope shape)
-      expect(parsed!).toHaveProperty('meta');
+      expect(parsed).toHaveProperty('meta');
       // Must not be a raw stack trace in stdout
       expect(stdout).not.toContain('at Object.');
     });

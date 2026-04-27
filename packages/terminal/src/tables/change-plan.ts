@@ -74,17 +74,17 @@ export function renderChangePlan(plan: ChangePlan, opts?: ChangePlanRenderOption
     lines.push(colorize.bold('Will ARCHIVE (reversible via `ccaudit restore <name>`):'));
     if (plan.counts.agents > 0) {
       lines.push(
-        `  ${String(plan.counts.agents).padStart(3)} agents  → ~/.claude/ccaudit/archived/agents/`,
+        `  ${String(plan.counts.agents).padStart(3)} ${'agents'.padEnd(8)} → ~/.claude/ccaudit/archived/agents/`,
       );
     }
     if (plan.counts.skills > 0) {
       lines.push(
-        `  ${String(plan.counts.skills).padStart(3)} skills  → ~/.claude/ccaudit/archived/skills/`,
+        `  ${String(plan.counts.skills).padStart(3)} ${'skills'.padEnd(8)} → ~/.claude/ccaudit/archived/skills/`,
       );
     }
     if (plan.counts.commands > 0) {
       lines.push(
-        `  ${String(plan.counts.commands).padStart(3)} commands  → ~/.claude/ccaudit/archived/commands/`,
+        `  ${String(plan.counts.commands).padStart(3)} ${'commands'.padEnd(8)} → ~/.claude/ccaudit/archived/commands/`,
       );
     }
     lines.push('');

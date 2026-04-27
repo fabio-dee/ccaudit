@@ -125,6 +125,8 @@ fields surfacing the subset-restore surface landed in v1.5:
 > compatibility with v1.5 dry-run/bust manifests. Public `--json` envelopes use
 > camelCase and do not expose the manifest header casing directly.
 
+---
+
 > **Pre-dispatch validation envelope.** Restore preflight failures such as
 > mutually-exclusive flags, `CCAUDIT_NO_INTERACTIVE`, TTY refusal, no-match, or
 > ambiguity emit the standard envelope when `--json` is active:

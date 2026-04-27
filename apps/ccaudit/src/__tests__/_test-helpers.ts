@@ -9,12 +9,12 @@ import { spawn, type ChildProcess } from 'node:child_process';
 
 /**
  * Wait for the spawned picker subprocess to reach its blocking read loop.
- * Polls until the child exits (error/crash path), or until maxWaitMs elapses,
+ * Polls until the child exits (error/crash path), or until graceMs elapses,
  * with exponential backoff — whichever comes first. Then adds a final grace
  * delay so the TUI is ready for key input.
  *
  * Typical path: child never exits during the poll window, loop runs until
- * maxWaitMs, then a 300ms grace is added for the render cycle to settle.
+ * graceMs, then a 300ms grace is added for the render cycle to settle.
  */
 export async function waitForPicker(child: ChildProcess, graceMs = 300): Promise<void> {
   // Short poll to detect early crashes (child exiting prematurely).
@@ -257,8 +257,9 @@ export function runCcauditGhost(
     });
     child.on('close', (code: number | null) => {
       clearTimeout(timer);
-      // Resolve in both killed and non-killed cases so callers always get output.
-      void killed;
+      // If the process was already killed (timeout path), do not call
+      // resolve(...) — the timeout already rejected the promise.
+      if (killed) return;
       resolve({ stdout, stderr, exitCode: code, durationMs: Date.now() - start });
     });
   });

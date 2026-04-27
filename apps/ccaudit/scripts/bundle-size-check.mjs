@@ -13,6 +13,18 @@ const distPath = resolve(scriptsDir, '../dist/index.js');
 const baselinePath = resolve(scriptsDir, 'bundle-baseline.txt');
 const BUDGET_BYTES = 15 * 1024; // 15360 bytes per D-04
 
+/** Format a byte count as a short human string (e.g. 15360 -> 15 KB). */
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) return `${bytes}B`;
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) {
+    const kb = bytes / 1024;
+    // Prefer integer KB when exact; one decimal otherwise.
+    return Number.isInteger(kb) ? `${kb} KB` : `${kb.toFixed(1)} KB`;
+  }
+  return `${bytes} B`;
+}
+
 if (!existsSync(distPath)) {
   console.error(`[bundle-size] FAIL: dist/index.js not found at ${distPath}`);
   console.error('[bundle-size] Run `pnpm -w build` first.');
@@ -44,7 +56,9 @@ console.log(
 );
 
 if (delta > BUDGET_BYTES) {
-  console.error(`[bundle-size] FAIL: delta exceeds 15 KB budget (${delta} > ${BUDGET_BYTES})`);
+  console.error(
+    `[bundle-size] FAIL: delta exceeds ${formatBytes(BUDGET_BYTES)} budget (${delta} > ${BUDGET_BYTES})`,
+  );
   process.exit(1);
 }
 

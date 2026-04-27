@@ -311,9 +311,22 @@ if (import.meta.vitest) {
 
     it('Test 2: Set with 2 of 3 ids returns only those items', () => {
       const plan = makePlan3();
-      // Build canonical ids for agentA and agentB (category|scope|projectPath|path)
-      const idA = `agent|global||/tmp/agentA`;
-      const idB = `agent|global||/tmp/agentB`;
+      // Build canonical ids via the helper so the test cannot drift if the
+      // canonical-id format string changes (A3 — re-use `canonicalItemId`).
+      const idA = canonicalItemId({
+        name: 'agentA',
+        path: '/tmp/agentA',
+        scope: 'global',
+        category: 'agent',
+        projectPath: null,
+      });
+      const idB = canonicalItemId({
+        name: 'agentB',
+        path: '/tmp/agentB',
+        scope: 'global',
+        category: 'agent',
+        projectPath: null,
+      });
       const result = filterChangePlan(plan, new Set([idA, idB]));
       expect(result.archive).toHaveLength(2);
       expect(result.disable).toHaveLength(0);
@@ -326,10 +339,22 @@ if (import.meta.vitest) {
         makeResult({ category: 'agent', tier: 'definite-ghost', name: 'a2', tokens: 200 }),
         makeResult({ category: 'mcp-server', tier: 'definite-ghost', name: 'm1', tokens: 500 }),
       ]);
-      const idA1 = `agent|global||/tmp/a1`;
-      // mcp-server canonical id: mcp-server|scope|projectPath|name|path
-      // makeResult produces: name='m1', path='/tmp/m1', scope='global', projectPath=null
-      const idM1 = `mcp-server|global||m1|/tmp/m1`;
+      // A3: re-use `canonicalItemId` so the canonical-id shape is sourced from
+      // the helper rather than mirrored as a literal string here.
+      const idA1 = canonicalItemId({
+        name: 'a1',
+        path: '/tmp/a1',
+        scope: 'global',
+        category: 'agent',
+        projectPath: null,
+      });
+      const idM1 = canonicalItemId({
+        name: 'm1',
+        path: '/tmp/m1',
+        scope: 'global',
+        category: 'mcp-server',
+        projectPath: null,
+      });
       const result = filterChangePlan(plan, new Set([idA1, idM1]));
       // counts: 1 agent + 1 mcp
       expect(result.counts.agents).toBe(1);
@@ -351,7 +376,13 @@ if (import.meta.vitest) {
 
     it('Test 5: unknown ids in the set are silently ignored (no throw)', () => {
       const plan = makePlan3();
-      const unknownId = 'agent|global||/nonexistent/path';
+      const unknownId = canonicalItemId({
+        name: 'nonexistent',
+        path: '/nonexistent/path',
+        scope: 'global',
+        category: 'agent',
+        projectPath: null,
+      });
       // Should not throw; the unknown id just matches nothing
       expect(() => filterChangePlan(plan, new Set([unknownId]))).not.toThrow();
       const result = filterChangePlan(plan, new Set([unknownId]));

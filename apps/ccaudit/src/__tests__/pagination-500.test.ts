@@ -7,13 +7,12 @@
  *       keystroke decoding — which existing Phase 3.1 / 5 tests already
  *       cover end-to-end.
  *
- * Asserts:
- *   1. With 500 ghosts and a bounded viewport, the rendered frame contains
- *      only a viewport-sized slice of agent rows (no terminal overflow).
- *   2. End jumps cursor to last row; an above-indicator is visible.
- *   3. The applyScroll reducer round-trips cursor position across filter
- *      on/off and clamps when the row set narrows below the saved cursor.
- *   4. Toggling many rows keeps the rendered frame bounded.
+ * Asserts (file-header inventory of the actual `it(...)` cases below):
+ *   1. renders only a viewport-sized slice on a 500-item tab (no overflow)
+ *   2. End jumps cursor to last row; above-indicator rendered
+ *   3. applyScroll reducer round-trips cursor across filter on/off and
+ *      clamps on narrowing
+ *   4. toggling across 500 items keeps the rendered frame bounded
  */
 import { describe, it, expect } from 'vitest';
 import { TabbedGhostPicker } from '../../../../packages/terminal/src/tui/tabbed-picker.ts';
