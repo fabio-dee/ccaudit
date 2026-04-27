@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-04-27
+
+Polish release — documentation accuracy, test reliability, and edge-case
+observability. No user-visible behavior changes.
+
+### Changed
+
+- README Roadmap copy refreshed: clearer framing of the v1.6 stable
+  CLI/JSON API contract section (abstract guarantees only — concrete
+  subcommand naming defers to the v1.6 release notes). Domain-folder
+  negative list updated.
+- `_glyphs.ts` doc clarified: `NO_COLOR` is honored when set to a
+  non-empty value, per the no-color.org spec (code was already
+  spec-correct; only the doc was stale).
+
+### Fixed
+
+- `purge.ts` audit-trail invariant documented: a `manifest_write_failed:`
+  failure (disk mutation succeeded, journal-write failed) is treated as a
+  full failure by the all-failed gate. The "if it isn't journaled, it
+  didn't happen" contract is now part of the file's docstring and locked
+  by an in-source test.
+- `docs/JSON-SCHEMA.md`: fixed an MD028 markdownlint violation (adjacent
+  blockquotes separated by a blank line) and verified the rest of the
+  file for similar instances.
+- `change-plan.ts`: replaced hard-coded canonical-ID literal strings with
+  calls to the exported `canonicalItemId(...)` helper, eliminating drift
+  risk if the format string changes.
+- `scan-memory.ts`: added Windows path-normalization regression coverage
+  (in-source test). The normalization itself was already correct; the
+  test locks it.
+
+### Tests
+
+- Test-helper polish: replaced a dead `void killed` no-op with a real
+  `if (killed) return;` guard; synced the `graceMs` parameter doc; synced
+  the `restore --json` envelope test header docstring with the actual
+  envelope shape; removed a redundant `stripAnsi(raw)` call in the tmux
+  e2e fixture; replaced a non-null assertion with explicit narrowing in
+  the corrupt-manifest test; normalized the force-partial banner string
+  concatenation and added a tightening assertion that the joining space
+  is exactly one character. Aligned the `commands` row arrow with the
+  `agents`/`skills` rows via `padEnd(8)`. Added a `formatBytes()` helper
+  to the bundle-size check and replaced the hard-coded budget string
+  with the formatted value. Updated the `pagination-500.test.ts` file-
+  header comment to enumerate the actual tests in the file.
+
 ## [1.5.0] - 2026-04-26
 
 ### Changed
