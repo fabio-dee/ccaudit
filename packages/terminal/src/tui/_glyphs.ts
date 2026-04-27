@@ -8,7 +8,7 @@
  *
  * Triggers for the ASCII fallback (first match wins):
  *   1. `CCAUDIT_ASCII_ONLY=1` env var
- *   2. `NO_COLOR` env var set (any value; convention is truthy-presence)
+ *   2. `NO_COLOR` env var set to a non-empty value (per no-color.org spec)
  *   3. `TERM=dumb`
  *   4. `opts.noColor === true` (mirrors the --no-color CLI flag at call sites)
  *
@@ -69,9 +69,10 @@ export function resolveGlyphSet(env: NodeJS.ProcessEnv, opts?: ResolveGlyphSetOp
 export function shouldUseAsciiGlyphs(env: NodeJS.ProcessEnv, opts?: ResolveGlyphSetOpts): boolean {
   if (opts?.noColor === true) return true;
   if (env['CCAUDIT_ASCII_ONLY'] === '1') return true;
-  // NO_COLOR convention: any non-empty value => suppress color (and thus
-  // glyphs that rely on color for distinction are still safe — we switch
-  // to ASCII so they're distinguishable structurally).
+  // NO_COLOR is honored when set to a non-empty value (per no-color.org spec).
+  // Empty string is NOT "set" — see the dedicated test below. When set, we
+  // switch to ASCII so glyphs remain distinguishable structurally even with
+  // color suppressed.
   // https://no-color.org/
   const noColor = env['NO_COLOR'];
   if (typeof noColor === 'string' && noColor !== '') return true;
