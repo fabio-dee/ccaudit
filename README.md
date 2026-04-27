@@ -618,7 +618,7 @@ tier that matches wins; later tiers do not override earlier ones.
 > **Critical negative finding.** Folder names like `engineering/`, `design/`,
 > `marketing/`, `testing/`, `sales/`, `integrations/`, `strategy/`,
 > `project-management/`, `support/`, `paid-media/`, `spatial-computing/`,
-> `examples/`, `scripts/`, `product/`, `specialized/`, `game-development/`,
+> `examples/`, `scripts/`, `product/`, `specialized/`, `data-engineering/`,
 > `agents/`, and `skills/` are **domain organisation** folders, not frameworks.
 > ccaudit refuses to group them, even if they happen to cluster by filename.
 > This is enforced twice: once by gating folder-segment matches through the
