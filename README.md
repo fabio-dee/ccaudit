@@ -687,6 +687,51 @@ wins. Place more-specific entries before more-general ones to avoid shadowing.
 
 ---
 
+## Roadmap
+
+Items planned for upcoming releases. No firm dates — order may shift.
+
+### Interactive process killer
+
+An interactive TUI for forcefully terminating running Claude Code instances,
+mirroring the ghost selection picker (`--interactive`). Lists every live
+`claude` process the user has access to with token usage, runtime, and project
+context, lets you multi-select with the same keybindings as the archive
+picker, and signals selected processes (TERM by default, KILL on confirm).
+For when one rogue session is pinning context across half your machine.
+
+### v1.6 game CLI API contract
+
+A separate, stable JSON CLI surface scoped to embedding tools — initial
+consumer is the standalone **ccaudit Ghost Town** game. The contract:
+
+```bash
+ccaudit game scan --json
+ccaudit game bust --ids <file> --json
+ccaudit game vault --json
+ccaudit game restore --ids <file> --json
+ccaudit game agent-context --id <id> --json
+ccaudit game dry-run --ids <file> --json   # optional
+```
+
+Stability guarantees external consumers will rely on:
+
+- TUI behavior is **not** part of the contract.
+- Human-rendered tables are **not** part of the contract.
+- Hidden environment variables are **not** part of the contract.
+- Internal TypeScript functions are **not** part of the contract.
+- Path-shaped canonical IDs are not public unless explicitly declared.
+
+The envelope follows the existing `--json` shape (see
+[docs/JSON-SCHEMA.md](./docs/JSON-SCHEMA.md)) with a `command: "game.*"` and
+`apiVersion` field for forward compatibility.
+
+### A new frontend — surprise
+
+Something visual is in the works. More when it lands.
+
+---
+
 ## Author
 
 [fabio-dee](https://github.com/fabio-dee)
