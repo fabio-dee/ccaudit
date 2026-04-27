@@ -30,8 +30,14 @@ import { rename } from 'node:fs/promises';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
 import type { TokenCostResult } from '../token/types.ts';
-import { type ReadCheckpointResult } from './checkpoint.ts';
-import { buildChangePlan, type ChangePlan, type ChangePlanItem } from './change-plan.ts';
+import { canonicalItemId, type ReadCheckpointResult } from './checkpoint.ts';
+import {
+  buildChangePlan,
+  filterChangePlan,
+  type ChangePlan,
+  type ChangePlanItem,
+} from './change-plan.ts';
+import { calculateDryRunSavings } from './savings.ts';
 import { buildArchivePath, buildDisabledMcpKey } from './collisions.ts';
 import {
   detectClaudeProcesses,
@@ -51,6 +57,7 @@ import {
   buildRefreshOp,
   buildSkippedOp,
   type ManifestOp,
+  type SelectionFilter,
 } from './manifest.ts';
 
 // -- Result types -------------------------------------------------
@@ -81,6 +88,9 @@ export type BustResult =
       summary: {
         beforeTokens: number;
         freedTokens: number;
+        /** Full-plan token figure preserved for consumers when a subset bust filtered the plan.
+         *  Equals `freedTokens` on full-inventory bust. */
+        totalPlannedTokens: number;
         afterTokens: number;
         pctWindow: number;
         healthBefore: number;
@@ -111,7 +121,7 @@ export type BustResult =
 
 /** Per-category op counters threaded through the pipeline for the manifest footer. */
 export interface BustCounts {
-  archive: { agents: number; skills: number; failed: number };
+  archive: { agents: number; skills: number; commands: number; failed: number };
   disable: { completed: number; failed: number };
   flag: { completed: number; failed: number; refreshed: number; skipped: number };
 }
@@ -167,6 +177,8 @@ export interface BustDeps {
   readFileUtf8: (p: string) => Promise<string>;
   patchMemoryFrontmatter: (filePath: string, nowIso: string) => Promise<FrontmatterPatchResult>;
   atomicWriteJson: <T>(targetPath: string, value: T) => Promise<void>;
+  /** Write pre-formatted text atomically. Used by surgical MCP disable (INV-S1). */
+  atomicWriteText: (targetPath: string, text: string) => Promise<void>;
   pathExistsSync: (p: string) => boolean;
 
   // Manifest
@@ -190,15 +202,40 @@ export interface BustDeps {
  * BustResult without mutating anything when it fails, so the CLI layer can
  * cleanly print the error message and exit with the appropriate code.
  *
- * @param opts.yes   If true, both D-15 prompts are skipped (the
- *                   --yes-proceed-busting bypass flag from D-16).
- * @param opts.deps  Full dependency-injection surface. Tests pass a minimal
- *                   BustDeps with fakes for every I/O path; production passes
- *                   real implementations via a buildProductionDeps() helper
- *                   (defined at the CLI command layer, not here).
+ * @param opts.yes            If true, both D-15 prompts are skipped (the
+ *                            --yes-proceed-busting bypass flag from D-16).
+ * @param opts.deps           Full dependency-injection surface. Tests pass a minimal
+ *                            BustDeps with fakes for every I/O path; production passes
+ *                            real implementations via a buildProductionDeps() helper
+ *                            (defined at the CLI command layer, not here).
+ * @param opts.skipCeremony   When true, `deps.runCeremony` is NOT called. The interactive
+ *                            TUI confirmation (Phase 2) already happened upstream, so the
+ *                            3-prompt readline ceremony is redundant and harmful (stdin
+ *                            collision with @clack). Default: false/undefined → ceremony
+ *                            runs as before (non-interactive `--dangerously-bust-ghosts`
+ *                            path is unchanged).
  */
-export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<BustResult> {
-  const { yes, deps } = opts;
+export async function runBust(opts: {
+  yes: boolean;
+  deps: BustDeps;
+  /**
+   * Optional subset filter. `undefined` = full-inventory bust (v1.4.0 contract).
+   * `Set<string>` of canonicalItemId values = subset bust: items whose id is not
+   * in the set are excluded from the change plan AFTER hash verification.
+   * `new Set()` (empty) = explicit "select nothing" no-op; manifest is written
+   * with zero planned_ops and a warning is emitted. This is distinct from
+   * `undefined` so Phase 2's TUI can deliver an empty selection cleanly.
+   */
+  selectedItems?: Set<string>;
+  /**
+   * When true, bypass `deps.runCeremony` entirely. Used by the interactive TUI
+   * path (Phase 2) which already presented its own confirmation screen before
+   * calling runBust. The non-interactive `--dangerously-bust-ghosts` path must
+   * NOT pass this flag — it relies on the ceremony for safety.
+   */
+  skipCeremony?: boolean;
+}): Promise<BustResult> {
+  const { yes, deps, selectedItems, skipCeremony } = opts;
   const start = Date.now();
 
   // ── Gate 1: checkpoint exists (D-01) ─────────────────────────────
@@ -258,15 +295,36 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
 
   const plan = buildChangePlan(enriched);
 
+  // Preserve the full-plan figure for totalPlannedTokens (INV-S5).
+  const fullPlanTokens = checkpoint.savings.tokens;
+
+  // Approach A (D-03): filter AFTER hash verification, BEFORE manifest is serialized.
+  // selectedItems === undefined → full bust (v1.4.0 behavior unchanged).
+  // selectedItems is a Set → subset bust; items not in set are excluded.
+  let filteredPlan = plan;
+  if (selectedItems !== undefined) {
+    filteredPlan = filterChangePlan(plan, selectedItems);
+    if (selectedItems.size === 0) {
+      console.warn(
+        '[ccaudit] selectedItems is an empty set — no items will be archived. ' +
+          'If you meant a full-inventory bust, omit selectedItems.',
+      );
+    }
+  }
+
   const healthScoreBefore = calculateHealthScore(enriched);
   const healthBefore = healthScoreBefore.score;
   const gradeBefore = healthScoreBefore.grade;
   const beforeTokens = checkpoint.total_overhead ?? 0;
 
   // ── Confirmation ceremony (D-15, D-16) ───────────────────────────
-  const ceremony = await deps.runCeremony({ plan, yes });
-  if (ceremony.status === 'aborted') {
-    return { status: 'user-aborted', stage: ceremony.stage };
+  // skipCeremony=true: the interactive TUI already confirmed upstream (Phase 2).
+  // skipCeremony=false/undefined: run the 3-prompt readline ceremony as before.
+  if (skipCeremony !== true) {
+    const ceremony = await deps.runCeremony({ plan: filteredPlan, yes });
+    if (ceremony.status === 'aborted') {
+      return { status: 'user-aborted', stage: ceremony.stage };
+    }
   }
 
   // ── Execute ops (D-13 order) with manifest (D-09..D-12) ──────────
@@ -274,10 +332,26 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
   const writer = deps.createManifestWriter(manifestPath);
 
   const plannedOps = {
-    archive: plan.archive.length,
-    disable: plan.disable.length,
-    flag: plan.flag.length,
+    archive: filteredPlan.archive.length,
+    disable: filteredPlan.disable.length,
+    flag: filteredPlan.flag.length,
   };
+
+  let selectionFilter: SelectionFilter;
+  if (selectedItems === undefined) {
+    selectionFilter = { mode: 'full' };
+  } else {
+    // Record only the IDs that actually survived the filter and will be actioned.
+    // This excludes IDs that were requested but matched nothing in the change plan
+    // (e.g. typos, already-archived items, framework-protected items).
+    // ChangePlanItem satisfies CanonicalItemInput directly — no cast needed.
+    const actionedIds = [
+      ...filteredPlan.archive,
+      ...filteredPlan.disable,
+      ...filteredPlan.flag,
+    ].map((i) => canonicalItemId(i));
+    selectionFilter = { mode: 'subset', ids: actionedIds }; // buildHeader sorts
+  }
 
   const header = buildHeader({
     ccaudit_version: deps.ccauditVersion,
@@ -287,6 +361,7 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
     os: deps.os,
     node_version: deps.nodeVersion,
     planned_ops: plannedOps,
+    selection_filter: selectionFilter,
   });
 
   try {
@@ -296,7 +371,7 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
   }
 
   const counts: BustCounts = {
-    archive: { agents: 0, skills: 0, failed: 0 },
+    archive: { agents: 0, skills: 0, commands: 0, failed: 0 },
     disable: { completed: 0, failed: 0 },
     flag: { completed: 0, failed: 0, refreshed: 0, skipped: 0 },
   };
@@ -305,8 +380,9 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
   // Filesystem-only ops first per D-13 rationale: if a later step fails, the
   // archived files still have manifest entries Phase 9 can reverse. D-14 says
   // these are continue-on-error.
-  const agentItems = plan.archive.filter((i) => i.category === 'agent');
-  const skillItems = plan.archive.filter((i) => i.category === 'skill');
+  const agentItems = filteredPlan.archive.filter((i) => i.category === 'agent');
+  const skillItems = filteredPlan.archive.filter((i) => i.category === 'skill');
+  const commandItems = filteredPlan.archive.filter((i) => i.category === 'command');
 
   for (const item of agentItems) {
     const op = await archiveOne(item, 'agent', deps, counts);
@@ -316,14 +392,18 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
     const op = await archiveOne(item, 'skill', deps, counts);
     await writer.writeOp(op);
   }
+  for (const item of commandItems) {
+    const op = await archiveOne(item, 'command', deps, counts);
+    await writer.writeOp(op);
+  }
 
   // ── Step 2: Disable MCP (D-13, fail-fast per D-14) ───────────────
   // Transactional per config file: each `~/.claude.json` or `.mcp.json` is
   // read, mutated in memory, and atomically written back. A parse or write
   // error aborts the whole Disable MCP step WITHOUT committing any ops to
   // the manifest (the atomicWriteJson rename is the transaction boundary).
-  if (plan.disable.length > 0) {
-    const disableResult = await disableMcpTransactional(plan.disable, deps, counts);
+  if (filteredPlan.disable.length > 0) {
+    const disableResult = await disableMcpTransactional(filteredPlan.disable, deps, counts);
     if (disableResult.status === 'parse-error') {
       await writer.close(null); // footer omitted -> Phase 9 partial-bust marker
       return {
@@ -347,7 +427,7 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
   }
 
   // ── Step 3: Flag memory (D-13, continue-on-error per D-14) ───────
-  for (const item of plan.flag) {
+  for (const item of filteredPlan.flag) {
     const nowIso = deps.now().toISOString();
     try {
       // Read content BEFORE patching so the manifest's sha256 reflects the
@@ -411,7 +491,7 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
     status: 'completed',
     actual_ops: {
       archive: {
-        completed: counts.archive.agents + counts.archive.skills,
+        completed: counts.archive.agents + counts.archive.skills + counts.archive.commands,
         failed: counts.archive.failed,
       },
       disable: counts.disable,
@@ -426,17 +506,32 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
     return { status: 'partial-success', manifestPath, counts, failed: totalFailed, duration_ms };
   }
 
-  const freedTokens = checkpoint.savings.tokens;
+  // INV-S5: freedTokens is subset-accurate; totalPlannedTokens preserves full figure.
+  // For full bust (selectedItems === undefined): freedTokens === fullPlanTokens (v1.4.0 behavior).
+  // For subset bust: freedTokens = sum of archive+disable tokens of selected items only.
+  const freedTokens =
+    selectedItems === undefined
+      ? fullPlanTokens // v1.4.0 behavior: checkpoint figure
+      : calculateDryRunSavings(filteredPlan); // subset figure
+  const totalPlannedTokens = fullPlanTokens;
   const afterTokens = Math.max(0, beforeTokens - freedTokens);
   const pctWindow = Math.round((freedTokens / 200_000) * 100);
 
-  // health after: remove definite-ghost agents/skills and all non-used MCPs
-  const remainingEnriched = enriched.filter((r) => {
-    if ((r.item.category === 'agent' || r.item.category === 'skill') && r.tier === 'definite-ghost')
-      return false;
-    if (r.item.category === 'mcp-server' && r.tier !== 'used') return false;
-    return true;
-  });
+  // health after: remove only the items that were actually actioned.
+  // Unified path for both full-bust and subset-bust: build a Set of actioned paths
+  // from filteredPlan (which equals fullPlan when selectedItems === undefined).
+  // This correctly excludes archived commands from the health-after count,
+  // fixing the M5 regression where full-bust left command ghosts in remainingEnriched.
+  const actionedPaths = new Set<string>([
+    ...filteredPlan.archive.map((i) => i.path),
+    ...filteredPlan.flag.map((i) => i.path),
+    ...filteredPlan.disable.map((i) => `${i.name}::${i.path}`),
+  ]);
+  const remainingEnriched = enriched.filter((r) =>
+    r.item.category === 'mcp-server'
+      ? !actionedPaths.has(`${r.item.name}::${r.item.path}`)
+      : !actionedPaths.has(r.item.path),
+  );
   const healthScoreAfter = calculateHealthScore(remainingEnriched);
   const healthAfter = healthScoreAfter.score;
   const gradeAfter = healthScoreAfter.grade;
@@ -449,6 +544,7 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
     summary: {
       beforeTokens,
       freedTokens,
+      totalPlannedTokens,
       afterTokens,
       pctWindow,
       healthBefore,
@@ -476,7 +572,7 @@ export async function runBust(opts: { yes: boolean; deps: BustDeps }): Promise<B
  */
 async function archiveOne(
   item: ChangePlanItem,
-  category: 'agent' | 'skill',
+  category: 'agent' | 'skill' | 'command',
   deps: BustDeps,
   counts: BustCounts,
 ): Promise<ManifestOp> {
@@ -503,7 +599,8 @@ async function archiveOne(
       });
     }
     const claudeRoot = path.dirname(categoryRoot);
-    const categorySegment = category === 'agent' ? 'agents' : 'skills';
+    const categorySegment =
+      category === 'agent' ? 'agents' : category === 'skill' ? 'skills' : 'commands';
     const archivedDir = path.join(claudeRoot, 'ccaudit', 'archived', categorySegment);
 
     // Read the original bytes BEFORE the rename so the manifest's content
@@ -538,6 +635,8 @@ async function archiveOne(
 
     if (category === 'skill') {
       counts.archive.skills += 1;
+    } else if (category === 'command') {
+      counts.archive.commands += 1;
     } else {
       counts.archive.agents += 1;
     }
@@ -570,8 +669,11 @@ async function archiveOne(
  * Returns null when the segment is absent (caller treats as a programming
  * bug and records a failed archive op).
  */
-function findCategoryRoot(sourcePath: string, category: 'agent' | 'skill'): string | null {
-  const segment = category === 'agent' ? 'agents' : 'skills';
+function findCategoryRoot(
+  sourcePath: string,
+  category: 'agent' | 'skill' | 'command',
+): string | null {
+  const segment = category === 'agent' ? 'agents' : category === 'skill' ? 'skills' : 'commands';
   const parts = sourcePath.split(path.sep);
   for (let i = parts.length - 1; i >= 0; i--) {
     if (parts[i] === segment) {
@@ -579,6 +681,224 @@ function findCategoryRoot(sourcePath: string, category: 'agent' | 'skill'): stri
     }
   }
   return null;
+}
+
+// -- Surgical MCP config text patcher (INV-S1 byte-preservation) -
+
+/**
+ * Walk the JSON text at document depth 1 and return the byte range of the
+ * root-level `"mcpServers"` value object `{ start, end }` (where `start` is
+ * the index of the opening `{` and `end` is one past the closing `}`).
+ *
+ * Returns null if the block cannot be located (document is malformed, or the
+ * key does not exist at the root level).
+ *
+ * Purpose: used by patchMcpConfigText to restrict the key-search to the
+ * global mcpServers block, preventing false matches against identically-named
+ * servers under `projects.<path>.mcpServers` that appear earlier in the
+ * document (C2 fix).
+ */
+function findTopLevelMcpServersBlock(text: string): { start: number; end: number } | null {
+  let depth = 0;
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (ch === '\\') {
+        i++;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      if (depth === 1 && text.startsWith('"mcpServers"', i)) {
+        let j = i + '"mcpServers"'.length;
+        while (j < text.length && /\s/.test(text[j]!)) j++;
+        if (text[j] !== ':') {
+          inString = true;
+          continue;
+        }
+        j++;
+        while (j < text.length && /\s/.test(text[j]!)) j++;
+        if (text[j] !== '{') return null;
+        let d = 0;
+        let inS = false;
+        for (let k = j; k < text.length; k++) {
+          const c = text[k];
+          if (inS) {
+            if (c === '\\') {
+              k++;
+              continue;
+            }
+            if (c === '"') inS = false;
+            continue;
+          }
+          if (c === '"') {
+            inS = true;
+            continue;
+          }
+          if (c === '{') d++;
+          else if (c === '}') {
+            d--;
+            if (d === 0) return { start: j, end: k + 1 };
+          }
+        }
+        return null;
+      }
+      inString = true;
+      continue;
+    }
+    if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+  }
+  return null;
+}
+
+function findDirectJsonKeyInObject(
+  text: string,
+  key: string,
+  block: { start: number; end: number },
+): { keyStart: number; valueStart: number } | null {
+  const quotedKey = JSON.stringify(key);
+  let depth = 0;
+  let inString = false;
+  for (let i = block.start; i < block.end; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (ch === '\\') {
+        i++;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      if (depth === 1 && text.startsWith(quotedKey, i)) {
+        let j = i + quotedKey.length;
+        while (j < block.end && /\s/.test(text[j]!)) j++;
+        if (text[j] === ':') return { keyStart: i, valueStart: j + 1 };
+      }
+      inString = true;
+      continue;
+    }
+    if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+  }
+  return null;
+}
+
+/**
+ * Apply surgical text-level mutations to a JSON config string so that
+ * unmodified keys are byte-identical in the output (INV-S1).
+ *
+ * Each mutation removes a named key from inside the root-level `mcpServers`
+ * block (scoped search prevents false matches against project-level entries
+ * that appear earlier in the document — C2 fix) and appends a new root-level
+ * `"newKey": <value>` before the document's closing `}`.
+ *
+ * Returns null if any mutation target is not found or the text is malformed,
+ * signalling the caller to fall back to atomicWriteJson (non-byte-preserving).
+ *
+ * Exported for in-source unit testing.
+ */
+export function patchMcpConfigText(
+  raw: string,
+  mutations: Array<{ name: string; newKey: string; value: unknown }>,
+): string | null {
+  let text = raw;
+
+  for (const { name, newKey, value } of mutations) {
+    // C2: scope the key search to the root-level mcpServers block so a
+    // project-level `projects.<p>.mcpServers.<name>` that appears textually
+    // earlier cannot be matched instead of the global entry.
+    const block = findTopLevelMcpServersBlock(text);
+    if (!block) return null;
+    const found = findDirectJsonKeyInObject(text, name, block);
+    if (found === null) return null;
+    const keyStart = found.keyStart;
+
+    // Find the opening `{` of the value object.
+    let i = found.valueStart;
+    while (i < text.length && (text[i] === ' ' || text[i] === '\n' || text[i] === '\t')) i++;
+    if (text[i] !== '{') return null;
+
+    // Walk to the matching closing `}`, respecting JSON string boundaries.
+    let depth = 0;
+    let valueEnd = -1;
+    let inString = false;
+    for (let j = i; j < text.length; j++) {
+      const ch = text[j];
+      if (inString) {
+        if (ch === '\\') {
+          j++;
+          continue;
+        } // skip escaped char
+        if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        continue;
+      }
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          valueEnd = j + 1;
+          break;
+        }
+      }
+    }
+    if (valueEnd === -1) return null;
+
+    // Determine the bytes to excise, including surrounding comma + whitespace.
+    // Case A: trailing comma exists → remove key+value+comma (+ leading \n+indent).
+    // Case B: no trailing comma (last key) → remove preceding comma+whitespace.
+    let removeStart = keyStart;
+    let removeEnd = valueEnd;
+
+    const afterValue = text.slice(valueEnd);
+    const trailingCommaMatch = /^(\s*,)/.exec(afterValue);
+    if (trailingCommaMatch) {
+      removeEnd = valueEnd + trailingCommaMatch[1].length;
+      // Also remove the leading newline + indent before the key.
+      const beforeKey = text.slice(0, removeStart);
+      const leadingWsMatch = /\n[ \t]*$/.exec(beforeKey);
+      if (leadingWsMatch) removeStart -= leadingWsMatch[0].length;
+    } else {
+      // Last key: remove the preceding comma + any whitespace.
+      const beforeKey = text.slice(0, removeStart);
+      const precedingCommaMatch = /,(\s*)$/.exec(beforeKey);
+      if (precedingCommaMatch) removeStart -= precedingCommaMatch[0].length;
+    }
+
+    text = text.slice(0, removeStart) + text.slice(removeEnd);
+
+    // Detect root-level indentation from the document's first property.
+    const indentMatch = /^{\n([ \t]+)/.exec(text);
+    const indent = indentMatch ? indentMatch[1] : '  ';
+
+    // Serialize the new value, re-indenting continuation lines.
+    const serializedValue = JSON.stringify(value, null, 2)
+      .split('\n')
+      .map((line, idx) => (idx === 0 ? line : indent + line))
+      .join('\n');
+
+    // Insert before the document's final `}` (preserving any trailing newline).
+    const lastBraceMatch = /\n?}(\n?)$/.exec(text);
+    if (!lastBraceMatch) return null;
+    const insertAt = text.length - lastBraceMatch[0].length;
+    const needsComma = !/,\s*$/.test(text.slice(0, insertAt));
+    const prefix = needsComma ? ',' : '';
+    const trailingNl = lastBraceMatch[1] ?? '';
+    text =
+      text.slice(0, insertAt) +
+      `${prefix}\n${indent}"${newKey}": ${serializedValue}` +
+      `\n}${trailingNl}`;
+  }
+
+  return text;
 }
 
 // -- Disable MCP (dual-schema transactional mutator) --------------
@@ -664,6 +984,13 @@ async function disableMcpTransactional(
     const existingKeys = new Set(Object.keys(config));
 
     const planOps: ManifestOp[] = [];
+    // Surgical text mutations for byte-preserving write (INV-S1).
+    // Only populated for flat-schema and global-scope cases where the key
+    // removal + root insertion can be expressed as a position-independent
+    // text substitution. Project-scope mutations fall back to atomicWriteJson.
+    const surgicalMutations: Array<{ name: string; newKey: string; value: unknown }> = [];
+    let hasSurgicalFallback = false; // set true if any item requires full JSON rewrite
+
     for (const item of configItems) {
       if (isFlatMcpJson) {
         // FLAT `.mcp.json` schema. Mutate top-level `mcpServers`, write
@@ -679,6 +1006,7 @@ async function disableMcpTransactional(
         (config as Record<string, unknown>)[newKey] = originalValue;
         delete mcpServers[item.name];
         config.mcpServers = mcpServers;
+        surgicalMutations.push({ name: item.name, newKey, value: originalValue });
         planOps.push(
           buildDisableOp({
             config_path: configPath,
@@ -699,6 +1027,7 @@ async function disableMcpTransactional(
         (config as Record<string, unknown>)[newKey] = originalValue;
         delete mcpServers[item.name];
         config.mcpServers = mcpServers;
+        surgicalMutations.push({ name: item.name, newKey, value: originalValue });
         planOps.push(
           buildDisableOp({
             config_path: configPath,
@@ -714,6 +1043,9 @@ async function disableMcpTransactional(
         // `projects.<projectPath>.mcpServers`. The disabled key is stored at
         // the project level (sibling of the project's own `mcpServers`) so
         // Phase 9 can restore it by locating the matching project path.
+        // Project-scope mutations use full JSON rewrite (surgical patcher
+        // would need to navigate nested paths — not yet implemented).
+        hasSurgicalFallback = true;
         const projects = (config.projects ?? {}) as Record<
           string,
           { mcpServers?: Record<string, unknown> }
@@ -748,8 +1080,23 @@ async function disableMcpTransactional(
     // outer ops array; if the write throws, the file's planOps are discarded
     // and the caller returns {status:'write-error'} without writing any of
     // them to the manifest (fail-fast per D-14).
+    //
+    // Byte-preserving write (INV-S1): attempt surgical text patch first for
+    // flat-schema and global-scope items. Falls back to atomicWriteJson when
+    // any project-scope item is present (hasSurgicalFallback) or when the
+    // patcher returns null (malformed/unexpected file structure).
     try {
-      await deps.atomicWriteJson(configPath, config);
+      let wrote = false;
+      if (!hasSurgicalFallback && surgicalMutations.length > 0) {
+        const patched = patchMcpConfigText(raw, surgicalMutations);
+        if (patched !== null) {
+          await deps.atomicWriteText(configPath, patched);
+          wrote = true;
+        }
+      }
+      if (!wrote) {
+        await deps.atomicWriteJson(configPath, config);
+      }
     } catch (err) {
       return { status: 'write-error', path: configPath, error: (err as Error).message };
     }
@@ -856,10 +1203,12 @@ function defaultCeremonyIo(): CeremonyIO {
 // -- In-source tests ----------------------------------------------
 
 if (import.meta.vitest) {
-  const { describe, it, expect, beforeEach, afterEach } = import.meta.vitest;
+  const { describe, it, expect, beforeEach, afterEach, vi } = import.meta.vitest;
   const { mkdtemp, writeFile: wf, rm, readFile: rf, mkdir: mk } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const { readManifest } = await import('./manifest.ts');
+  const { canonicalItemId } = await import('./checkpoint.ts');
+  const { existsSync } = await import('node:fs');
   type ArchiveOp = import('./manifest.ts').ArchiveOp;
   type DisableOp = import('./manifest.ts').DisableOp;
 
@@ -902,6 +1251,9 @@ if (import.meta.vitest) {
       patchMemoryFrontmatter: patchFrontmatter,
       atomicWriteJson: async (target, value) => {
         await wf(target, JSON.stringify(value, null, 2), 'utf8');
+      },
+      atomicWriteText: async (target, text) => {
+        await wf(target, text, 'utf8');
       },
       pathExistsSync: () => false,
       createManifestWriter: (p) => new ManifestWriter(p),
@@ -1069,7 +1421,7 @@ if (import.meta.vitest) {
         archive: [],
         disable: [],
         flag: [],
-        counts: { agents: 0, skills: 0, mcp: 0, memory: 0 },
+        counts: { agents: 0, skills: 0, mcp: 0, memory: 0, commands: 0 },
         savings: { tokens: 0 },
       };
     }
@@ -1732,6 +2084,566 @@ if (import.meta.vitest) {
         expect(result.counts.archive.skills).toBe(1);
         expect(result.counts.archive.failed).toBe(0);
       }
+    });
+  });
+
+  // ── INV-S4 + INV-S5: selectedItems filter (Plan 01-02) ────────────
+  describe('runBust — selectedItems subset filter (INV-S4 + INV-S5)', () => {
+    let tmp: string;
+
+    beforeEach(async () => {
+      tmp = await mkdtemp(path.join(tmpdir(), 'bust-subset-'));
+    });
+    afterEach(async () => {
+      await rm(tmp, { recursive: true, force: true });
+    });
+
+    // Build a 5-item fixture: 2 agents, 1 skill, 1 mcp-server, 1 memory.
+    // Tokens: agent1=100, agent2=200, skill1=300, mcp1=400, mem1=50.
+    // Only archive/disable contribute to freedTokens (not flag/memory).
+    async function makeFixture5(claudeRoot: string) {
+      await mk(path.join(claudeRoot, 'agents'), { recursive: true });
+      await mk(path.join(claudeRoot, 'skills'), { recursive: true });
+      await wf(path.join(claudeRoot, 'agents', 'agent1.md'), '# agent1', 'utf8');
+      await wf(path.join(claudeRoot, 'agents', 'agent2.md'), '# agent2', 'utf8');
+      await wf(path.join(claudeRoot, 'skills', 'skill1.md'), '# skill1', 'utf8');
+      await wf(path.join(claudeRoot, 'CLAUDE.md'), '# memory', 'utf8');
+      const configPath = path.join(tmp, '.claude.json');
+      await wf(configPath, JSON.stringify({ mcpServers: { mcp1: { command: 'x' } } }), 'utf8');
+
+      const enriched: TokenCostResult[] = [
+        {
+          item: {
+            name: 'agent1',
+            path: path.join(claudeRoot, 'agents', 'agent1.md'),
+            scope: 'global',
+            category: 'agent',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 100, confidence: 'estimated', source: 'test' },
+        },
+        {
+          item: {
+            name: 'agent2',
+            path: path.join(claudeRoot, 'agents', 'agent2.md'),
+            scope: 'global',
+            category: 'agent',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 200, confidence: 'estimated', source: 'test' },
+        },
+        {
+          item: {
+            name: 'skill1',
+            path: path.join(claudeRoot, 'skills', 'skill1.md'),
+            scope: 'global',
+            category: 'skill',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 300, confidence: 'estimated', source: 'test' },
+        },
+        {
+          item: {
+            name: 'mcp1',
+            path: configPath,
+            scope: 'global',
+            category: 'mcp-server',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 400, confidence: 'estimated', source: 'test' },
+        },
+        {
+          item: {
+            name: 'CLAUDE.md',
+            path: path.join(claudeRoot, 'CLAUDE.md'),
+            scope: 'global',
+            category: 'memory',
+            projectPath: null,
+          },
+          tier: 'definite-ghost',
+          lastUsed: null,
+          invocationCount: 0,
+          tokenEstimate: { tokens: 50, confidence: 'estimated', source: 'test' },
+        },
+      ];
+      return { enriched, configPath };
+    }
+
+    it('Test 1 (INV-S4): full bust — planned_ops sum equals full plan total, freedTokens === totalPlannedTokens', async () => {
+      const claudeRoot = path.join(tmp, '.claude');
+      const { enriched } = await makeFixture5(claudeRoot);
+      // Checkpoint savings = 100+200+300+400 = 1000 (agents+skills+mcp, no memory)
+      const deps = makeDeps(tmp, {
+        scanAndEnrich: async () => enriched,
+        readCheckpoint: async () => ({
+          status: 'ok',
+          checkpoint: {
+            checkpoint_version: 1,
+            ccaudit_version: '0.0.1',
+            timestamp: '2026-04-05T18:30:00.000Z',
+            since_window: '7d',
+            ghost_hash: 'sha256:test',
+            item_count: { agents: 2, skills: 1, mcp: 1, memory: 1 },
+            savings: { tokens: 1000 },
+            total_overhead: 5000,
+          },
+        }),
+      });
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('success');
+      if (result.status === 'success') {
+        expect(result.summary.freedTokens).toBe(result.summary.totalPlannedTokens);
+      }
+      const manifest = await readManifest(deps.manifestPath());
+      const ops = manifest.header!.planned_ops;
+      expect(ops.archive + ops.disable + ops.flag).toBe(5);
+    });
+
+    it('Test 2 (INV-S4): subset bust with 2 of 5 selected — planned_ops sum equals 2', async () => {
+      const claudeRoot = path.join(tmp, '.claude');
+      const { enriched } = await makeFixture5(claudeRoot);
+      const agent1 = enriched[0]!.item;
+      const agent2 = enriched[1]!.item;
+      const selectedItems = new Set([canonicalItemId(agent1), canonicalItemId(agent2)]);
+      const deps = makeDeps(tmp, {
+        scanAndEnrich: async () => enriched,
+        readCheckpoint: async () => ({
+          status: 'ok',
+          checkpoint: {
+            checkpoint_version: 1,
+            ccaudit_version: '0.0.1',
+            timestamp: '2026-04-05T18:30:00.000Z',
+            since_window: '7d',
+            ghost_hash: 'sha256:test',
+            item_count: { agents: 2, skills: 1, mcp: 1, memory: 1 },
+            savings: { tokens: 1000 },
+            total_overhead: 5000,
+          },
+        }),
+      });
+      const result = await runBust({ yes: true, deps, selectedItems });
+      expect(result.status).toBe('success');
+      const manifest = await readManifest(deps.manifestPath());
+      const ops = manifest.header!.planned_ops;
+      // 2 agents selected → archive=2, disable=0, flag=0 → sum=2
+      expect(ops.archive + ops.disable + ops.flag).toBe(2);
+      // header + 2 ops + footer = 4 lines
+      expect(manifest.ops).toHaveLength(2);
+    });
+
+    it('Test 3 (INV-S5): subset bust — freedTokens reflects selected items, totalPlannedTokens reflects full plan', async () => {
+      const claudeRoot = path.join(tmp, '.claude');
+      const { enriched } = await makeFixture5(claudeRoot);
+      // Select agent1 (100 tokens) and mcp1 (400 tokens) = freedTokens = 500
+      const agent1 = enriched[0]!.item;
+      const mcp1 = enriched[3]!.item;
+      const selectedItems = new Set([canonicalItemId(agent1), canonicalItemId(mcp1)]);
+      const deps = makeDeps(tmp, {
+        scanAndEnrich: async () => enriched,
+        readCheckpoint: async () => ({
+          status: 'ok',
+          checkpoint: {
+            checkpoint_version: 1,
+            ccaudit_version: '0.0.1',
+            timestamp: '2026-04-05T18:30:00.000Z',
+            since_window: '7d',
+            ghost_hash: 'sha256:test',
+            item_count: { agents: 2, skills: 1, mcp: 1, memory: 1 },
+            savings: { tokens: 1000 },
+            total_overhead: 5000,
+          },
+        }),
+      });
+      const result = await runBust({ yes: true, deps, selectedItems });
+      expect(result.status).toBe('success');
+      if (result.status === 'success') {
+        // freedTokens = agent1(100) + mcp1(400) = 500 (subset)
+        expect(result.summary.freedTokens).toBe(500);
+        // totalPlannedTokens = checkpoint.savings.tokens = 1000 (full plan)
+        expect(result.summary.totalPlannedTokens).toBe(1000);
+      }
+    });
+
+    it('Test 4: selection_filter in manifest header — full bust sets mode=full, subset records only actioned IDs', async () => {
+      // Full bust: uses default makeDeps (empty scan) to verify mode=full
+      const depsFull = makeDeps(tmp);
+      const resultFull = await runBust({ yes: true, deps: depsFull });
+      expect(resultFull.status).toBe('success');
+      const manifestFull = await readManifest(depsFull.manifestPath());
+      expect(manifestFull.header!.selection_filter?.mode).toBe('full');
+
+      // Subset bust — use a fixture with real items so that actioned IDs can be verified.
+      // Per MEDIUM-01 fix: sf.ids records only IDs that actually survived the filter
+      // and were actioned — not the raw requested Set (which may include unmatched IDs).
+      const tmp2 = await mkdtemp(path.join(tmpdir(), 'bust-sf-sub-'));
+      try {
+        const claudeRoot2 = path.join(tmp2, '.claude');
+        const { enriched } = await makeFixture5(claudeRoot2);
+        const agent1 = enriched[0]!.item;
+        const actionedId = canonicalItemId(agent1);
+        const unmatchedId = 'agent|global||/nonexistent/ghost.md'; // will not match any plan item
+        const depsSub = makeDeps(tmp2, {
+          scanAndEnrich: async () => enriched,
+          readCheckpoint: async () => ({
+            status: 'ok',
+            checkpoint: {
+              checkpoint_version: 1,
+              ccaudit_version: '0.0.1',
+              timestamp: '2026-04-05T18:30:00.000Z',
+              since_window: '7d',
+              ghost_hash: 'sha256:test',
+              item_count: { agents: 2, skills: 1, mcp: 1, memory: 1 },
+              savings: { tokens: 1000 },
+              total_overhead: 5000,
+            },
+          }),
+        });
+        const resultSub = await runBust({
+          yes: true,
+          deps: depsSub,
+          selectedItems: new Set([actionedId, unmatchedId]),
+        });
+        expect(resultSub.status).toBe('success');
+        const manifestSub = await readManifest(depsSub.manifestPath());
+        const sf = manifestSub.header!.selection_filter;
+        expect(sf?.mode).toBe('subset');
+        if (sf?.mode === 'subset') {
+          // Only the ID that matched a real plan item should appear
+          expect(sf.ids).toContain(actionedId);
+          // The unmatched requested ID must NOT appear in the manifest
+          expect(sf.ids).not.toContain(unmatchedId);
+        }
+      } finally {
+        await rm(tmp2, { recursive: true, force: true });
+      }
+    });
+
+    it('Test 5: empty selectedItems — planned_ops all 0, freedTokens=0, totalPlannedTokens from checkpoint', async () => {
+      const claudeRoot = path.join(tmp, '.claude');
+      const { enriched } = await makeFixture5(claudeRoot);
+      const deps = makeDeps(tmp, {
+        scanAndEnrich: async () => enriched,
+        readCheckpoint: async () => ({
+          status: 'ok',
+          checkpoint: {
+            checkpoint_version: 1,
+            ccaudit_version: '0.0.1',
+            timestamp: '2026-04-05T18:30:00.000Z',
+            since_window: '7d',
+            ghost_hash: 'sha256:test',
+            item_count: { agents: 2, skills: 1, mcp: 1, memory: 1 },
+            savings: { tokens: 1000 },
+            total_overhead: 5000,
+          },
+        }),
+      });
+      const warnSpy: string[] = [];
+      const origWarn = console.warn;
+      console.warn = (...args: unknown[]) => {
+        warnSpy.push(String(args[0]));
+      };
+      try {
+        const result = await runBust({ yes: true, deps, selectedItems: new Set() });
+        expect(result.status).toBe('success');
+        if (result.status === 'success') {
+          expect(result.summary.freedTokens).toBe(0);
+          expect(result.summary.totalPlannedTokens).toBe(1000);
+        }
+        const manifest = await readManifest(deps.manifestPath());
+        const ops = manifest.header!.planned_ops;
+        expect(ops.archive).toBe(0);
+        expect(ops.disable).toBe(0);
+        expect(ops.flag).toBe(0);
+        // Warning emitted
+        expect(warnSpy.some((w) => w.includes('empty set'))).toBe(true);
+      } finally {
+        console.warn = origWarn;
+      }
+    });
+
+    it('Test 6 (backward-compat): selectedItems=undefined produces same manifest counts as pre-Plan-02', async () => {
+      const claudeRoot = path.join(tmp, '.claude');
+      const { enriched } = await makeFixture5(claudeRoot);
+      const deps = makeDeps(tmp, {
+        scanAndEnrich: async () => enriched,
+        readCheckpoint: async () => ({
+          status: 'ok',
+          checkpoint: {
+            checkpoint_version: 1,
+            ccaudit_version: '0.0.1',
+            timestamp: '2026-04-05T18:30:00.000Z',
+            since_window: '7d',
+            ghost_hash: 'sha256:test',
+            item_count: { agents: 2, skills: 1, mcp: 1, memory: 1 },
+            savings: { tokens: 1000 },
+            total_overhead: 5000,
+          },
+        }),
+      });
+      // No selectedItems → full bust
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('success');
+      if (result.status === 'success') {
+        // freedTokens = checkpoint.savings.tokens = 1000 (v1.4.0 behavior)
+        expect(result.summary.freedTokens).toBe(1000);
+        expect(result.summary.totalPlannedTokens).toBe(1000);
+      }
+      const manifest = await readManifest(deps.manifestPath());
+      // 5 total planned ops (2 archive + 1 archive + 1 disable + 1 flag)
+      const ops = manifest.header!.planned_ops;
+      expect(ops.archive + ops.disable + ops.flag).toBe(5);
+    });
+
+    it('Test 7 (approach A — hash gate): subset bust with mismatched hash returns hash-mismatch, no manifest file', async () => {
+      const claudeRoot = path.join(tmp, '.claude');
+      const { enriched } = await makeFixture5(claudeRoot);
+      const agent1 = enriched[0]!.item;
+      const selectedItems = new Set([canonicalItemId(agent1)]);
+      const deps = makeDeps(tmp, {
+        scanAndEnrich: async () => enriched,
+        computeHash: async () => 'sha256:different', // mismatch
+      });
+      const result = await runBust({ yes: true, deps, selectedItems });
+      expect(result.status).toBe('hash-mismatch');
+      // Manifest must NOT exist (hash gate aborted before any disk write)
+      expect(existsSync(deps.manifestPath())).toBe(false);
+    });
+
+    it('Test 8 (skipCeremony=true): runCeremony is NOT called when skipCeremony is true (D-20)', async () => {
+      const ceremonySpy = vi.fn(async () => ({ status: 'accepted' as const }));
+      const deps = makeDeps(tmp, { runCeremony: ceremonySpy });
+      const result = await runBust({ yes: true, deps, skipCeremony: true });
+      expect(result.status).toBe('success');
+      // Ceremony must NOT have been called — the TUI confirmed upstream.
+      expect(ceremonySpy).not.toHaveBeenCalled();
+    });
+
+    it('Test 9 (skipCeremony=undefined): runCeremony IS called when skipCeremony is absent (regression guard)', async () => {
+      const ceremonySpy = vi.fn(async () => ({ status: 'accepted' as const }));
+      const deps = makeDeps(tmp, { runCeremony: ceremonySpy });
+      // skipCeremony not passed → default behavior: ceremony runs
+      const result = await runBust({ yes: true, deps });
+      expect(result.status).toBe('success');
+      expect(ceremonySpy).toHaveBeenCalledOnce();
+    });
+  });
+
+  // ── patchMcpConfigText unit tests ────────────────────────────────
+  // Exported for in-source unit testing (see JSDoc on function).
+  // These are deterministic pure-function tests — no subprocess, no fs.
+  describe('patchMcpConfigText', () => {
+    // Helper: one-mutation rename for brevity
+    function patch(
+      raw: string,
+      name: string,
+      newKey = `ccaudit-disabled:${name}`,
+      value: unknown = { command: 'npx' },
+    ): string | null {
+      return patchMcpConfigText(raw, [{ name, newKey, value }]);
+    }
+
+    it('removes a non-last key and inserts disabled key at document root', () => {
+      const input = `{
+  "mcpServers": {
+    "serverA": {
+      "command": "npx"
+    },
+    "serverB": {
+      "command": "node"
+    }
+  }
+}
+`;
+      const result = patch(input, 'serverA');
+      expect(result).not.toBeNull();
+      const parsed = JSON.parse(result!);
+      // serverA removed from mcpServers
+      expect(parsed.mcpServers?.serverA).toBeUndefined();
+      // serverB preserved in mcpServers
+      expect(parsed.mcpServers?.serverB).toEqual({ command: 'node' });
+      // disabled key at root
+      expect(parsed['ccaudit-disabled:serverA']).toEqual({ command: 'npx' });
+    });
+
+    it('tolerates JSON whitespace between object keys and colons', () => {
+      const input = `{
+  "mcpServers" : {
+    "serverA" : {
+      "command": "npx"
+    },
+    "serverB" : {
+      "command": "node"
+    }
+  }
+}
+`;
+      const result = patch(input, 'serverA');
+      expect(result).not.toBeNull();
+      const parsed = JSON.parse(result!);
+      expect(parsed.mcpServers?.serverA).toBeUndefined();
+      expect(parsed.mcpServers?.serverB).toEqual({ command: 'node' });
+      expect(parsed['ccaudit-disabled:serverA']).toEqual({ command: 'npx' });
+    });
+
+    it('removes the last key (no trailing comma) using preceding-comma branch', () => {
+      const input = `{
+  "mcpServers": {
+    "only": {
+      "command": "npx"
+    }
+  }
+}
+`;
+      const result = patch(input, 'only');
+      expect(result).not.toBeNull();
+      const parsed = JSON.parse(result!);
+      expect(parsed.mcpServers?.only).toBeUndefined();
+      expect(parsed['ccaudit-disabled:only']).toEqual({ command: 'npx' });
+    });
+
+    it('returns null for malformed document (value object never closes)', () => {
+      // The `broken` value object opens a `{` but never closes — depth never reaches 0.
+      // patchMcpConfigText must return null rather than crash or produce corrupt output.
+      const input = `{
+  "mcpServers": {
+    "broken": {
+      "command": "npx"
+`;
+      // Walker runs off the end of the string without depth reaching 0 → valueEnd === -1 → null
+      const result = patch(input, 'broken');
+      expect(result).toBeNull();
+    });
+
+    it('handles value object with string literals containing braces (WR-01 regression)', () => {
+      // This fixture would have broken the old brace-depth walker: the '}' inside
+      // "{FOO=bar}" would decrement depth prematurely, causing valueEnd to land
+      // inside the string and making the patcher return null.
+      const input = `{
+  "mcpServers": {
+    "serverA": {
+      "command": "docker",
+      "args": ["run", "--env", "{FOO=bar}"]
+    },
+    "serverB": {
+      "command": "node"
+    }
+  }
+}
+`;
+      const result = patch(input, 'serverA', 'ccaudit-disabled:serverA', {
+        command: 'docker',
+        args: ['run', '--env', '{FOO=bar}'],
+      });
+      // Must NOT return null — the brace inside the string literal must be ignored
+      expect(result).not.toBeNull();
+      const parsed = JSON.parse(result!);
+      expect(parsed.mcpServers?.serverA).toBeUndefined();
+      expect(parsed.mcpServers?.serverB).toEqual({ command: 'node' });
+      expect(parsed['ccaudit-disabled:serverA']).toMatchObject({ command: 'docker' });
+    });
+
+    it('handles value object with nested inner objects (e.g. env map)', () => {
+      const input = `{
+  "mcpServers": {
+    "serverA": {
+      "command": "npx",
+      "env": {
+        "DEBUG": "1",
+        "FOO": "bar"
+      }
+    }
+  }
+}
+`;
+      const nestedValue = { command: 'npx', env: { DEBUG: '1', FOO: 'bar' } };
+      const result = patch(input, 'serverA', 'ccaudit-disabled:serverA', nestedValue);
+      expect(result).not.toBeNull();
+      const parsed = JSON.parse(result!);
+      expect(parsed.mcpServers?.serverA).toBeUndefined();
+      expect(parsed['ccaudit-disabled:serverA']).toEqual(nestedValue);
+    });
+
+    it('returns null when key is not present in the document', () => {
+      const input = `{
+  "mcpServers": {
+    "serverA": {
+      "command": "npx"
+    }
+  }
+}
+`;
+      expect(patch(input, 'nonExistent')).toBeNull();
+    });
+
+    // ── C2 regression tests: scope rename to global mcpServers block ──
+
+    it('C2: scopes rename to global mcpServers when project-level entry shadows the same key', () => {
+      // Fixture: projects.<p>.mcpServers.foo appears BEFORE root mcpServers.foo.
+      // The patcher must rename the ROOT entry, not the project-level one.
+      const input = `{
+  "projects": {
+    "/p": {
+      "mcpServers": {
+        "foo": {
+          "token": 1
+        }
+      }
+    }
+  },
+  "mcpServers": {
+    "foo": {
+      "token": 2
+    }
+  }
+}
+`;
+      const result = patchMcpConfigText(input, [
+        { name: 'foo', newKey: '_disabled_foo', value: { token: 2 } },
+      ]);
+      expect(result).not.toBeNull();
+      const parsed = JSON.parse(result!) as Record<string, unknown>;
+      // Root mcpServers.foo removed
+      const mcpServers = parsed.mcpServers as Record<string, unknown> | undefined;
+      expect(mcpServers?.foo).toBeUndefined();
+      // _disabled_foo added at root with the root value
+      expect(parsed['_disabled_foo']).toEqual({ token: 2 });
+      // Project block byte-untouched: projects./p.mcpServers.foo still present with token:1
+      const projects = parsed.projects as Record<string, Record<string, unknown>> | undefined;
+      const projMcp = projects?.['/p']?.mcpServers as Record<string, unknown> | undefined;
+      expect(projMcp?.foo).toEqual({ token: 1 });
+    });
+
+    it('C2: returns null when only a project-level mcpServers.foo exists (no global entry)', () => {
+      // No root mcpServers.foo — the block search must fail to find the key in scope.
+      const input = `{
+  "projects": {
+    "/p": {
+      "mcpServers": {
+        "foo": {
+          "token": 1
+        }
+      }
+    }
+  }
+}
+`;
+      // No global mcpServers block → findTopLevelMcpServersBlock returns null → patcher returns null
+      const result = patchMcpConfigText(input, [
+        { name: 'foo', newKey: '_disabled_foo', value: { token: 1 } },
+      ]);
+      expect(result).toBeNull();
     });
   });
 }

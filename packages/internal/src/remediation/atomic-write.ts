@@ -67,6 +67,14 @@ export async function atomicWriteJson<T>(
   value: T,
   options: AtomicWriteOptions = {},
 ): Promise<void> {
+  await atomicWriteRaw(targetPath, JSON.stringify(value, null, 2), options);
+}
+
+async function atomicWriteRaw(
+  targetPath: string,
+  body: string,
+  options: AtomicWriteOptions = {},
+): Promise<void> {
   const opts = { ...DEFAULTS, ...options };
   const dir = path.dirname(targetPath);
   // Random 8-char suffix for concurrent-caller collision avoidance.
@@ -76,8 +84,6 @@ export async function atomicWriteJson<T>(
 
   // Parent dir with restrictive mode. Mode is a no-op on Windows.
   await mkdir(dir, { recursive: true, mode: opts.dirMode });
-
-  const body = JSON.stringify(value, null, 2);
 
   try {
     await writeFile(tmpPath, body, { mode: opts.mode, encoding: 'utf8' });
@@ -92,6 +98,23 @@ export async function atomicWriteJson<T>(
     }
     throw err;
   }
+}
+
+/**
+ * Atomically write a pre-formatted text string to `targetPath` via a tmp file
+ * + rename, with the same Windows EPERM retry semantics as `atomicWriteJson`.
+ *
+ * Use this instead of `atomicWriteJson` when the caller has already produced
+ * the final serialized content and must preserve exact byte formatting (e.g.
+ * surgical MCP key renames in `~/.claude.json` that must leave unmodified keys
+ * byte-identical to the original — INV-S1).
+ */
+export async function atomicWriteText(
+  targetPath: string,
+  text: string,
+  options: AtomicWriteOptions = {},
+): Promise<void> {
+  await atomicWriteRaw(targetPath, text, options);
 }
 
 // -- renameWithRetry ---------------------------------------------
@@ -199,6 +222,7 @@ if (import.meta.vitest) {
     mkdtemp,
     rm,
     readFile,
+    readdir,
     stat: fsStat,
     chmod,
     mkdir: mk,
@@ -265,6 +289,48 @@ if (import.meta.vitest) {
         }
       },
     );
+  });
+
+  describe('atomicWriteText', () => {
+    let tmp: string;
+    beforeEach(async () => {
+      tmp = await mkdtemp(path.join(tmpdir(), 'atomic-write-text-'));
+    });
+    afterEach(async () => {
+      await rm(tmp, { recursive: true, force: true });
+    });
+
+    it('round-trips caller-provided text byte-for-byte', async () => {
+      const target = path.join(tmp, 'raw.txt');
+      const body = '{  "keep" : [1,2,3],\n  "spacing": "verbatim"\n}\n';
+      await atomicWriteText(target, body);
+      const raw = await readFile(target, 'utf8');
+      expect(raw).toBe(body);
+    });
+
+    it('creates parent directories recursively', async () => {
+      const target = path.join(tmp, 'nested', 'dir', 'raw.txt');
+      await atomicWriteText(target, 'hello\n');
+      const s = await fsStat(target);
+      expect(s.isFile()).toBe(true);
+      await expect(readFile(target, 'utf8')).resolves.toBe('hello\n');
+    });
+
+    it('unlinks tmp file when rename fails', async () => {
+      const target = path.join(tmp, 'existing-dir');
+      await mk(target, { recursive: true });
+      const randSpy = vi.spyOn(Math, 'random').mockReturnValue(0.123456789);
+      const tmpPath = `${target}.tmp-${process.pid}-${Math.random()
+        .toString(36)
+        .slice(2, 10)
+        .padEnd(8, '0')}`;
+      try {
+        await expect(atomicWriteText(target, 'cannot replace a directory')).rejects.toThrow();
+      } finally {
+        randSpy.mockRestore();
+      }
+      await expect(readdir(tmp)).resolves.not.toContain(path.basename(tmpPath));
+    });
   });
 
   describe('renameWithRetry', () => {

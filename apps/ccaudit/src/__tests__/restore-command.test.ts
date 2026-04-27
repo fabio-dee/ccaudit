@@ -1016,17 +1016,22 @@ describe.skipIf(process.platform === 'win32')('ccaudit restore (subprocess integ
     const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
     expect(parsed.status).toBe('success');
 
-    // The key assertion: moved = 0, alreadyAtSource = 2
+    // Phase 8.2 semantic shift: the two ops satisfy the stale-archive
+    // predicate (archive_path missing AND source_path exists) and are
+    // suppressed at collection time. They no longer reach the executor,
+    // so alreadyAtSource stays 0 and the suppression is surfaced via
+    // the additive `filteredStaleCount` envelope field. moved and
+    // failed remain 0 — the underlying "nothing actually moved"
+    // invariant still holds.
     const counts = parsed.counts as {
       unarchived: { moved: number; alreadyAtSource: number; failed: number };
     };
     expect(counts.unarchived.moved, 'moved should be 0 (nothing actually moved)').toBe(0);
-    expect(counts.unarchived.alreadyAtSource, 'already-at-source should be 2').toBe(2);
+    expect(
+      counts.unarchived.alreadyAtSource,
+      'already-at-source should be 0 (stale ops filtered upstream in Phase 8.2)',
+    ).toBe(0);
     expect(counts.unarchived.failed, 'failed should be 0').toBe(0);
-
-    // The rendered output must mention "already at source" separately
-    const rendered = await runRestore(tmpH, []);
-    const combined = rendered.stdout + rendered.stderr;
-    expect(combined).toMatch(/already.at.source|already at source/i);
+    expect(parsed.filteredStaleCount, 'stale archive ops surface via filteredStaleCount').toBe(2);
   }, 60_000);
 });

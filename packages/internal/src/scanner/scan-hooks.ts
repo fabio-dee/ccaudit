@@ -127,18 +127,32 @@ function extractHookItems(
         if (typeof leaf !== 'object' || leaf === null) continue;
         const leafObj = leaf as Record<string, unknown>;
 
-        // Only handle 'command' type hooks; skip unknown types
-        if (leafObj['type'] !== 'command') continue;
+        // Accept 'command' (legacy) and 'mcp_tool' (cc 2.1.118+) leaf types;
+        // future types are silently skipped (forward-compat — no log spam).
+        const leafType = leafObj['type'];
+        if (leafType !== 'command' && leafType !== 'mcp_tool') continue;
 
-        const command = leafObj['command'];
-        if (typeof command !== 'string') continue;
+        // Privacy-critical: hash the identifier, never expose the raw string.
+        let payload: string;
+        if (leafType === 'command') {
+          const command = leafObj['command'];
+          if (typeof command !== 'string') continue;
+          payload = command;
+        } else {
+          const tool = leafObj['tool'];
+          if (typeof tool !== 'string') continue;
+          payload = tool;
+        }
+        const hash = shortHash(payload);
 
-        // Privacy-critical: hash the command, never expose the raw string
-        const hash = shortHash(command);
-
-        // Build item name: event:matcher-or-wildcard:shortHash
+        // Build item name. Legacy command hooks keep the historical
+        // event:matcher:hash format. mcp_tool hooks add a 'tool:' segment
+        // to prevent collision with command hooks on the same event/matcher slot.
         const matcherPart = matcher ?? '*';
-        const name = `${event}:${matcherPart}:${hash}`;
+        const name =
+          leafType === 'command'
+            ? `${event}:${matcherPart}:${hash}`
+            : `${event}:${matcherPart}:tool:${hash}`;
 
         items.push({
           name,
@@ -431,6 +445,118 @@ if (import.meta.vitest) {
       expect(items).toHaveLength(1);
       expect(items[0].scope).toBe('project');
       expect(items[0].projectPath).toBe(projPath);
+    });
+  });
+
+  describe('mcp_tool support (cc 2.1.118+)', () => {
+    let tmpDir: string;
+
+    beforeEach(async () => {
+      tmpDir = await mkdtemp(path.join(tmpdir(), 'scan-hooks-mcptool-'));
+    });
+
+    afterEach(async () => {
+      await rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('mcp_tool leaf produces an InventoryItem with non-zero token estimate', async () => {
+      const settingsPath = path.join(tmpDir, 'settings.json');
+      const sensitiveTool = 'mcp__server__do_thing';
+      await writeFile(
+        settingsPath,
+        JSON.stringify({
+          hooks: {
+            PreToolUse: [
+              {
+                matcher: 'Bash',
+                hooks: [{ type: 'mcp_tool', tool: sensitiveTool }],
+              },
+            ],
+          },
+        }),
+      );
+
+      const items = await extractHookItemsFromFile(settingsPath, 'global', null);
+      expect(items).toHaveLength(1);
+      expect(items[0].hookEvent).toBe('PreToolUse');
+      expect(items[0].injectCapable).toBe(true);
+      expect(items[0].name).toMatch(/^PreToolUse:Bash:tool:[0-9a-f]{8}$/);
+      // Privacy invariant: raw tool identifier never leaks
+      expect(noCommandLeak(items, sensitiveTool)).toBe(true);
+
+      // Token estimate flows through unchanged from existing hook estimator.
+      const { estimateHookTokens } = await import('../token/hook-estimator.ts');
+      const est = estimateHookTokens(items[0].injectCapable!, 0);
+      expect(est.tokens).toBeGreaterThan(0);
+    });
+
+    it('mcp_tool name has type discriminator preventing collision with command on same event/matcher', async () => {
+      const settingsPath = path.join(tmpDir, 'settings.json');
+      await writeFile(
+        settingsPath,
+        JSON.stringify({
+          hooks: {
+            PreToolUse: [
+              {
+                matcher: 'Bash',
+                hooks: [
+                  { type: 'command', command: 'echo hi' },
+                  { type: 'mcp_tool', tool: 'mcp__srv__act' },
+                ],
+              },
+            ],
+          },
+        }),
+      );
+
+      const items = await extractHookItemsFromFile(settingsPath, 'global', null);
+      expect(items).toHaveLength(2);
+      const names = items.map((i) => i.name);
+      expect(new Set(names).size).toBe(2);
+      // Command hook keeps legacy format (no 'tool:' segment).
+      expect(names.some((n) => /^PreToolUse:Bash:[0-9a-f]{8}$/.test(n))).toBe(true);
+      // mcp_tool hook gets the discriminator.
+      expect(names.some((n) => /^PreToolUse:Bash:tool:[0-9a-f]{8}$/.test(n))).toBe(true);
+    });
+
+    it('mcp_tool ignores non-canonical tool_name and name identifier fields', async () => {
+      const settingsPath = path.join(tmpDir, 'settings.json');
+      await writeFile(
+        settingsPath,
+        JSON.stringify({
+          hooks: {
+            PostToolUse: [
+              { hooks: [{ type: 'mcp_tool', tool_name: 'mcp__a__x' }] },
+              { hooks: [{ type: 'mcp_tool', name: 'mcp__b__y' }] },
+              { hooks: [{ type: 'mcp_tool', tool: 'mcp__canonical__z' }] },
+            ],
+          },
+        }),
+      );
+
+      const items = await extractHookItemsFromFile(settingsPath, 'global', null);
+      expect(items).toHaveLength(1);
+      expect(items[0].hookEvent).toBe('PostToolUse');
+      expect(items[0].injectCapable).toBe(true);
+      expect(items[0].name).toMatch(/^PostToolUse:\*:tool:[0-9a-f]{8}$/);
+      expect(noCommandLeak(items, 'mcp__canonical__z')).toBe(true);
+      expect(noCommandLeak(items, 'mcp__a__x')).toBe(true);
+      expect(noCommandLeak(items, 'mcp__b__y')).toBe(true);
+    });
+
+    it('mcp_tool leaf without identifier is silently skipped', async () => {
+      const settingsPath = path.join(tmpDir, 'settings.json');
+      await writeFile(
+        settingsPath,
+        JSON.stringify({
+          hooks: {
+            PreToolUse: [{ hooks: [{ type: 'mcp_tool' }] }],
+          },
+        }),
+      );
+
+      const items = await extractHookItemsFromFile(settingsPath, 'global', null);
+      expect(items).toEqual([]);
     });
   });
 

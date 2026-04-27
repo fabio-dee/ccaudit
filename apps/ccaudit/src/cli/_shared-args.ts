@@ -7,12 +7,21 @@
  * The authoritative runtime source is initColor() in @ccaudit/terminal/color.ts,
  * which reads process.argv directly for root-level positioning robustness (per D-07).
  * Both sources agree because gunshi parsing does not modify process.argv.
+ *
+ * IMPORTANT: use camelCase internal keys plus `toKebab: true` for the public
+ * `--no-*` flags instead of either:
+ *   1) gunshi's `negatable: true` (renders `Negatable of --...`), or
+ *   2) literal `no-*` arg keys (renderer strips the prefix and prints
+ *      placeholder text like `color` / `group-frameworks`).
+ *
+ * `noColor` + `toKebab: true` still exposes the documented `--no-color` flag,
+ * but avoids both gunshi help-rendering defects.
  */
 export const outputArgs = {
   quiet: {
     type: 'boolean' as const,
     short: 'q',
-    description: 'Machine-readable output only (suppress decorative text)',
+    description: 'Machine-readable only',
     default: false,
   },
   csv: {
@@ -22,17 +31,19 @@ export const outputArgs = {
   },
   ci: {
     type: 'boolean' as const,
-    description: 'CI mode: --json --quiet with exit codes (implies --json --quiet)',
+    description: 'CI: --json --quiet',
     default: false,
   },
-  'no-color': {
+  noColor: {
     type: 'boolean' as const,
-    description: 'Disable ANSI colors in output (also respects NO_COLOR env var)',
+    toKebab: true,
+    description: 'Disable ANSI colors (NO_COLOR too)',
     default: false,
   },
-  'no-group-frameworks': {
+  noGroupFrameworks: {
     type: 'boolean' as const,
-    description: 'Disable framework grouping — output reverts to v1.2.1 layout',
+    toKebab: true,
+    description: 'Disable framework grouping',
     default: false,
   },
 } as const;
@@ -69,39 +80,41 @@ if (import.meta.vitest) {
       });
     });
 
-    it('ci description mentions CI mode', () => {
+    it('ci description mentions CI', () => {
       expect((outputArgs as Record<string, { description?: string }>).ci.description).toContain(
-        'CI mode',
+        'CI',
       );
     });
 
-    it('has no-color key with type boolean and default false', () => {
-      expect(outputArgs).toHaveProperty('no-color');
-      expect((outputArgs as Record<string, unknown>)['no-color']).toMatchObject({
+    it('has noColor key with type boolean, toKebab, and default false', () => {
+      expect(outputArgs).toHaveProperty('noColor');
+      expect((outputArgs as Record<string, unknown>).noColor).toMatchObject({
         type: 'boolean',
+        toKebab: true,
         default: false,
       });
     });
 
-    it('no-color description mentions NO_COLOR env var', () => {
-      const desc = (outputArgs as Record<string, { description?: string }>)['no-color'].description;
+    it('noColor description mentions NO_COLOR env var', () => {
+      const desc = (outputArgs as Record<string, { description?: string }>).noColor.description;
       expect(typeof desc).toBe('string');
       expect(desc).toContain('NO_COLOR');
     });
 
-    it('has no-group-frameworks key with type boolean and default false', () => {
-      expect(outputArgs).toHaveProperty('no-group-frameworks');
-      expect((outputArgs as Record<string, unknown>)['no-group-frameworks']).toMatchObject({
+    it('has noGroupFrameworks key with type boolean, toKebab, and default false', () => {
+      expect(outputArgs).toHaveProperty('noGroupFrameworks');
+      expect((outputArgs as Record<string, unknown>).noGroupFrameworks).toMatchObject({
         type: 'boolean',
+        toKebab: true,
         default: false,
       });
     });
 
-    it('no-group-frameworks description mentions v1.2.1 layout', () => {
-      const desc = (outputArgs as Record<string, { description?: string }>)['no-group-frameworks']
+    it('noGroupFrameworks description mentions framework grouping', () => {
+      const desc = (outputArgs as Record<string, { description?: string }>).noGroupFrameworks
         .description;
       expect(typeof desc).toBe('string');
-      expect(desc).toContain('v1.2.1');
+      expect(desc).toContain('framework grouping');
     });
   });
 }

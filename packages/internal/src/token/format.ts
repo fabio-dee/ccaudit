@@ -94,6 +94,64 @@ function formatTokensShort(tokens: number): string {
   return `~${tokens} tokens`;
 }
 
+/**
+ * Format a token count for the live picker footer (D4-10).
+ *
+ * Rules:
+ *  - n === 0            → ''                  (caller decides whether to render)
+ *  - 0 < n < 1000       → `{n} tokens`        (no approximation glyph)
+ *  - n >= 1000          → `≈ {round(n/1000)}k tokens`
+ *
+ * The leading `≈ ` falls back to `~ ` when `opts.ascii === true` (D4-11 /
+ * shouldUseAscii).
+ *
+ * Rounding is `Math.round(n / 1000)` for ALL n >= 1000 (not the 1.5k "toFixed(1)"
+ * branch used by formatTokenEstimate / fmtK for 1000..9999). This is intentional:
+ * the picker footer is a running tally that updates on every keystroke, and mixing
+ * "≈ 1.5k" with "≈ 2k" as the user toggles across the 1500-token boundary reads
+ * as a visual stutter. A single rounding rule produces a calmer counter.
+ *
+ * MH-04 (Phase 4 ↔ bust parity): for n >= 10_000 this helper's human-visible value
+ * matches `fmtK(n)` in shareable-block.ts exactly, so the picker total at the
+ * moment of Enter matches the post-bust "Freed: ~Xk" summary within ≤1k rounding
+ * tolerance. The 1000..9999 band can differ by up to ~0.5k (picker shows "≈ 2k",
+ * summary shows "~1.5k") — this is inside the tolerance quoted in MH-04.
+ */
+export function formatTokensApprox(n: number, opts: { ascii?: boolean } = {}): string {
+  if (n === 0) return '';
+  if (n < 1000) return `${n} tokens`;
+  const glyph = opts.ascii === true ? '~' : '≈';
+  return `${glyph} ${Math.round(n / 1000)}k tokens`;
+}
+
+/**
+ * Sum the token estimate of every catalog item whose canonical id is present in
+ * the selection Set (D4-12). Items not present in the catalog contribute 0
+ * (defensive — the picker's Set should never contain a stale id, but a future
+ * filter/sort refactor could leave stale entries briefly during a state
+ * transition).
+ *
+ * O(n) per call. At human interaction speeds (<10 render/sec) and realistic
+ * inventories (≤ 500 items), this is trivially in budget — matches D4-12.
+ *
+ * The caller is responsible for computing canonical ids and building the
+ * catalog map (id → tokens, with null tokenEstimate collapsed to 0). Keeping
+ * the helper map-based avoids a cross-directory import from token/ into
+ * scanner/.
+ */
+export function sumSelectionTokens(
+  ids: ReadonlySet<string>,
+  catalog: ReadonlyMap<string, number>,
+): number {
+  if (ids.size === 0) return 0;
+  let total = 0;
+  for (const id of ids) {
+    const t = catalog.get(id);
+    if (t !== undefined) total += t;
+  }
+  return total;
+}
+
 if (import.meta.vitest) {
   const { describe, it, expect } = import.meta.vitest;
 
@@ -222,6 +280,77 @@ if (import.meta.vitest) {
     it('contains the command string', () => {
       const result = formatSavingsLine(1000);
       expect(result).toContain('ccaudit --dangerously-bust-ghosts');
+    });
+  });
+
+  describe('formatTokensApprox', () => {
+    it('returns empty string for 0 tokens', () => {
+      expect(formatTokensApprox(0)).toBe('');
+    });
+
+    it('returns raw "1 tokens" for n=1 (no approximation glyph)', () => {
+      expect(formatTokensApprox(1)).toBe('1 tokens');
+    });
+
+    it('returns raw "999 tokens" for n=999', () => {
+      expect(formatTokensApprox(999)).toBe('999 tokens');
+    });
+
+    it('switches to "≈ 1k tokens" at the 1000 boundary', () => {
+      expect(formatTokensApprox(1000)).toBe('≈ 1k tokens');
+    });
+
+    it('rounds 1499 down to "≈ 1k tokens"', () => {
+      expect(formatTokensApprox(1499)).toBe('≈ 1k tokens');
+    });
+
+    it('rounds 1500 up to "≈ 2k tokens"', () => {
+      expect(formatTokensApprox(1500)).toBe('≈ 2k tokens');
+    });
+
+    it('formats 47123 as "≈ 47k tokens"', () => {
+      expect(formatTokensApprox(47123)).toBe('≈ 47k tokens');
+    });
+
+    it('ASCII mode swaps ≈ for ~ (D4-11 fallback)', () => {
+      expect(formatTokensApprox(1500, { ascii: true })).toBe('~ 2k tokens');
+    });
+
+    it('ASCII mode still returns empty for 0', () => {
+      expect(formatTokensApprox(0, { ascii: true })).toBe('');
+    });
+
+    it('ASCII mode keeps raw count for < 1000 (no glyph either way)', () => {
+      expect(formatTokensApprox(500, { ascii: true })).toBe('500 tokens');
+    });
+  });
+
+  describe('sumSelectionTokens', () => {
+    it('empty selection sums to 0', () => {
+      expect(sumSelectionTokens(new Set(), new Map())).toBe(0);
+    });
+
+    it("single-id selection returns that id's token value", () => {
+      const cat = new Map([['id-a', 100]]);
+      expect(sumSelectionTokens(new Set(['id-a']), cat)).toBe(100);
+    });
+
+    it('multi-id selection sums each id exactly once', () => {
+      const cat = new Map([
+        ['id-a', 100],
+        ['id-b', 250],
+        ['id-c', 75],
+      ]);
+      expect(sumSelectionTokens(new Set(['id-a', 'id-c']), cat)).toBe(175);
+    });
+
+    it('id present in set but missing from catalog contributes 0', () => {
+      const cat = new Map([['id-a', 100]]);
+      expect(sumSelectionTokens(new Set(['id-a', 'id-missing']), cat)).toBe(100);
+    });
+
+    it('empty catalog with non-empty selection returns 0', () => {
+      expect(sumSelectionTokens(new Set(['id-a', 'id-b']), new Map())).toBe(0);
     });
   });
 }

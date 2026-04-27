@@ -1,6 +1,6 @@
 {
   "name": "ccaudit-cli",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Audit Claude Code ghost inventory — agents, skills, MCP servers, and memory files",
   "keywords": [
     "audit",
@@ -43,6 +43,8 @@
   "devDependencies": {
     "@ccaudit/internal": "workspace:*",
     "@ccaudit/terminal": "workspace:*",
+    "@clack/prompts": "catalog:",
+    "@praha/byethrow": "catalog:",
     "@types/node": "catalog:",
     "@vitest/coverage-v8": "catalog:",
     "gunshi": "catalog:",

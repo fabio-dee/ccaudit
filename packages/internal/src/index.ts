@@ -74,12 +74,19 @@ export {
   toGhostItems,
   LIKELY_GHOST_MS,
   DEFINITE_GHOST_MS,
+  // Phase 6 pure helpers
+  presentPath,
+  computeConfigRefs,
+  compareConfigRef,
+  isProtected,
 } from './scanner/index.ts';
 export type {
   InventoryItem,
   ScanResult,
   ScannerOptions,
   InvocationSummary,
+  FrameworkProtection,
+  ScannedMcpServer,
 } from './scanner/index.ts';
 export type { ClaudeConfig } from './scanner/index.ts';
 
@@ -96,6 +103,8 @@ export {
   formatTokenEstimate,
   formatTotalOverhead,
   formatSavingsLine,
+  formatTokensApprox,
+  sumSelectionTokens,
   listMcpTools,
   measureMcpTokens,
   BYTES_PER_TOKEN,
@@ -145,7 +154,9 @@ export type {
 // Remediation module (Phase 7)
 export {
   buildChangePlan,
+  filterChangePlan,
   calculateDryRunSavings,
+  canonicalItemId,
   computeGhostHash,
   resolveCheckpointPath,
   writeCheckpoint,
@@ -169,9 +180,22 @@ export {
   resolveManifestPath,
   patchFrontmatter,
   atomicWriteJson,
+  atomicWriteText,
   defaultProcessDeps,
+  // Phase 3.2 Plan 04 — entry-time preflight in runInteractiveGhostFlow needs
+  // the detector + parent-chain walker to mirror bust.ts:264-286 BEFORE the
+  // picker opens. Already re-exported from remediation/index.ts; surfaced
+  // here so the CLI can import alongside runBust without subpath reach-in.
+  detectClaudeProcesses,
+  walkParentChain,
 } from './remediation/index.ts';
-export type { BustResult, BustDeps, BustCounts, CeremonyResult } from './remediation/index.ts';
+export type {
+  BustResult,
+  BustDeps,
+  BustCounts,
+  CeremonyResult,
+  SelectionFilter,
+} from './remediation/index.ts';
 
 // Remediation module (v1.3.0 Phase 4 — framework-as-unit bust protection)
 // Surfaced here so the CLI layer (apps/ccaudit/src/cli/commands/ghost.ts)
@@ -194,6 +218,11 @@ export {
   readManifest,
   removeFrontmatterKeys,
   setFrontmatterValue,
+  dedupManifestOps,
+  collectRestoreableItems,
+  matchByName,
+  isStaleArchiveOp,
+  filterRestoreableItems,
 } from './remediation/index.ts';
 export type {
   RestoreDeps,
@@ -218,6 +247,31 @@ export type {
   DirEntry,
   OrphanEntry,
 } from './remediation/index.ts';
+
+// Phase 9 SC6: purge-archive domain core + purge manifest writer.
+// CLI subcommand (Plan 09-04) consumes these via `@ccaudit/internal`.
+export {
+  classifyArchiveOps,
+  executePurge,
+  writePurgeManifest,
+  openPurgeManifestWriter,
+  closePurgeManifestWriter,
+  resolvePurgeManifestPath,
+  buildPurgeManifestHeader,
+  buildArchivePurgeOp,
+} from './remediation/index.ts';
+export type {
+  PurgePlan,
+  PurgeResult,
+  PurgeSummary,
+  PurgeFailure,
+  DropReason,
+  ExecutePurgeDeps,
+  ArchivePurgeOp,
+} from './remediation/index.ts';
+
+// Phase 9: CLI env helpers
+export { isNoInteractiveEnv } from './cli/index.ts';
 
 // Phase 6: append-only history log
 export { HistoryWriter, recordHistory } from './history/index.ts';

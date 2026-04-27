@@ -1,9 +1,10 @@
 import type { Framework, DetectableItem } from '../framework/types.ts';
 import type { TokenCostResult } from '../token/types.ts';
 import type { GhostItem } from '../types.ts';
-import type { InventoryItem } from './types.ts';
+import type { InventoryItem, FrameworkProtection } from './types.ts';
 import { detectFramework } from '../framework/detect.ts';
 import { KNOWN_FRAMEWORKS } from '../framework/known-frameworks.ts';
+import { groupByFramework } from '../framework/group.ts';
 
 /**
  * Annotates agent and skill items with their `framework` field using the
@@ -98,8 +99,11 @@ export function annotateFrameworks(
  * @returns Newly constructed GhostItem array. Pure function.
  */
 export function toGhostItems(results: TokenCostResult[]): GhostItem[] {
-  return results.map(
-    (r): GhostItem => ({
+  // First pass: materialize plain GhostItems (no protection yet). Framework
+  // grouping needs the tiered items, so we compute protection in a second
+  // pass below.
+  const base: GhostItem[] = results.map((r): GhostItem => {
+    const item: GhostItem = {
       name: r.item.name,
       path: r.item.path,
       scope: r.item.scope,
@@ -111,8 +115,50 @@ export function toGhostItems(results: TokenCostResult[]): GhostItem[] {
         r.lastUsed === null ? null : Math.floor((Date.now() - r.lastUsed.getTime()) / 86_400_000),
       framework: r.item.framework ?? null,
       tokenEstimate: r.tokenEstimate,
-    }),
-  );
+    };
+    // Phase 6 (D6-02): propagate configRefs from the InventoryItem to the
+    // GhostItem so downstream TUI layers can read it directly. Only set
+    // when present — keeps JSON output byte-identical for non-MCP items.
+    if (r.item.configRefs !== undefined) {
+      item.configRefs = r.item.configRefs;
+    }
+    return item;
+  });
+
+  // Second pass (Phase 6 / D6-01): compute framework-as-unit protection.
+  // A member of a `partially-used` framework group (has BOTH used and
+  // ghost members) carries `protection` — its ghost subset is what INV-S6
+  // would block under a partial bust. `fully-used` / `ghost-all` groups
+  // do NOT get the annotation because partial split is not possible (no
+  // ghost members) or already implied (no used members to protect).
+  //
+  // Rationale for applying to all members of a protected framework (not
+  // only ghosts): the picker needs to dim the whole framework row group
+  // when `--force-partial` is off; the toggle guard rejects any toggle on
+  // a protected item. Used members are effectively "locked in" too.
+  const grouped = groupByFramework(base);
+  const protectionByPath = new Map<string, FrameworkProtection>();
+  for (const fw of grouped.frameworks) {
+    if (fw.status !== 'partially-used') continue;
+    const ghostCount = fw.totals.likelyGhost + fw.totals.definiteGhost;
+    const protection: FrameworkProtection = {
+      framework: fw.id,
+      total: fw.totals.defined,
+      ghostCount,
+      // Canonical reason string — the picker row (plan 02) reads this
+      // verbatim. Wording mirrors D6-05.
+      reason: `Part of ${fw.displayName} (${fw.totals.used} used, ${ghostCount} ghost). --force-partial to override.`,
+    };
+    for (const m of fw.members) {
+      protectionByPath.set(m.path, protection);
+    }
+  }
+
+  if (protectionByPath.size === 0) return base;
+  return base.map((g) => {
+    const p = protectionByPath.get(g.path);
+    return p === undefined ? g : { ...g, protection: p };
+  });
 }
 
 // ─────────────────────────── In-source tests ───────────────────────────
@@ -362,6 +408,123 @@ if (import.meta.vitest) {
 
     it('returns empty array for empty input', () => {
       expect(toGhostItems([])).toEqual([]);
+    });
+
+    it('attaches protection to members of a partially-used framework (Phase 6, D6-01)', () => {
+      // gsd framework: 1 used + 1 ghost member → partially-used → protection.
+      const results: TokenCostResult[] = [
+        makeResult('gsd-planner', 'used', {
+          item: {
+            name: 'gsd-planner',
+            path: '/mock/agent/gsd-planner',
+            scope: 'global',
+            category: 'agent',
+            projectPath: null,
+            framework: 'gsd',
+          },
+        }),
+        makeResult('gsd-executor', 'definite-ghost', {
+          item: {
+            name: 'gsd-executor',
+            path: '/mock/agent/gsd-executor',
+            scope: 'global',
+            category: 'agent',
+            projectPath: null,
+            framework: 'gsd',
+          },
+        }),
+      ];
+      const ghostItems = toGhostItems(results);
+      expect(ghostItems).toHaveLength(2);
+      for (const g of ghostItems) {
+        expect(g.protection).toBeDefined();
+        expect(g.protection?.framework).toBe('gsd');
+        expect(g.protection?.total).toBe(2);
+        expect(g.protection?.ghostCount).toBe(1);
+        expect(g.protection?.reason).toBe(
+          'Part of GSD (Get Shit Done) (1 used, 1 ghost). --force-partial to override.',
+        );
+      }
+    });
+
+    it('does NOT attach protection when every member is ghost (ghost-all)', () => {
+      const results: TokenCostResult[] = [
+        makeResult('gsd-a', 'definite-ghost', {
+          item: {
+            name: 'gsd-a',
+            path: '/mock/agent/gsd-a',
+            scope: 'global',
+            category: 'agent',
+            projectPath: null,
+            framework: 'gsd',
+          },
+        }),
+        makeResult('gsd-b', 'definite-ghost', {
+          item: {
+            name: 'gsd-b',
+            path: '/mock/agent/gsd-b',
+            scope: 'global',
+            category: 'agent',
+            projectPath: null,
+            framework: 'gsd',
+          },
+        }),
+      ];
+      const ghostItems = toGhostItems(results);
+      for (const g of ghostItems) {
+        expect(g.protection).toBeUndefined();
+      }
+    });
+
+    it('does NOT attach protection when every member is used (fully-used)', () => {
+      const used = new Date();
+      const results: TokenCostResult[] = [
+        makeResult('gsd-a', 'used', {
+          item: {
+            name: 'gsd-a',
+            path: '/mock/agent/gsd-a',
+            scope: 'global',
+            category: 'agent',
+            projectPath: null,
+            framework: 'gsd',
+          },
+          lastUsed: used,
+        }),
+        makeResult('gsd-b', 'used', {
+          item: {
+            name: 'gsd-b',
+            path: '/mock/agent/gsd-b',
+            scope: 'global',
+            category: 'agent',
+            projectPath: null,
+            framework: 'gsd',
+          },
+          lastUsed: used,
+        }),
+      ];
+      const ghostItems = toGhostItems(results);
+      for (const g of ghostItems) {
+        expect(g.protection).toBeUndefined();
+      }
+    });
+
+    it('propagates configRefs from InventoryItem onto the GhostItem (Phase 6, D6-02)', () => {
+      const r: TokenCostResult = {
+        item: {
+          name: 'foo',
+          path: '/mock/mcp/foo',
+          scope: 'global',
+          category: 'mcp-server',
+          projectPath: null,
+          configRefs: ['.mcp.json', '~/.claude.json'],
+        },
+        tier: 'definite-ghost',
+        lastUsed: null,
+        invocationCount: 0,
+        tokenEstimate: { tokens: 100, confidence: 'estimated', source: 'default' },
+      };
+      const [g] = toGhostItems([r]);
+      expect(g?.configRefs).toEqual(['.mcp.json', '~/.claude.json']);
     });
 
     it('drops projectPath silently (GhostItem has no such field)', () => {

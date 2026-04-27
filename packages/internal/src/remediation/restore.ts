@@ -129,6 +129,20 @@ export type RestoreResult =
       manifestPath: string;
       manifestPaths: string[];
       duration_ms: number;
+      /**
+       * D8-16: null for full restore, { mode: 'subset', ids } for
+       * interactive / all-matching subset restore. Optional to keep
+       * existing call sites type-compatible; treat `undefined` as `null`.
+       */
+      selectionFilter?: { mode: 'subset'; ids: string[] } | null;
+      /**
+       * D8-14: per-item source-exists skips aggregated across all
+       * manifests touched by this restore. Empty when nothing skipped.
+       */
+      skipped: Array<{ reason: 'source_exists'; path: string; canonical_id: string }>;
+      // Phase 8.2 / SC6: additive. Count of archive ops suppressed
+      // (archive_missing + source_exists). Callers treat undefined as 0.
+      filteredStaleCount?: number;
     }
   | {
       status: 'partial-success';
@@ -137,11 +151,14 @@ export type RestoreResult =
       manifestPath: string;
       manifestPaths: string[];
       duration_ms: number;
+      selectionFilter?: { mode: 'subset'; ids: string[] } | null;
+      skipped: Array<{ reason: 'source_exists'; path: string; canonical_id: string }>;
+      filteredStaleCount?: number;
     }
   | { status: 'no-manifests' }
   | { status: 'name-not-found'; name: string }
   | { status: 'manifest-corrupt'; path: string }
-  | { status: 'list'; entries: ManifestListEntry[] }
+  | { status: 'list'; entries: ManifestListEntry[]; filteredStaleCount: number }
   | { status: 'running-process'; pids: number[]; selfInvocation: boolean; message: string }
   | { status: 'process-detection-failed'; error: string }
   | { status: 'config-parse-error'; path: string; error: string }
@@ -153,7 +170,12 @@ export type RestoreResult =
  * - single: restore ops matching a specific item name
  * - list:   read-only listing of all manifests (skips process gate)
  */
-export type RestoreMode = { kind: 'full' } | { kind: 'single'; name: string } | { kind: 'list' };
+export type RestoreMode =
+  | { kind: 'full' }
+  | { kind: 'single'; name: string }
+  | { kind: 'list' }
+  | { kind: 'interactive'; ids: string[] }
+  | { kind: 'all-matching'; pattern: string };
 
 // -- Helpers ------------------------------------------------------
 
@@ -187,6 +209,193 @@ function assertWithinHomedir(p: string): string | undefined {
  */
 export async function findManifestsForRestore(deps: RestoreDeps): Promise<ManifestEntry[]> {
   return deps.discoverManifests();
+}
+
+/**
+ * Dedup entry+op pairs across a newest-first list of ManifestEntry objects (D8-05).
+ *
+ * Input invariant: `entries` is already sorted newest-first (findManifestsForRestore
+ * returns entries in that order). Dedup preserves iteration order and keeps the
+ * first occurrence of each canonical_id — so older duplicates are filtered out.
+ *
+ * canonical_id derivation:
+ *   - archive op  → `${category}:${archive_path}`   (e.g. "skill:/home/u/.claude/skills/foo")
+ *   - disable op  → `mcp:${config_path}:${new_key}` (scoped per config file + renamed key)
+ *
+ * flag/refresh/skipped ops are excluded (not restorable as distinct items under
+ * this phase's interactive restore UX).
+ */
+export function dedupManifestOps(
+  entries: Array<{ entry: ManifestEntry; ops: readonly ManifestOp[] }>,
+): Array<{ entry: ManifestEntry; op: ArchiveOp | DisableOp; canonical_id: string }> {
+  // Phase 9 SC6: archive_purge follow-up ops suppress their originals from
+  // restore candidates. Pass 1 collects every `original_op_id` that was
+  // purged across all manifests; pass 2 runs the existing dedup, skipping
+  // archive ops whose op_id appears in the purged set.
+  const purgedOriginalOpIds = collectPurgedOpIds(entries);
+
+  // Keyed by canonical_id; first-seen wins (newest-first input ⇒ newer wins).
+  const seen = new Map<
+    string,
+    { entry: ManifestEntry; op: ArchiveOp | DisableOp; canonical_id: string }
+  >();
+  for (const { entry, ops } of entries) {
+    for (const op of ops) {
+      let canonical_id: string;
+      if (op.op_type === 'archive') {
+        if (purgedOriginalOpIds.has(op.op_id)) continue;
+        canonical_id = `${op.category}:${op.archive_path}`;
+      } else if (op.op_type === 'disable') {
+        canonical_id = `mcp:${op.config_path}:${op.new_key}`;
+      } else {
+        continue; // flag / refresh / skipped / archive_purge ops are not dedup targets
+      }
+      if (!seen.has(canonical_id)) {
+        seen.set(canonical_id, { entry, op, canonical_id });
+      }
+    }
+  }
+  return Array.from(seen.values());
+}
+
+/**
+ * Scan every op across all manifests for `archive_purge` follow-ups and
+ * return the set of `original_op_id` values they reference. A later
+ * archive_purge op suppresses its originating ArchiveOp from restore
+ * candidates (the archive has been drained).
+ */
+function collectPurgedOpIds(
+  entries: Array<{ entry: ManifestEntry; ops: readonly ManifestOp[] }>,
+): Set<string> {
+  const purged = new Set<string>();
+  for (const { ops } of entries) {
+    for (const op of ops) {
+      if (op.op_type === 'archive_purge') {
+        purged.add(op.original_op_id);
+      }
+    }
+  }
+  return purged;
+}
+
+/**
+ * Collect restoreable ops including memory ops (FlagOp / RefreshOp) for the
+ * interactive restore picker (D81-01 / Phase 8.1 C1a).
+ *
+ * Sibling to `dedupManifestOps` — that function drops flag/refresh/skipped ops
+ * because `executeRestore`'s `--name` / `--all-matching` paths need the strict
+ * `ArchiveOp | DisableOp` shape. The interactive picker, however, must surface
+ * memory items so users can undo frontmatter flags from the TUI.
+ *
+ * canonical_id derivation:
+ *   - archive op           → `${category}:${archive_path}`
+ *   - disable op           → `mcp:${config_path}:${new_key}`
+ *   - flag / refresh op    → `memory:${file_path}`
+ *
+ * Skipped ops are omitted — by construction they represent items the bust
+ * could not operate on, so they are not restoreable.
+ *
+ * Input invariant: `entries` is newest-first (as returned by
+ * `findManifestsForRestore`). First-seen wins → newer manifest wins.
+ */
+export type RestoreableOp = ArchiveOp | DisableOp | FlagOp | RefreshOp;
+
+export function collectRestoreableItems(
+  entries: Array<{ entry: ManifestEntry; ops: readonly ManifestOp[] }>,
+): Array<{ entry: ManifestEntry; op: RestoreableOp; canonical_id: string }> {
+  // Phase 9 SC6: archive_purge follow-ups suppress their originals here too.
+  const purgedOriginalOpIds = collectPurgedOpIds(entries);
+  const seen = new Map<string, { entry: ManifestEntry; op: RestoreableOp; canonical_id: string }>();
+  for (const { entry, ops } of entries) {
+    for (const op of ops) {
+      let canonical_id: string;
+      if (op.op_type === 'archive') {
+        if (purgedOriginalOpIds.has(op.op_id)) continue;
+        canonical_id = `${op.category}:${op.archive_path}`;
+      } else if (op.op_type === 'disable') {
+        canonical_id = `mcp:${op.config_path}:${op.new_key}`;
+      } else if (op.op_type === 'flag' || op.op_type === 'refresh') {
+        // INV-S3: distinct flag/refresh ops on the same file MUST remain individually
+        // restoreable. Including op_type and op_id (uuid) guarantees uniqueness.
+        canonical_id = `memory:${op.op_type}:${op.file_path}:${op.op_id}`;
+      } else {
+        continue; // skipped / archive_purge ops are not restoreable
+      }
+      if (!seen.has(canonical_id)) {
+        seen.set(canonical_id, { entry, op, canonical_id });
+      }
+    }
+  }
+  return Array.from(seen.values());
+}
+
+// Phase 8.2: Stale-archive predicate for restore listing hygiene. An
+// archive op is stale iff archive_path is gone AND source_path is back
+// — the already-restored / test-residue shape. Both-paths-missing is
+// kept listed (D-02) so the executor can surface the fail-loud signal.
+export async function isStaleArchiveOp(
+  op: ArchiveOp,
+  pathExists: (p: string) => Promise<boolean>,
+): Promise<boolean> {
+  const [archiveStillThere, sourceBack] = await Promise.all([
+    pathExists(op.archive_path),
+    pathExists(op.source_path),
+  ]);
+  return !archiveStillThere && sourceBack;
+}
+
+// Phase 8.2: Filter a collected restoreable-items list, dropping only
+// stale ARCHIVE ops. Flag / disable / refresh pass through (D-03 / SC2).
+export async function filterRestoreableItems(
+  items: ReadonlyArray<{ entry: ManifestEntry; op: RestoreableOp; canonical_id: string }>,
+  pathExists: (p: string) => Promise<boolean>,
+): Promise<{
+  kept: Array<{ entry: ManifestEntry; op: RestoreableOp; canonical_id: string }>;
+  filteredStaleCount: number;
+}> {
+  const kept: Array<{ entry: ManifestEntry; op: RestoreableOp; canonical_id: string }> = [];
+  let filteredStaleCount = 0;
+  for (const item of items) {
+    if (item.op.op_type === 'archive' && (await isStaleArchiveOp(item.op, pathExists))) {
+      filteredStaleCount += 1;
+      continue;
+    }
+    kept.push(item);
+  }
+  return { kept, filteredStaleCount };
+}
+
+/**
+ * Case-insensitive substring matcher over a pre-deduped op list (D8-08).
+ *
+ * Matching rules:
+ *   - archive op  → basename of archive_path (without extension)
+ *   - disable op  → extractServerName(original_key)
+ *   - pattern     → lowercase, substring `includes` over the display name
+ *   - empty / whitespace-only pattern → [] (guards against accidental match-all)
+ *
+ * Output is sorted lex ASC by canonical_id for deterministic tiebreaks. No
+ * ranking, no scoring — pure inclusion/exclusion.
+ */
+export function matchByName(
+  items: Array<{ canonical_id: string; op: ArchiveOp | DisableOp }>,
+  pattern: string,
+): Array<{ canonical_id: string; op: ArchiveOp | DisableOp }> {
+  if (!pattern || pattern.trim().length === 0) return [];
+  const needle = pattern.toLowerCase();
+  const matches = items.filter((item) => {
+    let displayName: string;
+    if (item.op.op_type === 'archive') {
+      displayName = path.basename(item.op.archive_path, path.extname(item.op.archive_path));
+    } else {
+      displayName = extractServerName(item.op.original_key);
+    }
+    return displayName.toLowerCase().includes(needle);
+  });
+  matches.sort((a, b) =>
+    a.canonical_id < b.canonical_id ? -1 : a.canonical_id > b.canonical_id ? 1 : 0,
+  );
+  return matches;
 }
 
 /**
@@ -264,18 +473,76 @@ function buildProcessGateMessage(processes: Array<{ pid: number; command?: strin
 async function executeListMode(deps: RestoreDeps): Promise<RestoreResult> {
   const entries = await deps.discoverManifests();
   const listEntries: ManifestListEntry[] = [];
+  let filteredStaleCount = 0;
+
+  // Two-pass list mode: read purge manifests first to collect archive_purge
+  // follow-ups, then suppress the referenced archive ops from bust manifests.
+  // This keeps `restore --list` consistent with full/subset restore after
+  // `purge-archive` has drained archived files.
+  const manifestCache = new Map<
+    string,
+    { manifest: Awaited<ReturnType<RestoreDeps['readManifest']>>; isPurge: boolean }
+  >();
+  const purgedOriginalOpIds = new Set<string>();
+
   for (const entry of entries) {
-    const manifest = await deps.readManifest(entry.path);
+    let manifest: Awaited<ReturnType<RestoreDeps['readManifest']>>;
+    try {
+      manifest = await deps.readManifest(entry.path);
+    } catch (err) {
+      deps.onWarning?.(
+        `⚠️  Skipping unreadable manifest ${path.basename(entry.path)}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      continue;
+    }
+    const basename = path.basename(entry.path);
+    const isPurge =
+      basename.startsWith('purge-') ||
+      (manifest.ops.length > 0 && manifest.ops.every((op) => op.op_type === 'archive_purge'));
+    manifestCache.set(entry.path, { manifest, isPurge });
+    if (isPurge) {
+      for (const op of manifest.ops) {
+        if (op.op_type === 'archive_purge') purgedOriginalOpIds.add(op.original_op_id);
+      }
+    }
+  }
+
+  for (const entry of entries) {
+    const cached = manifestCache.get(entry.path);
+    if (cached === undefined) continue;
+
+    // M9: skip purge manifests — their archive_purge records are not restoreable
+    // items and should not appear in --list output as additional "busts".
+    if (cached.isPurge) continue;
+
+    const { manifest } = cached;
     if (manifest.header === null) continue; // corrupt: silently skip in list mode
+
+    // Phase 8.2: drop stale archive ops (archive_missing + source_exists)
+    // from per-entry op lists so `--list` mirrors the listing hygiene
+    // applied in the interactive picker and full-restore paths.
+    const kept: ManifestOp[] = [];
+    for (const op of manifest.ops) {
+      if (op.op_type === 'archive') {
+        if (purgedOriginalOpIds.has(op.op_id)) continue;
+        if (await isStaleArchiveOp(op, deps.pathExists)) {
+          filteredStaleCount += 1;
+          continue;
+        }
+      }
+      kept.push(op);
+    }
     listEntries.push({
       path: entry.path,
       mtime: entry.mtime,
       isPartial: manifest.footer === null,
-      opCount: manifest.ops.length,
-      ops: manifest.ops,
+      opCount: kept.length,
+      ops: kept,
     });
   }
-  return { status: 'list', entries: listEntries };
+  return { status: 'list', entries: listEntries, filteredStaleCount };
 }
 
 // -- Internal result type for MCP re-enable ----------------------
@@ -569,7 +836,17 @@ async function executeOpsOnManifest(
   deps: RestoreDeps,
   start: number,
   allEntryPaths?: string[],
+  /**
+   * Optional map from ArchiveOp.archive_path → canonical_id so that the
+   * subset-restore path can populate skipped[] entries with stable ids.
+   * When provided, archive ops whose source_path already exists are
+   * recorded in the returned result's skipped[] array.
+   */
+  canonicalIdByArchivePath?: Map<string, string>,
+  // Phase 8.2: stale ops suppressed upstream (threaded to CLI envelope)
+  filteredStaleCount = 0,
 ): Promise<RestoreResult> {
+  const skipped: Array<{ reason: 'source_exists'; path: string; canonical_id: string }> = [];
   const counts: RestoreCounts = {
     unarchived: { moved: 0, alreadyAtSource: 0, failed: 0 },
     reenabled: { completed: 0, failed: 0 },
@@ -615,8 +892,13 @@ async function executeOpsOnManifest(
   for (const op of skillOps) {
     const outcome = await restoreArchiveOp(op, deps);
     if (outcome === 'moved') counts.unarchived.moved++;
-    else if (outcome === 'already-at-source') counts.unarchived.alreadyAtSource++;
-    else counts.unarchived.failed++;
+    else if (outcome === 'already-at-source') {
+      counts.unarchived.alreadyAtSource++;
+      const cid = canonicalIdByArchivePath?.get(op.archive_path);
+      if (cid !== undefined) {
+        skipped.push({ reason: 'source_exists', path: op.source_path, canonical_id: cid });
+      }
+    } else counts.unarchived.failed++;
   }
 
   // Step 5: Unarchive agents
@@ -624,15 +906,43 @@ async function executeOpsOnManifest(
   for (const op of agentOps) {
     const outcome = await restoreArchiveOp(op, deps);
     if (outcome === 'moved') counts.unarchived.moved++;
-    else if (outcome === 'already-at-source') counts.unarchived.alreadyAtSource++;
-    else counts.unarchived.failed++;
+    else if (outcome === 'already-at-source') {
+      counts.unarchived.alreadyAtSource++;
+      const cid = canonicalIdByArchivePath?.get(op.archive_path);
+      if (cid !== undefined) {
+        skipped.push({ reason: 'source_exists', path: op.source_path, canonical_id: cid });
+      }
+    } else counts.unarchived.failed++;
+  }
+
+  // Step 5.1: Unarchive commands (after agents, before totals)
+  const commandOps = archiveOps.filter((o) => o.category === 'command');
+  for (const op of commandOps) {
+    const outcome = await restoreArchiveOp(op, deps);
+    if (outcome === 'moved') counts.unarchived.moved++;
+    else if (outcome === 'already-at-source') {
+      counts.unarchived.alreadyAtSource++;
+      const cid = canonicalIdByArchivePath?.get(op.archive_path);
+      if (cid !== undefined) {
+        skipped.push({ reason: 'source_exists', path: op.source_path, canonical_id: cid });
+      }
+    } else counts.unarchived.failed++;
   }
 
   const totalFailed = counts.unarchived.failed + counts.reenabled.failed + counts.stripped.failed;
   const duration_ms = Date.now() - start;
   const manifestPaths = allEntryPaths ?? [entry.path];
   if (totalFailed === 0) {
-    return { status: 'success', counts, manifestPath: entry.path, manifestPaths, duration_ms };
+    return {
+      status: 'success',
+      counts,
+      manifestPath: entry.path,
+      manifestPaths,
+      duration_ms,
+      selectionFilter: null,
+      skipped,
+      filteredStaleCount,
+    };
   }
   return {
     status: 'partial-success',
@@ -641,6 +951,170 @@ async function executeOpsOnManifest(
     manifestPath: entry.path,
     manifestPaths,
     duration_ms,
+    selectionFilter: null,
+    skipped,
+    filteredStaleCount,
+  };
+}
+
+/**
+ * Group-selected ops by manifest, dispatch through executeOpsOnManifest
+ * once per manifest, aggregate counts + skipped[] + manifestPaths.
+ *
+ * Shared between `{ kind: 'interactive' }` and `{ kind: 'all-matching' }`
+ * (both are subset restores driven by a list of canonical_ids).
+ *
+ * Returns `{ status: 'no-manifests' }` when there is no bust history and
+ * `{ status: 'name-not-found', name: '<ids[0]>' }` when the selected ids
+ * match nothing in the restoreable op pool. Otherwise returns success /
+ * partial-success with `selectionFilter: { mode: 'subset', ids }` and
+ * the aggregated `skipped[]` array. No manifest is synthesized on disk.
+ */
+async function executeInteractiveOps(
+  ids: string[],
+  deps: RestoreDeps,
+  start: number,
+): Promise<RestoreResult> {
+  const allEntries = await findManifestsForRestore(deps);
+  if (allEntries.length === 0) return { status: 'no-manifests' };
+
+  // Zip (entry, ops) for each valid manifest; skip unreadable or corrupt ones
+  // with a warning — mirrors the full-restore / --list tolerant pattern so a
+  // single bad manifest never hard-fails a subset restore.
+  const zipped: Array<{ entry: ManifestEntry; ops: readonly ManifestOp[] }> = [];
+  for (const e of allEntries) {
+    let m: Awaited<ReturnType<RestoreDeps['readManifest']>>;
+    try {
+      m = await deps.readManifest(e.path);
+    } catch (err) {
+      deps.onWarning?.(
+        `⚠️  Skipping unreadable manifest ${path.basename(e.path)}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      continue;
+    }
+    if (m.header === null) {
+      deps.onWarning?.(`⚠️  Skipping corrupt manifest ${path.basename(e.path)} (no header record)`);
+      continue;
+    }
+    zipped.push({ entry: e, ops: m.ops });
+  }
+
+  // Phase 8.2: strip stale archive ops before resolving ids.
+  const { kept: collected, filteredStaleCount: interactiveFilteredStale } =
+    await filterRestoreableItems(collectRestoreableItems(zipped), deps.pathExists);
+  const availableById = new Map(collected.map((item) => [item.canonical_id, item]));
+  const resolvedSelectedIds: string[] = [];
+  const resolvedIdSet = new Set<string>();
+  for (const id of ids) {
+    if (resolvedIdSet.has(id)) continue;
+    if (!availableById.has(id)) continue;
+    resolvedIdSet.add(id);
+    resolvedSelectedIds.push(id);
+  }
+  const selected = collected.filter((item) => resolvedIdSet.has(item.canonical_id));
+
+  if (selected.length === 0) {
+    // No id from the selection resolved to an op — mirror name-not-found
+    // semantics (exit code 0, informational).
+    return { status: 'name-not-found', name: ids[0] ?? '' };
+  }
+
+  // Group by originating manifest (reference equality on ManifestEntry).
+  const byEntry = new Map<
+    ManifestEntry,
+    { entry: ManifestEntry; ops: ManifestOp[]; canonIds: Map<string, string> }
+  >();
+  for (const { entry, op, canonical_id } of selected) {
+    let bucket = byEntry.get(entry);
+    if (bucket === undefined) {
+      bucket = { entry, ops: [], canonIds: new Map() };
+      byEntry.set(entry, bucket);
+    }
+    bucket.ops.push(op);
+    if (op.op_type === 'archive') {
+      bucket.canonIds.set(op.archive_path, canonical_id);
+    }
+  }
+
+  // Aggregate across all per-manifest dispatches.
+  const agg: RestoreCounts = {
+    unarchived: { moved: 0, alreadyAtSource: 0, failed: 0 },
+    reenabled: { completed: 0, failed: 0 },
+    stripped: { completed: 0, failed: 0 },
+  };
+  const aggSkipped: Array<{
+    reason: 'source_exists';
+    path: string;
+    canonical_id: string;
+  }> = [];
+  const aggManifestPaths: string[] = [];
+  let totalFailed = 0;
+  let firstManifestPath: string | null = null;
+
+  for (const bucket of byEntry.values()) {
+    const perResult = await executeOpsOnManifest(
+      bucket.entry,
+      bucket.ops,
+      deps,
+      start,
+      [bucket.entry.path],
+      bucket.canonIds,
+    );
+    // Propagate hard-failure variants from MCP re-enable path unchanged.
+    if (
+      perResult.status === 'config-parse-error' ||
+      perResult.status === 'config-write-error' ||
+      perResult.status === 'manifest-corrupt'
+    ) {
+      return perResult;
+    }
+    if (perResult.status !== 'success' && perResult.status !== 'partial-success') {
+      // Unexpected short-circuit variant — shouldn't happen for op execution,
+      // but surface it rather than silently swallowing.
+      return perResult;
+    }
+    agg.unarchived.moved += perResult.counts.unarchived.moved;
+    agg.unarchived.alreadyAtSource += perResult.counts.unarchived.alreadyAtSource;
+    agg.unarchived.failed += perResult.counts.unarchived.failed;
+    agg.reenabled.completed += perResult.counts.reenabled.completed;
+    agg.reenabled.failed += perResult.counts.reenabled.failed;
+    agg.stripped.completed += perResult.counts.stripped.completed;
+    agg.stripped.failed += perResult.counts.stripped.failed;
+    aggSkipped.push(...perResult.skipped);
+    aggManifestPaths.push(...perResult.manifestPaths);
+    if (perResult.status === 'partial-success') {
+      totalFailed += perResult.failed;
+    }
+    if (firstManifestPath === null) firstManifestPath = perResult.manifestPath;
+  }
+
+  const duration_ms = Date.now() - start;
+  const manifestPath = firstManifestPath ?? '';
+  const selectionFilter = { mode: 'subset' as const, ids: resolvedSelectedIds };
+  if (totalFailed === 0) {
+    return {
+      status: 'success',
+      counts: agg,
+      manifestPath,
+      manifestPaths: aggManifestPaths,
+      duration_ms,
+      selectionFilter,
+      skipped: aggSkipped,
+      filteredStaleCount: interactiveFilteredStale,
+    };
+  }
+  return {
+    status: 'partial-success',
+    counts: agg,
+    failed: totalFailed,
+    manifestPath,
+    manifestPaths: aggManifestPaths,
+    duration_ms,
+    selectionFilter,
+    skipped: aggSkipped,
+    filteredStaleCount: interactiveFilteredStale,
   };
 }
 
@@ -709,9 +1183,11 @@ export async function executeRestore(mode: RestoreMode, deps: RestoreDeps): Prom
     const allEntries = await findManifestsForRestore(deps);
     if (allEntries.length === 0) return { status: 'no-manifests' };
 
-    // Validate the newest manifest's header (D-07). If the newest is corrupt,
-    // refuse entirely rather than silently falling back to an older one.
-    const newestEntry = allEntries[0]!;
+    // Validate the newest NON-PURGE manifest's header (D-07). `purge-*`
+    // manifests are follow-up audit records used only for archive_purge
+    // suppression; they must not become the full-restore integrity anchor.
+    const newestEntry = allEntries.find((entry) => !path.basename(entry.path).startsWith('purge-'));
+    if (newestEntry === undefined) return { status: 'no-manifests' };
     const newestManifest = await deps.readManifest(newestEntry.path);
     if (newestManifest.header === null) {
       return { status: 'manifest-corrupt', path: newestEntry.path };
@@ -723,14 +1199,61 @@ export async function executeRestore(mode: RestoreMode, deps: RestoreDeps): Prom
     }
 
     // Collect ops from ALL manifests newest-first, deduplicating by archive_path.
-    // Ops from older manifests are silently skipped if the same archive_path was
-    // already seen in a newer manifest.
+    // Phase 8.2: also suppress stale archive ops (archive_missing +
+    // source_exists) — surfaced via `filtered_stale_count` (SC6).
+    // RE-M9: also suppress archive ops whose op_id was referenced by an
+    // archive_purge op in a purge manifest — mirrors dedupManifestOps() and
+    // collectRestoreableItems(). Two-pass approach:
+    //   Pass 1 — read all manifests, build a cached map + purgedOriginalOpIds set.
+    //   Pass 2 — iterate the cache, skip purge manifests and purged archive ops.
+    const manifestCache = new Map<
+      string,
+      { manifest: Awaited<ReturnType<RestoreDeps['readManifest']>>; isPurge: boolean }
+    >();
+    for (const entry of allEntries) {
+      const isPurge = path.basename(entry.path).startsWith('purge-');
+      let manifest: Awaited<ReturnType<RestoreDeps['readManifest']>>;
+      if (entry.path === newestEntry.path) {
+        manifest = newestManifest;
+      } else {
+        try {
+          manifest = await deps.readManifest(entry.path);
+        } catch (err) {
+          deps.onWarning?.(
+            `⚠️  Skipping unreadable manifest ${path.basename(entry.path)}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+          continue;
+        }
+      }
+      manifestCache.set(entry.path, { manifest, isPurge });
+    }
+
+    // Build purged-op-id set from archive_purge ops across all manifests.
+    const purgedOriginalOpIds = new Set<string>();
+    for (const { manifest, isPurge } of manifestCache.values()) {
+      if (!isPurge) continue; // archive_purge ops only live in purge manifests
+      for (const op of manifest.ops) {
+        if (op.op_type === 'archive_purge') {
+          purgedOriginalOpIds.add(op.original_op_id);
+        }
+      }
+    }
+
     const seenArchivePaths = new Set<string>();
     const collectedOps: ManifestOp[] = [];
+    let filteredStaleCount = 0;
 
     for (const entry of allEntries) {
-      // Re-use the already-read newest manifest; read others fresh.
-      const manifest = entry === newestEntry ? newestManifest : await deps.readManifest(entry.path);
+      const cached = manifestCache.get(entry.path);
+      if (cached === undefined) continue;
+
+      // RE-M9: skip purge manifests entirely — their archive_purge records are
+      // not restoreable ops; we already harvested their original_op_ids above.
+      if (cached.isPurge) continue;
+
+      const { manifest } = cached;
 
       // Skip corrupt manifests in the middle of the list — only the newest
       // triggers a hard failure (validated above).
@@ -743,11 +1266,14 @@ export async function executeRestore(mode: RestoreMode, deps: RestoreDeps): Prom
 
       for (const op of manifest.ops) {
         if (op.op_type === 'archive') {
-          if (seenArchivePaths.has(op.archive_path)) {
-            // Duplicate archive_path across manifests — newer already recorded, skip.
+          // RE-M9: skip archive ops whose archive has since been purged.
+          if (purgedOriginalOpIds.has(op.op_id)) continue;
+          if (seenArchivePaths.has(op.archive_path)) continue;
+          seenArchivePaths.add(op.archive_path);
+          if (await isStaleArchiveOp(op, deps.pathExists)) {
+            filteredStaleCount += 1;
             continue;
           }
-          seenArchivePaths.add(op.archive_path);
           collectedOps.push(op);
         } else {
           // Non-archive ops (disable, flag, refresh): include from all manifests.
@@ -768,6 +1294,50 @@ export async function executeRestore(mode: RestoreMode, deps: RestoreDeps): Prom
       deps,
       start,
       allEntries.map((e) => e.path),
+      undefined,
+      filteredStaleCount,
+    );
+  }
+
+  // Subset restore via interactive picker output (D8-13).
+  if (mode.kind === 'interactive') {
+    return executeInteractiveOps(mode.ids, deps, start);
+  }
+
+  // Subset restore via fuzzy pattern: match every candidate, restore each.
+  // Ambiguity is NOT a special case here (all-matching restores every match
+  // by design; see D8-09 for --name ambiguity which is enforced CLI-side).
+  if (mode.kind === 'all-matching') {
+    const allEntries = await findManifestsForRestore(deps);
+    if (allEntries.length === 0) return { status: 'no-manifests' };
+    const zipped: Array<{ entry: ManifestEntry; ops: readonly ManifestOp[] }> = [];
+    for (const e of allEntries) {
+      let m: Awaited<ReturnType<RestoreDeps['readManifest']>>;
+      try {
+        m = await deps.readManifest(e.path);
+      } catch (err) {
+        deps.onWarning?.(
+          `⚠️  Skipping unreadable manifest ${path.basename(e.path)}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        continue;
+      }
+      if (m.header === null) {
+        deps.onWarning?.(
+          `⚠️  Skipping corrupt manifest ${path.basename(e.path)} (no header record)`,
+        );
+        continue;
+      }
+      zipped.push({ entry: e, ops: m.ops });
+    }
+    const deduped = dedupManifestOps(zipped);
+    const matched = matchByName(deduped, mode.pattern);
+    if (matched.length === 0) return { status: 'name-not-found', name: mode.pattern };
+    return executeInteractiveOps(
+      matched.map((m) => m.canonical_id),
+      deps,
+      start,
     );
   }
 
@@ -1110,9 +1680,9 @@ if (import.meta.vitest) {
       expect(result.status).toBe('success');
     });
 
-    it('Test 7c: corrupt newest manifest hard-fails even when older manifests are valid (regression)', async () => {
-      // Counterpart regression: a corrupt *newest* manifest must produce
-      // manifest-corrupt, not silently fall back to older ones.
+    it('Test 7c: corrupt newest non-purge manifest hard-fails even when older manifests are valid (regression)', async () => {
+      // Counterpart regression: a corrupt *newest non-purge* manifest must
+      // produce manifest-corrupt, not silently fall back to older ones.
       const newerEntry: ManifestEntry = {
         path: '/fake/.claude/ccaudit/manifests/bust-2026-04-10T10-00-00Z.jsonl',
         mtime: new Date('2026-04-10T10:00:00Z'),
@@ -1141,10 +1711,47 @@ if (import.meta.vitest) {
 
       const result = await executeRestore({ kind: 'full' }, deps);
 
-      // Hard failure on corrupt newest -- must not silently continue.
+      // Hard failure on corrupt newest non-purge -- must not silently continue.
       expect(result.status).toBe('manifest-corrupt');
       if (result.status === 'manifest-corrupt') {
         expect(result.path).toBe(newerEntry.path);
+      }
+    });
+
+    it('Test 7d: newest purge manifest is not used as the full-restore integrity anchor', async () => {
+      const purgeEntry: ManifestEntry = {
+        path: '/fake/.claude/ccaudit/manifests/purge-2026-04-11T10-00-00Z.jsonl',
+        mtime: new Date('2026-04-11T10:00:00Z'),
+      };
+      const bustEntry: ManifestEntry = {
+        path: '/fake/.claude/ccaudit/manifests/bust-2026-04-10T10-00-00Z.jsonl',
+        mtime: new Date('2026-04-10T10:00:00Z'),
+      };
+      const warnings: string[] = [];
+      const deps = makeFakeDeps({
+        discoverManifests: async () => [purgeEntry, bustEntry],
+        readManifest: async (p) => {
+          if (p === purgeEntry.path) {
+            return { header: null, ops: [], footer: null, truncated: true };
+          }
+          return { header: fakeHeader, ops: [], footer: fakeFooter, truncated: false };
+        },
+        processDetector: {
+          runCommand: async () => '',
+          getParentPid: async () => null,
+          platform: 'linux',
+        },
+        onWarning: (msg) => {
+          warnings.push(msg);
+        },
+      });
+
+      const result = await executeRestore({ kind: 'full' }, deps);
+
+      expect(result.status).toBe('success');
+      expect(warnings).toEqual([]);
+      if (result.status === 'success') {
+        expect(result.manifestPath).toBe(bustEntry.path);
       }
     });
   });
@@ -2418,11 +3025,691 @@ if (import.meta.vitest) {
       const result = await executeRestore({ kind: 'full' }, deps);
       expect(result.status).toBe('success');
       if (result.status === 'success') {
-        // The already-at-source op must NOT inflate the moved counter
+        // The already-at-source op must NOT inflate the moved counter.
+        // Phase 8.2: such ops (archive_missing + source_exists) are now
+        // suppressed at collection time via isStaleArchiveOp — they no
+        // longer reach the executor so alreadyAtSource stays 0 and the
+        // suppression is reported via filteredStaleCount instead.
         expect(result.counts.unarchived.moved).toBe(0);
-        expect(result.counts.unarchived.alreadyAtSource).toBe(1);
+        expect(result.counts.unarchived.alreadyAtSource).toBe(0);
         expect(result.counts.unarchived.failed).toBe(0);
+        expect(result.filteredStaleCount).toBe(1);
       }
+    });
+  });
+
+  // -- dedupManifestOps (Phase 08-01) -----------------------------
+
+  describe('dedupManifestOps', () => {
+    const entryNew: ManifestEntry = {
+      path: '/m/bust-2026-04-10T00-00-00Z.jsonl',
+      mtime: new Date('2026-04-10T00:00:00Z'),
+    };
+    const entryOld: ManifestEntry = {
+      path: '/m/bust-2026-04-01T00-00-00Z.jsonl',
+      mtime: new Date('2026-04-01T00:00:00Z'),
+    };
+
+    const archiveOp = (
+      archive_path: string,
+      category: ArchiveOp['category'] = 'skill',
+    ): ArchiveOp => ({
+      op_id: `op-${archive_path}`,
+      op_type: 'archive',
+      timestamp: '2026-04-10T00:00:00Z',
+      status: 'completed',
+      category,
+      scope: 'global',
+      source_path: archive_path.replace('/archived/', '/'),
+      archive_path,
+      content_sha256: 'sha256:abc',
+    });
+
+    const disableOp = (new_key: string, config_path = '/home/u/.claude.json'): DisableOp => ({
+      op_id: `op-${new_key}`,
+      op_type: 'disable',
+      timestamp: '2026-04-10T00:00:00Z',
+      status: 'completed',
+      config_path,
+      scope: 'global',
+      project_path: null,
+      original_key: `mcpServers.${new_key.replace('ccaudit-disabled:', '')}`,
+      new_key,
+      original_value: { command: 'x' },
+    });
+
+    const flagOp: FlagOp = {
+      op_id: 'op-flag',
+      op_type: 'flag',
+      timestamp: '2026-04-10T00:00:00Z',
+      status: 'completed',
+      file_path: '/home/u/CLAUDE.md',
+      scope: 'global',
+      had_frontmatter: false,
+      had_ccaudit_stale: false,
+      patched_keys: ['ccaudit-stale'],
+      original_content_sha256: 'sha256:x',
+    };
+
+    it('empty input returns empty output', () => {
+      expect(dedupManifestOps([])).toEqual([]);
+    });
+
+    it('single manifest with no duplicates passes through', () => {
+      const ops = [archiveOp('/a/skills/foo'), archiveOp('/a/skills/bar')];
+      const out = dedupManifestOps([{ entry: entryNew, ops }]);
+      expect(out.map((o) => o.canonical_id)).toEqual([
+        'skill:/a/skills/foo',
+        'skill:/a/skills/bar',
+      ]);
+      expect(out.every((o) => o.entry === entryNew)).toBe(true);
+    });
+
+    it('duplicate archive_path across manifests: newer wins (first-seen)', () => {
+      const op1 = archiveOp('/a/skills/foo');
+      const op2 = archiveOp('/a/skills/foo');
+      const out = dedupManifestOps([
+        { entry: entryNew, ops: [op1] },
+        { entry: entryOld, ops: [op2] },
+      ]);
+      expect(out).toHaveLength(1);
+      expect(out[0].entry).toBe(entryNew);
+      expect(out[0].op).toBe(op1);
+    });
+
+    it('flag and refresh ops are filtered out', () => {
+      const out = dedupManifestOps([
+        { entry: entryNew, ops: [flagOp, archiveOp('/a/skills/foo')] },
+      ]);
+      expect(out).toHaveLength(1);
+      expect(out[0].canonical_id).toBe('skill:/a/skills/foo');
+    });
+
+    it('mixed archive + disable dedup by distinct canonical_id', () => {
+      const a = archiveOp('/a/skills/foo');
+      const d = disableOp('ccaudit-disabled:pencil');
+      const out = dedupManifestOps([{ entry: entryNew, ops: [a, d] }]);
+      expect(out.map((o) => o.canonical_id).sort()).toEqual(
+        ['mcp:/home/u/.claude.json:ccaudit-disabled:pencil', 'skill:/a/skills/foo'].sort(),
+      );
+    });
+
+    it('Phase 9 SC6: archive_purge follow-up suppresses its original ArchiveOp', () => {
+      const orig = archiveOp('/a/skills/foo');
+      const purgeOp: ManifestOp = {
+        op_id: 'purge-1',
+        op_type: 'archive_purge',
+        timestamp: '2026-04-22T12:00:00Z',
+        status: 'completed',
+        original_op_id: orig.op_id,
+        purged: true,
+        reason: 'source_occupied',
+      };
+      // Purge manifest is newer; bust manifest is older. Both present to dedup.
+      const entryPurge: ManifestEntry = {
+        path: '/m/purge-2026-04-22T12-00-00Z.jsonl',
+        mtime: new Date('2026-04-22T12:00:00Z'),
+      };
+      const out = dedupManifestOps([
+        { entry: entryPurge, ops: [purgeOp] },
+        { entry: entryNew, ops: [orig] },
+      ]);
+      expect(out).toHaveLength(0);
+    });
+
+    it('archive_purge only suppresses the referenced op, not siblings', () => {
+      const a = archiveOp('/a/skills/foo');
+      const b = archiveOp('/a/skills/bar');
+      const purgeOp: ManifestOp = {
+        op_id: 'purge-1',
+        op_type: 'archive_purge',
+        timestamp: '2026-04-22T12:00:00Z',
+        status: 'completed',
+        original_op_id: a.op_id,
+        purged: true,
+        reason: 'reclaimed',
+      };
+      const entryPurge: ManifestEntry = {
+        path: '/m/purge-2026-04-22T12-00-00Z.jsonl',
+        mtime: new Date('2026-04-22T12:00:00Z'),
+      };
+      const out = dedupManifestOps([
+        { entry: entryPurge, ops: [purgeOp] },
+        { entry: entryNew, ops: [a, b] },
+      ]);
+      expect(out).toHaveLength(1);
+      expect(out[0]!.canonical_id).toBe('skill:/a/skills/bar');
+    });
+  });
+
+  // -- collectRestoreableItems (Phase 8.1 — D81-01 C1a) -----------
+
+  describe('collectRestoreableItems', () => {
+    const entryNew: ManifestEntry = {
+      path: '/m/bust-2026-04-10T00-00-00Z.jsonl',
+      mtime: new Date('2026-04-10T00:00:00Z'),
+    };
+    const entryOld: ManifestEntry = {
+      path: '/m/bust-2026-04-01T00-00-00Z.jsonl',
+      mtime: new Date('2026-04-01T00:00:00Z'),
+    };
+
+    const archiveOp = (archive_path: string): ArchiveOp => ({
+      op_id: `op-${archive_path}`,
+      op_type: 'archive',
+      timestamp: '2026-04-10T00:00:00Z',
+      status: 'completed',
+      category: 'skill',
+      scope: 'global',
+      source_path: archive_path.replace('/archived/', '/'),
+      archive_path,
+      content_sha256: 'sha256:abc',
+    });
+
+    const disableOp = (new_key: string): DisableOp => ({
+      op_id: `op-${new_key}`,
+      op_type: 'disable',
+      timestamp: '2026-04-10T00:00:00Z',
+      status: 'completed',
+      config_path: '/home/u/.claude.json',
+      scope: 'global',
+      project_path: null,
+      original_key: `mcpServers.${new_key.replace('ccaudit-disabled:', '')}`,
+      new_key,
+      original_value: { command: 'x' },
+    });
+
+    const mkFlagOp = (file_path: string, timestamp = '2026-04-10T00:00:00Z'): FlagOp => ({
+      op_id: `op-flag-${file_path}`,
+      op_type: 'flag',
+      timestamp,
+      status: 'completed',
+      file_path,
+      scope: 'global',
+      had_frontmatter: false,
+      had_ccaudit_stale: false,
+      patched_keys: ['ccaudit-stale'],
+      original_content_sha256: 'sha256:x',
+    });
+
+    const mkRefreshOp = (file_path: string): RefreshOp => ({
+      op_id: `op-refresh-${file_path}`,
+      op_type: 'refresh',
+      timestamp: '2026-04-10T00:00:00Z',
+      status: 'completed',
+      file_path,
+      scope: 'global',
+      previous_flagged_at: '2026-04-01T00:00:00Z',
+    });
+
+    it('empty input returns empty output', () => {
+      expect(collectRestoreableItems([])).toEqual([]);
+    });
+
+    it('flag op is preserved (not dropped)', () => {
+      const f = mkFlagOp('/home/u/CLAUDE.md');
+      const out = collectRestoreableItems([{ entry: entryNew, ops: [f] }]);
+      expect(out).toHaveLength(1);
+      // M8: canonical_id includes op_type + op_id to keep distinct ops distinct
+      expect(out[0]!.canonical_id).toBe(`memory:flag:/home/u/CLAUDE.md:${f.op_id}`);
+      expect(out[0]!.op).toBe(f);
+    });
+
+    it('refresh op is preserved under its own memory: key (distinct from flag)', () => {
+      const r = mkRefreshOp('/home/u/rules/style.md');
+      const out = collectRestoreableItems([{ entry: entryNew, ops: [r] }]);
+      expect(out).toHaveLength(1);
+      expect(out[0]!.canonical_id).toBe(`memory:refresh:/home/u/rules/style.md:${r.op_id}`);
+    });
+
+    it('M8: two flag ops on the same file_path get DISTINCT canonical_ids (INV-S3)', () => {
+      // Same file_path, different op_ids — must both be individually restoreable.
+      const f1 = mkFlagOp('/home/u/CLAUDE.md', '2026-04-10T00:00:00Z');
+      const f2: FlagOp = {
+        ...mkFlagOp('/home/u/CLAUDE.md', '2026-04-01T00:00:00Z'),
+        op_id: 'op-flag-different-id',
+      };
+      const out = collectRestoreableItems([
+        { entry: entryNew, ops: [f1] },
+        { entry: entryOld, ops: [f2] },
+      ]);
+      // Both ops are individually restoreable — NO dedup collapse
+      expect(out).toHaveLength(2);
+      const ids = out.map((o) => o.canonical_id);
+      expect(ids[0]).toBe(`memory:flag:/home/u/CLAUDE.md:${f1.op_id}`);
+      expect(ids[1]).toBe(`memory:flag:/home/u/CLAUDE.md:${f2.op_id}`);
+      // Both canonical_ids are distinct
+      expect(new Set(ids).size).toBe(2);
+    });
+
+    it('M8: flag + refresh on same file_path are both individually restoreable', () => {
+      const f = mkFlagOp('/home/u/CLAUDE.md');
+      const r: RefreshOp = {
+        op_id: 'op-refresh-different',
+        op_type: 'refresh',
+        timestamp: '2026-04-11T00:00:00Z',
+        status: 'completed',
+        file_path: '/home/u/CLAUDE.md',
+        scope: 'global',
+        previous_flagged_at: '2026-04-10T00:00:00Z',
+      };
+      const out = collectRestoreableItems([{ entry: entryNew, ops: [f, r] }]);
+      expect(out).toHaveLength(2);
+      const ids = out.map((o) => o.canonical_id);
+      expect(ids).toContain(`memory:flag:/home/u/CLAUDE.md:${f.op_id}`);
+      expect(ids).toContain(`memory:refresh:/home/u/CLAUDE.md:${r.op_id}`);
+    });
+
+    it('mixed archive + disable + flag: all three returned with distinct keys', () => {
+      const a = archiveOp('/a/skills/foo');
+      const d = disableOp('ccaudit-disabled:pencil');
+      const f = mkFlagOp('/home/u/CLAUDE.md');
+      const out = collectRestoreableItems([{ entry: entryNew, ops: [a, d, f] }]);
+      expect(out.map((o) => o.canonical_id).sort()).toEqual(
+        [
+          `memory:flag:/home/u/CLAUDE.md:${f.op_id}`,
+          'mcp:/home/u/.claude.json:ccaudit-disabled:pencil',
+          'skill:/a/skills/foo',
+        ].sort(),
+      );
+    });
+
+    it('skipped ops are omitted (not restoreable)', () => {
+      const skipped: ManifestOp = {
+        op_id: 'op-skipped',
+        op_type: 'skipped',
+        timestamp: '2026-04-10T00:00:00Z',
+        status: 'completed',
+        file_path: '/home/u/weird.md',
+        category: 'memory',
+        reason: 'unreadable',
+      };
+      const out = collectRestoreableItems([{ entry: entryNew, ops: [skipped] }]);
+      expect(out).toEqual([]);
+    });
+  });
+
+  // -- matchByName (Phase 08-01) ----------------------------------
+
+  describe('matchByName', () => {
+    const mkArchive = (archive_path: string): ArchiveOp => ({
+      op_id: `op-${archive_path}`,
+      op_type: 'archive',
+      timestamp: '2026-04-10T00:00:00Z',
+      status: 'completed',
+      category: 'skill',
+      scope: 'global',
+      source_path: archive_path,
+      archive_path,
+      content_sha256: 'sha256:x',
+    });
+    const mkDisable = (name: string): DisableOp => ({
+      op_id: `op-${name}`,
+      op_type: 'disable',
+      timestamp: '2026-04-10T00:00:00Z',
+      status: 'completed',
+      config_path: '/home/u/.claude.json',
+      scope: 'global',
+      project_path: null,
+      original_key: `mcpServers.${name}`,
+      new_key: `ccaudit-disabled:${name}`,
+      original_value: {},
+    });
+
+    const items = [
+      { canonical_id: 'skill:/a/skills/pencil-dev', op: mkArchive('/a/skills/pencil-dev') },
+      { canonical_id: 'skill:/a/skills/scanner', op: mkArchive('/a/skills/scanner') },
+      { canonical_id: 'mcp:/home/u/.claude.json:ccaudit-disabled:pencil', op: mkDisable('pencil') },
+    ];
+
+    it('0 matches returns empty array', () => {
+      expect(matchByName(items, 'nonexistent')).toEqual([]);
+    });
+
+    it('1 match returns the single item', () => {
+      const out = matchByName(items, 'scanner');
+      expect(out).toHaveLength(1);
+      expect(out[0].canonical_id).toBe('skill:/a/skills/scanner');
+    });
+
+    it('multiple matches returned sorted by canonical_id ASC', () => {
+      const out = matchByName(items, 'pencil');
+      expect(out.map((i) => i.canonical_id)).toEqual([
+        'mcp:/home/u/.claude.json:ccaudit-disabled:pencil',
+        'skill:/a/skills/pencil-dev',
+      ]);
+    });
+
+    it('case-insensitive: uppercase pattern matches lowercase name', () => {
+      const out = matchByName(items, 'PENCIL');
+      expect(out.map((i) => i.canonical_id)).toContain('skill:/a/skills/pencil-dev');
+    });
+
+    it('disable op matches by extracted server name', () => {
+      // mcpServers.pencil → 'pencil' via extractServerName
+      const out = matchByName([items[2]], 'pencil');
+      expect(out).toHaveLength(1);
+      expect(out[0].op.op_type).toBe('disable');
+    });
+
+    it('empty or whitespace-only pattern returns []', () => {
+      expect(matchByName(items, '')).toEqual([]);
+      expect(matchByName(items, '   ')).toEqual([]);
+    });
+  });
+
+  // -- executeRestore (subset) — Phase 08-02 ----------------------
+  //
+  // Covers { kind: 'interactive'; ids } and { kind: 'all-matching'; pattern }
+  // dispatch: group-by-manifest, skipped[] on source-exists, name-not-found
+  // when no pattern matches.
+
+  describe('executeRestore (subset)', () => {
+    const entryA: ManifestEntry = {
+      path: '/fake/.claude/ccaudit/manifests/bust-2026-04-10T10-00-00Z.jsonl',
+      mtime: new Date('2026-04-10T10:00:00Z'),
+    };
+    const entryB: ManifestEntry = {
+      path: '/fake/.claude/ccaudit/manifests/bust-2026-04-05T08-00-00Z.jsonl',
+      mtime: new Date('2026-04-05T08:00:00Z'),
+    };
+
+    const mkArchive = (source_path: string, archive_path: string): ArchiveOp => ({
+      op_id: `op-${archive_path}`,
+      op_type: 'archive',
+      timestamp: '2026-04-10T00:00:00Z',
+      status: 'completed',
+      category: 'skill',
+      scope: 'global',
+      source_path,
+      archive_path,
+      content_sha256: 'sha256:x',
+    });
+
+    // Paths must be within homedir() to satisfy assertWithinHomedir.
+    const home = homedir();
+    const opA1 = mkArchive(
+      path.join(home, '.claude/skills/pencil-dev.md'),
+      path.join(home, '.claude/skills/_archived/pencil-dev.md'),
+    );
+    const opB1 = mkArchive(
+      path.join(home, '.claude/skills/scanner.md'),
+      path.join(home, '.claude/skills/_archived/scanner.md'),
+    );
+
+    const cidA1 = `skill:${opA1.archive_path}`;
+    const cidB1 = `skill:${opB1.archive_path}`;
+
+    const mkFlag = (file_path: string): FlagOp => ({
+      op_id: `op-flag-${file_path}`,
+      op_type: 'flag',
+      timestamp: '2026-04-10T00:00:00Z',
+      status: 'completed',
+      file_path,
+      scope: 'global',
+      had_frontmatter: true,
+      had_ccaudit_stale: true,
+      patched_keys: ['ccaudit-stale', 'ccaudit-flagged'],
+      original_content_sha256: 'sha256:flag',
+    });
+
+    function subsetDeps(overrides: Partial<RestoreDeps> = {}): RestoreDeps {
+      return makeFakeDeps({
+        discoverManifests: async () => [entryA, entryB],
+        readManifest: async (p) => {
+          if (p === entryA.path) {
+            return { header: fakeHeader, ops: [opA1], footer: fakeFooter, truncated: false };
+          }
+          return { header: fakeHeader, ops: [opB1], footer: fakeFooter, truncated: false };
+        },
+        processDetector: {
+          runCommand: async () => '',
+          getParentPid: async () => null,
+          platform: 'linux',
+        },
+        // Default: source does NOT exist → every restore succeeds as a no-op rename.
+        pathExists: async () => false,
+        renameFile: async () => {},
+        mkdirRecursive: async () => {},
+        readFileBytes: async () => Buffer.from(''),
+        ...overrides,
+      });
+    }
+
+    it('{ kind: interactive } with ids from two manifests visits both', async () => {
+      const deps = subsetDeps();
+      const result = await executeRestore({ kind: 'interactive', ids: [cidA1, cidB1] }, deps);
+      expect(result.status).toBe('success');
+      if (result.status === 'success') {
+        expect(result.counts.unarchived.moved).toBe(2);
+        expect(result.manifestPaths).toEqual(expect.arrayContaining([entryA.path, entryB.path]));
+        expect(result.selectionFilter).toEqual({ mode: 'subset', ids: [cidA1, cidB1] });
+        expect(result.skipped).toEqual([]);
+      }
+    });
+
+    it('interactive subset executes a selected memory flag op', async () => {
+      const flagOp = mkFlag(path.join(home, '.claude/CLAUDE.md'));
+      // M8: canonical_id now includes op_type + op_id for per-op uniqueness (INV-S3)
+      const flagId = `memory:flag:${flagOp.file_path}:${flagOp.op_id}`;
+      const deps = subsetDeps({
+        readManifest: async (p) => {
+          if (p === entryA.path) {
+            return { header: fakeHeader, ops: [flagOp], footer: fakeFooter, truncated: false };
+          }
+          return { header: fakeHeader, ops: [], footer: fakeFooter, truncated: false };
+        },
+      });
+
+      const result = await executeRestore({ kind: 'interactive', ids: [flagId] }, deps);
+      expect(result.status).toBe('success');
+      if (result.status === 'success') {
+        expect(result.counts.unarchived.moved).toBe(0);
+        expect(result.counts.stripped.completed).toBe(1);
+        expect(result.selectionFilter).toEqual({ mode: 'subset', ids: [flagId] });
+      }
+    });
+
+    it('interactive subset executes archive + memory ops and drops unresolved ids from selectionFilter', async () => {
+      const flagOp = mkFlag(path.join(home, '.claude/CLAUDE.md'));
+      // M8: canonical_id now includes op_type + op_id for per-op uniqueness (INV-S3)
+      const flagId = `memory:flag:${flagOp.file_path}:${flagOp.op_id}`;
+      const deps = subsetDeps({
+        readManifest: async (p) => {
+          if (p === entryA.path) {
+            return {
+              header: fakeHeader,
+              ops: [opA1, flagOp],
+              footer: fakeFooter,
+              truncated: false,
+            };
+          }
+          return { header: fakeHeader, ops: [opB1], footer: fakeFooter, truncated: false };
+        },
+      });
+
+      const result = await executeRestore(
+        { kind: 'interactive', ids: [flagId, 'memory:flag:/does/not/exist:op-gone', cidA1] },
+        deps,
+      );
+      expect(result.status).toBe('success');
+      if (result.status === 'success') {
+        expect(result.counts.unarchived.moved).toBe(1);
+        expect(result.counts.stripped.completed).toBe(1);
+        expect(result.selectionFilter).toEqual({ mode: 'subset', ids: [flagId, cidA1] });
+      }
+    });
+
+    it('{ kind: all-matching } restores every matching candidate', async () => {
+      const deps = subsetDeps();
+      // Pattern "n" matches both 'pencil-dev' and 'scanner'
+      const result = await executeRestore({ kind: 'all-matching', pattern: 'n' }, deps);
+      expect(result.status).toBe('success');
+      if (result.status === 'success') {
+        expect(result.counts.unarchived.moved).toBe(2);
+        expect(result.selectionFilter?.mode).toBe('subset');
+        expect(result.selectionFilter?.ids.length).toBe(2);
+      }
+    });
+
+    it('{ kind: all-matching } with 0 matches returns name-not-found', async () => {
+      const deps = subsetDeps();
+      const result = await executeRestore(
+        { kind: 'all-matching', pattern: 'nothing-matches-xyz' },
+        deps,
+      );
+      expect(result.status).toBe('name-not-found');
+      if (result.status === 'name-not-found') {
+        expect(result.name).toBe('nothing-matches-xyz');
+      }
+    });
+
+    it('source-exists → skipped[] populated and item excluded from unarchived.moved', async () => {
+      // Simulate source_path for opA1 already existing AND archive_path also
+      // present on disk (e.g. user manually copied source back without
+      // restoring) → restoreArchiveOp classifies as already-at-source and
+      // records skipped[]. Archive_path presence keeps the op out of the
+      // Phase 8.2 stale-filter (which requires archive_missing +
+      // source_exists). opB1 proceeds as a normal move.
+      const deps = subsetDeps({
+        pathExists: async (p) => p === opA1.source_path || p === opA1.archive_path,
+      });
+      const result = await executeRestore({ kind: 'interactive', ids: [cidA1, cidB1] }, deps);
+      expect(result.status).toBe('success');
+      if (result.status === 'success') {
+        expect(result.counts.unarchived.moved).toBe(1); // opB1 only
+        expect(result.counts.unarchived.alreadyAtSource).toBe(1); // opA1
+        expect(result.skipped).toEqual([
+          { reason: 'source_exists', path: opA1.source_path, canonical_id: cidA1 },
+        ]);
+      }
+    });
+
+    it('{ kind: interactive } with ids matching nothing returns name-not-found', async () => {
+      const deps = subsetDeps();
+      const result = await executeRestore(
+        { kind: 'interactive', ids: ['skill:/does/not/exist'] },
+        deps,
+      );
+      expect(result.status).toBe('name-not-found');
+    });
+
+    it('zero manifests on disk returns no-manifests for subset modes', async () => {
+      const deps = makeFakeDeps({
+        discoverManifests: async () => [],
+        processDetector: {
+          runCommand: async () => '',
+          getParentPid: async () => null,
+          platform: 'linux',
+        },
+      });
+      const r1 = await executeRestore({ kind: 'interactive', ids: [cidA1] }, deps);
+      expect(r1.status).toBe('no-manifests');
+      const r2 = await executeRestore({ kind: 'all-matching', pattern: 'pencil' }, deps);
+      expect(r2.status).toBe('no-manifests');
+    });
+  });
+
+  // -- Phase 8.2: stale-archive listing hygiene -----------------------
+
+  describe('isStaleArchiveOp + filterRestoreableItems (Phase 8.2)', () => {
+    const mkArchive = (archive_path: string, source_path: string): ArchiveOp => ({
+      op_id: `op-${archive_path}`,
+      op_type: 'archive',
+      timestamp: '2026-04-22T00:00:00.000Z',
+      status: 'completed',
+      category: 'agent',
+      scope: 'global',
+      source_path,
+      archive_path,
+      content_sha256: 'sha256:stub',
+    });
+
+    // Build a pathExists fake from a set of paths that "exist" on disk.
+    const fakeExists = (existing: Set<string>) => async (p: string) => existing.has(p);
+
+    const fakeEntryS: ManifestEntry = {
+      path: '/fake/.claude/ccaudit/manifests/bust-stale.jsonl',
+      mtime: new Date('2026-04-22T00:00:00Z'),
+    };
+
+    it('T1: archive_missing + source_exists → isStale=true (D-01 / SC1)', async () => {
+      const op = mkArchive('/h/.claude/ccaudit/archived/agents/a.md', '/h/.claude/agents/a.md');
+      const exists = fakeExists(new Set(['/h/.claude/agents/a.md'])); // source back, archive gone
+      expect(await isStaleArchiveOp(op, exists)).toBe(true);
+    });
+
+    it('T2: archive_exists (regardless of source) → isStale=false (kept; SC1 inverse)', async () => {
+      const op = mkArchive('/h/.claude/ccaudit/archived/agents/b.md', '/h/.claude/agents/b.md');
+      const existsArchiveOnly = fakeExists(new Set([op.archive_path]));
+      expect(await isStaleArchiveOp(op, existsArchiveOnly)).toBe(false);
+      const existsBoth = fakeExists(new Set([op.archive_path, op.source_path]));
+      expect(await isStaleArchiveOp(op, existsBoth)).toBe(false);
+    });
+
+    it('T3: both_missing → isStale=false (kept; fail-loud preserved per D-02 / SC5)', async () => {
+      const op = mkArchive('/h/.claude/ccaudit/archived/agents/c.md', '/h/.claude/agents/c.md');
+      const existsNone = fakeExists(new Set());
+      expect(await isStaleArchiveOp(op, existsNone)).toBe(false);
+    });
+
+    it('T4: flag op and disable op pass through filterRestoreableItems regardless of fs state (D-03 / SC2)', async () => {
+      const flagOp: FlagOp = {
+        op_id: 'op-flag',
+        op_type: 'flag',
+        timestamp: '2026-04-22T00:00:00Z',
+        status: 'completed',
+        file_path: '/h/.claude/CLAUDE.md',
+        scope: 'global',
+        had_frontmatter: true,
+        had_ccaudit_stale: true,
+        patched_keys: ['ccaudit-flagged'],
+        original_content_sha256: 'sha256:flag',
+      };
+      const disableOp: DisableOp = {
+        op_id: 'op-dis',
+        op_type: 'disable',
+        timestamp: '2026-04-22T00:00:00Z',
+        status: 'completed',
+        config_path: '/h/.claude.json',
+        scope: 'global',
+        project_path: null,
+        original_key: 'mcpServers.playwright',
+        new_key: 'mcpServers.ccaudit-disabled:playwright',
+        original_value: {},
+      };
+      // Include one stale archive op to prove the archive filter fires
+      // while flag/disable are untouched.
+      const staleArchive = mkArchive(
+        '/h/.claude/ccaudit/archived/agents/stale.md',
+        '/h/.claude/agents/stale.md',
+      );
+      const exists = fakeExists(new Set([staleArchive.source_path]));
+
+      const items = [
+        {
+          entry: fakeEntryS,
+          op: flagOp as RestoreableOp,
+          canonical_id: `memory:${flagOp.file_path}`,
+        },
+        {
+          entry: fakeEntryS,
+          op: disableOp as RestoreableOp,
+          canonical_id: `mcp:${disableOp.config_path}:${disableOp.new_key}`,
+        },
+        {
+          entry: fakeEntryS,
+          op: staleArchive as RestoreableOp,
+          canonical_id: `agent:${staleArchive.archive_path}`,
+        },
+      ];
+
+      const { kept, filteredStaleCount } = await filterRestoreableItems(items, exists);
+
+      expect(filteredStaleCount).toBe(1);
+      expect(kept).toHaveLength(2);
+      const keptTypes = kept.map((k) => k.op.op_type).sort();
+      expect(keptTypes).toEqual(['disable', 'flag']);
     });
   });
 }

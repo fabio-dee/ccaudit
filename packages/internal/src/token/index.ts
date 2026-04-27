@@ -13,7 +13,13 @@ export {
 export { estimateFromFileSize, BYTES_PER_TOKEN } from './file-size-estimator.ts';
 
 // Token display formatting
-export { formatTokenEstimate, formatTotalOverhead, formatSavingsLine } from './format.ts';
+export {
+  formatTokenEstimate,
+  formatTotalOverhead,
+  formatSavingsLine,
+  formatTokensApprox,
+  sumSelectionTokens,
+} from './format.ts';
 
 // Enrichment pipeline
 export {

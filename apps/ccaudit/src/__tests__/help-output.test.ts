@@ -40,6 +40,33 @@ function runHelp(args: string[]): string {
   return (result.stdout ?? '') + (result.stderr ?? '');
 }
 
+function findLine(output: string, needle: string): string | undefined {
+  return output.split(/\r?\n/).find((line) => line.includes(needle));
+}
+
+function countMatches(output: string, pattern: RegExp): number {
+  return [...output.matchAll(pattern)].length;
+}
+
+function expectSingleVersionLine(output: string): void {
+  expect(countMatches(output, /^\s*-v,\s*--version\b/gm)).toBe(1);
+}
+
+function expectCleanNegativeFlagLines(output: string): void {
+  const noColorLine = findLine(output, '--no-color');
+  expect(noColorLine).toBeDefined();
+  expect(noColorLine).toContain('Disable ANSI colors');
+  expect(noColorLine).not.toContain('Negatable of');
+
+  const noGroupFrameworksLine = findLine(output, '--no-group-frameworks');
+  expect(noGroupFrameworksLine).toBeDefined();
+  expect(noGroupFrameworksLine).toContain('Disable framework grouping');
+  expect(noGroupFrameworksLine).not.toContain('Negatable of');
+
+  expect(output).not.toContain('Negatable of --color');
+  expect(output).not.toContain('Negatable of --group-frameworks');
+}
+
 describe.skipIf(!binaryExists)('Gap #4 regression: --no-color visible in --help', () => {
   it('root ccaudit --help lists no-color', () => {
     const output = runHelp(['--help']);
@@ -84,5 +111,28 @@ describe.skipIf(!binaryExists)('DOCS-04: v1.3.0 flag visibility in --help', () =
   it('inventory --help does NOT list --force-partial (bust-only flag)', () => {
     const output = runHelp(['inventory', '--help']);
     expect(output).not.toContain('--force-partial');
+  });
+});
+
+describe.skipIf(!binaryExists)('Phase 8.1 help rendering regression guards', () => {
+  it('restore --help keeps one version line and clean negative flag descriptions', () => {
+    const output = runHelp(['restore', '--help']);
+    expectSingleVersionLine(output);
+    expectCleanNegativeFlagLines(output);
+    expect(output).toContain('--interactive');
+    expect(output).toContain('--name');
+    expect(output).toContain('--all-matching');
+    expect(output).toContain('--json');
+    expect(output).toContain('--verbose');
+  });
+
+  it('ghost --help keeps one version line and clean negative flag descriptions', () => {
+    const output = runHelp(['ghost', '--help']);
+    expectSingleVersionLine(output);
+    expectCleanNegativeFlagLines(output);
+    expect(output).toContain('--verbose');
+    expect(output).toContain('--dry-run');
+    expect(output).toContain('--dangerously-bust-ghosts');
+    expect(output).toContain('--force-partial');
   });
 });

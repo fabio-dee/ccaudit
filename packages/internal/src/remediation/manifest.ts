@@ -24,11 +24,22 @@ import { open, mkdir, chmod, readFile, type FileHandle } from 'node:fs/promises'
 import path from 'node:path';
 import { homedir } from 'node:os';
 import { createHash, randomUUID } from 'node:crypto';
-import { timestampSuffixForFilename } from './collisions.ts';
 
 // -- Header type (D-12) ------------------------------------------
 
 export const MANIFEST_VERSION = 1 as const;
+
+/**
+ * Discriminated union describing the selection scope of a bust manifest.
+ * Written by buildHeader into every manifest; read by restore (Phase 8) and
+ * auditors to distinguish full-inventory busts from subset busts.
+ *
+ * - `{ mode: 'full' }` — full-inventory bust (selectedItems === undefined)
+ * - `{ mode: 'subset', ids: string[] }` — subset bust; ids are the
+ *   canonicalItemId values of the selected items, sorted ascending so
+ *   manifests diff deterministically.
+ */
+export type SelectionFilter = { mode: 'full' } | { mode: 'subset'; ids: string[] };
 
 export interface ManifestHeader {
   record_type: 'header';
@@ -40,6 +51,11 @@ export interface ManifestHeader {
   os: NodeJS.Platform;
   node_version: string;
   planned_ops: { archive: number; disable: number; flag: number };
+  /**
+   * Optional on reads (old manifests lack this field; default to { mode: 'full' }).
+   * Always present on writes — buildHeader always sets it.
+   */
+  selection_filter?: SelectionFilter;
 }
 
 // -- Op types (D-11) ---------------------------------------------
@@ -50,7 +66,7 @@ export interface ArchiveOp {
   timestamp: string;
   status: 'completed' | 'failed';
   error?: string;
-  category: 'agent' | 'skill';
+  category: 'agent' | 'skill' | 'command';
   scope: 'global' | 'project';
   source_path: string;
   archive_path: string;
@@ -106,7 +122,35 @@ export interface SkippedOp {
   reason: string;
 }
 
-export type ManifestOp = ArchiveOp | DisableOp | FlagOp | RefreshOp | SkippedOp;
+/**
+ * Append-only follow-up op recorded by `ccaudit purge-archive` (Phase 9 SC6).
+ *
+ * An ArchivePurgeOp does NOT rewrite the prior ArchiveOp — the original
+ * manifest entry stays intact for audit. The purge op references the
+ * original via `original_op_id` and records the disposition:
+ *
+ *   - 'reclaimed'              — source was free; archive moved back to source.
+ *   - 'source_occupied'        — source reappeared; archive unlinked from disk.
+ *   - 'stale_archive_missing'  — archive already gone + source back (Phase 8.2
+ *                                 staleness shape); archive_path was already
+ *                                 absent so no unlink ran, but the follow-up
+ *                                 op is still written so `restore` dedup
+ *                                 suppresses the stale entry.
+ *
+ * Every purge op is always status:'completed' and purged:true — failures
+ * are surfaced via the PurgeResult.failures[] channel, not as manifest ops.
+ */
+export interface ArchivePurgeOp {
+  op_id: string;
+  op_type: 'archive_purge';
+  timestamp: string;
+  status: 'completed';
+  original_op_id: string;
+  purged: true;
+  reason: 'reclaimed' | 'source_occupied' | 'stale_archive_missing';
+}
+
+export type ManifestOp = ArchiveOp | DisableOp | FlagOp | RefreshOp | SkippedOp | ArchivePurgeOp;
 
 // -- Footer type (D-12) ------------------------------------------
 
@@ -138,18 +182,26 @@ export interface ReadManifestResult {
 /**
  * Resolve the canonical manifest path for a new bust (D-10).
  *
- * Per-bust file keyed by UTC ISO timestamp with colons replaced by dashes for
- * cross-platform filesystem safety (NTFS forbids `:` in filenames). Milliseconds
- * are stripped to keep the suffix human-readable and to match the Phase 8 archive
- * filename suffix format from collisions.ts.
+ * Per-bust file keyed by UTC ISO timestamp (millisecond precision) with colons
+ * and periods replaced by dashes for cross-platform filesystem safety (NTFS
+ * forbids `:` in filenames), plus a 4-character random base-36 suffix to make
+ * same-millisecond collisions vanishingly unlikely.
+ *
+ * Format: bust-<yyyy-MM-ddTHH-mm-ss-SSSZ>-<rand4>.jsonl
+ *
+ * The `bust-` prefix and `.jsonl` suffix are unchanged so `discoverManifests`
+ * continues to find both old-format (second-granularity) and new-format
+ * manifests transparently — the filter only checks `bust-*.jsonl`.
  *
  * @example
- *   resolveManifestPath(new Date('2026-04-05T18:30:00Z'))
- *   // -> '~/.claude/ccaudit/manifests/bust-2026-04-05T18-30-00Z.jsonl'
+ *   resolveManifestPath(new Date('2026-04-05T18:30:00.123Z'))
+ *   // -> '~/.claude/ccaudit/manifests/bust-2026-04-05T18-30-00-123Z-<rand>.jsonl'
  */
 export function resolveManifestPath(now: Date = new Date()): string {
-  const stamp = timestampSuffixForFilename(now);
-  return path.join(homedir(), '.claude', 'ccaudit', 'manifests', `bust-${stamp}.jsonl`);
+  // Millisecond-precision timestamp: keep ms digits, replace `:` and `.` with `-`
+  const stamp = now.toISOString().replace(/:/g, '-').replace(/\./g, '-');
+  const rand = Math.random().toString(36).slice(2, 6);
+  return path.join(homedir(), '.claude', 'ccaudit', 'manifests', `bust-${stamp}-${rand}.jsonl`);
 }
 
 // -- Manifest discovery (Phase 9) --------------------------------
@@ -201,7 +253,12 @@ export async function discoverManifests(deps: DiscoverManifestsDeps): Promise<Ma
   } catch {
     return []; // ENOENT = no bust history
   }
-  const jsonlFiles = entries.filter((e) => e.startsWith('bust-') && e.endsWith('.jsonl'));
+  // Phase 9 SC6: include purge-*.jsonl manifests alongside bust-*.jsonl so
+  // restore dedup picks up archive_purge follow-up ops written by
+  // `ccaudit purge-archive`. Both prefixes live in the same directory.
+  const jsonlFiles = entries.filter(
+    (e) => (e.startsWith('bust-') || e.startsWith('purge-')) && e.endsWith('.jsonl'),
+  );
   const statted = await Promise.all(
     jsonlFiles.map(async (name) => {
       const p = path.join(dir, name);
@@ -215,12 +272,24 @@ export async function discoverManifests(deps: DiscoverManifestsDeps): Promise<Ma
 // -- Header / Footer builders (D-12) ------------------------------
 
 export function buildHeader(
-  input: Omit<ManifestHeader, 'record_type' | 'manifest_version'>,
+  input: Omit<ManifestHeader, 'record_type' | 'manifest_version' | 'selection_filter'> & {
+    selection_filter?: SelectionFilter;
+  },
 ): ManifestHeader {
+  const sf = input.selection_filter ?? { mode: 'full' };
+  const normalized: SelectionFilter =
+    sf.mode === 'subset' ? { mode: 'subset', ids: [...sf.ids].sort() } : { mode: 'full' };
   return {
     record_type: 'header',
     manifest_version: MANIFEST_VERSION,
-    ...input,
+    ccaudit_version: input.ccaudit_version,
+    checkpoint_ghost_hash: input.checkpoint_ghost_hash,
+    checkpoint_timestamp: input.checkpoint_timestamp,
+    since_window: input.since_window,
+    os: input.os,
+    node_version: input.node_version,
+    planned_ops: input.planned_ops,
+    selection_filter: normalized,
   };
 }
 
@@ -239,7 +308,7 @@ function sha256Hex(content: Buffer | string): string {
 }
 
 export function buildArchiveOp(input: {
-  category: 'agent' | 'skill';
+  category: 'agent' | 'skill' | 'command';
   scope: 'global' | 'project';
   source_path: string;
   archive_path: string;
@@ -344,6 +413,194 @@ export function buildSkippedOp(input: {
     category: input.category,
     reason: input.reason,
   };
+}
+
+/**
+ * Build an ArchivePurgeOp follow-up record (Phase 9 SC6). Append-only —
+ * callers write it to a fresh purge-*.jsonl manifest; the original
+ * ArchiveOp in its bust-*.jsonl manifest is never rewritten.
+ */
+export function buildArchivePurgeOp(input: {
+  original_op_id: string;
+  reason: 'reclaimed' | 'source_occupied' | 'stale_archive_missing';
+}): ArchivePurgeOp {
+  return {
+    op_id: randomUUID(),
+    op_type: 'archive_purge',
+    timestamp: new Date().toISOString(),
+    status: 'completed',
+    original_op_id: input.original_op_id,
+    purged: true,
+    reason: input.reason,
+  };
+}
+
+/**
+ * Resolve the canonical path for a new purge manifest (Phase 9 SC6).
+ *
+ * Sibling to {@link resolveManifestPath} — uses the `purge-` prefix so
+ * discoverManifests can distinguish bust vs purge manifests while still
+ * loading both for restore dedup.
+ *
+ * Format: purge-<yyyy-MM-ddTHH-mm-ss-SSSZ>-<rand4>.jsonl
+ */
+export function resolvePurgeManifestPath(now: Date = new Date()): string {
+  const stamp = now.toISOString().replace(/:/g, '-').replace(/\./g, '-');
+  const rand = Math.random().toString(36).slice(2, 6);
+  return path.join(homedir(), '.claude', 'ccaudit', 'manifests', `purge-${stamp}-${rand}.jsonl`);
+}
+
+/**
+ * Build a minimal header for a purge manifest.
+ *
+ * Purge manifests reuse the existing {@link ManifestHeader} shape with
+ * `planned_ops: {archive:0, disable:0, flag:0}` to satisfy restore's
+ * header-present check (D-07) — they never plan bust-style ops. The
+ * `checkpoint_ghost_hash` / `checkpoint_timestamp` fields carry the purge
+ * invocation's moment-in-time so audit-minded consumers can correlate
+ * purge manifests to the bust manifests they follow up on.
+ */
+export function buildPurgeManifestHeader(input: {
+  ccaudit_version: string;
+  purge_timestamp: string;
+}): ManifestHeader {
+  return buildHeader({
+    ccaudit_version: input.ccaudit_version,
+    checkpoint_ghost_hash: `purge:${input.purge_timestamp}`,
+    checkpoint_timestamp: input.purge_timestamp,
+    since_window: 'n/a',
+    os: process.platform,
+    node_version: process.version,
+    planned_ops: { archive: 0, disable: 0, flag: 0 },
+    selection_filter: { mode: 'full' },
+  });
+}
+
+/**
+ * Open a purge manifest writer (NEW-C1 per-op fsync primitive).
+ *
+ * Creates a fresh `purge-<ts>-<rand>.jsonl`, writes + fsyncs the header,
+ * and returns the open writer together with the resolved path. The caller
+ * is responsible for writing ops via `writer.writeOp(op)` after each
+ * successful mutation and then calling {@link closePurgeManifestWriter}.
+ *
+ * This split allows the executor to interleave manifest writes with
+ * filesystem mutations so that every successful mutation has a durable
+ * audit entry even if a later mutation or the close call fails.
+ *
+ * @param manifestsDir Optional override for the manifests directory (tests).
+ * @param header       Version + timestamp for the purge header.
+ * @returns `{ writer, path }` — the open writer and the resolved manifest path.
+ */
+export async function openPurgeManifestWriter(
+  header: { ccaudit_version: string; purge_timestamp: string },
+  manifestsDir?: string,
+): Promise<{ writer: ManifestWriter; path: string }> {
+  const ts = header.purge_timestamp;
+  const baseDir = manifestsDir ?? path.join(homedir(), '.claude', 'ccaudit', 'manifests');
+  const stamp = new Date(ts).toISOString().replace(/:/g, '-').replace(/\./g, '-');
+  const rand = Math.random().toString(36).slice(2, 6);
+  const manifestPath = path.join(baseDir, `purge-${stamp}-${rand}.jsonl`);
+  const writer = new ManifestWriter(manifestPath);
+  await writer.open(
+    buildPurgeManifestHeader({
+      ccaudit_version: header.ccaudit_version,
+      purge_timestamp: ts,
+    }),
+  );
+  return { writer, path: manifestPath };
+}
+
+/**
+ * Close a purge manifest writer opened by {@link openPurgeManifestWriter}.
+ *
+ * Writes a success footer (fsynced) and closes the file. Pass `null` as
+ * `durationMs` to omit the footer (crash-signature path — header present,
+ * footer absent). On write failure the error is swallowed after a best-effort
+ * close so callers can treat close failures as non-fatal.
+ */
+export async function closePurgeManifestWriter(
+  writer: ManifestWriter,
+  opts: { durationMs: number } | null,
+): Promise<void> {
+  if (opts !== null) {
+    await writer.close(
+      buildFooter({
+        status: 'completed',
+        actual_ops: {
+          archive: { completed: 0, failed: 0 },
+          disable: { completed: 0, failed: 0 },
+          flag: { completed: 0, failed: 0, refreshed: 0, skipped: 0 },
+        },
+        duration_ms: opts.durationMs,
+        exit_code: 0,
+      }),
+    );
+  } else {
+    await writer.close(null);
+  }
+}
+
+/**
+ * Append-only purge manifest writer (Phase 9 SC6) — thin wrapper.
+ *
+ * Writes a fresh `purge-<ts>-<rand>.jsonl` containing:
+ *   line 1        purge header (reuses ManifestHeader shape)
+ *   lines 2..N    one ArchivePurgeOp per line
+ *   line N+1      footer with exit_code=0
+ *
+ * Fsync per line via the underlying {@link ManifestWriter}. Never rewrites
+ * any prior manifest file — strict append-only contract (CLAUDE.md §Safety).
+ *
+ * Kept for backward compatibility — existing in-source tests and any callers
+ * that want a single-call write-all interface can continue using this.
+ * For per-op durability use {@link openPurgeManifestWriter} +
+ * {@link closePurgeManifestWriter} directly.
+ */
+export async function writePurgeManifest(
+  ops: readonly ArchivePurgeOp[],
+  input: { ccaudit_version: string; purge_timestamp?: string; manifestPath?: string },
+): Promise<{ path: string; opCount: number }> {
+  const ts = input.purge_timestamp ?? new Date().toISOString();
+  // If a specific manifestPath is provided (tests), honour it; otherwise let
+  // openPurgeManifestWriter generate a fresh path via resolvePurgeManifestPath.
+  const manifestsDir = input.manifestPath ? path.dirname(input.manifestPath) : undefined;
+  // Override: when manifestPath is given we need to reconstruct the exact name.
+  // Simplest approach: if manifestPath supplied, use legacy direct construction.
+  if (input.manifestPath) {
+    const writer = new ManifestWriter(input.manifestPath);
+    await writer.open(
+      buildPurgeManifestHeader({
+        ccaudit_version: input.ccaudit_version,
+        purge_timestamp: ts,
+      }),
+    );
+    try {
+      for (const op of ops) {
+        await writer.writeOp(op);
+      }
+      await closePurgeManifestWriter(writer, { durationMs: writer.elapsedMs });
+    } catch (err) {
+      await writer.close(null);
+      throw err;
+    }
+    return { path: input.manifestPath, opCount: ops.length };
+  }
+
+  const { writer, path: manifestPath } = await openPurgeManifestWriter(
+    { ccaudit_version: input.ccaudit_version, purge_timestamp: ts },
+    manifestsDir,
+  );
+  try {
+    for (const op of ops) {
+      await writer.writeOp(op);
+    }
+    await closePurgeManifestWriter(writer, { durationMs: writer.elapsedMs });
+  } catch (err) {
+    await writer.close(null);
+    throw err;
+  }
+  return { path: manifestPath, opCount: ops.length };
 }
 
 // -- ManifestWriter (D-09) ----------------------------------------
@@ -485,12 +742,30 @@ if (import.meta.vitest) {
   const path = (await import('node:path')).default;
 
   describe('resolveManifestPath', () => {
-    it('returns ~/.claude/ccaudit/manifests/bust-<iso-dashed>.jsonl', () => {
-      const d = new Date('2026-04-05T18:30:00.000Z');
+    it('returns bust-<iso-ms-dashed>-<rand4>.jsonl with ms precision and random suffix', () => {
+      const d = new Date('2026-04-05T18:30:00.123Z');
       const p = resolveManifestPath(d);
+      // Timestamp part: 2026-04-05T18-30-00-123Z (colons and dot replaced with dash)
+      // Suffix: 4 base-36 characters
       expect(p).toMatch(
-        /[/\\]\.claude[/\\]ccaudit[/\\]manifests[/\\]bust-2026-04-05T18-30-00Z\.jsonl$/,
+        /[/\\]\.claude[/\\]ccaudit[/\\]manifests[/\\]bust-2026-04-05T18-30-00-123Z-[a-z0-9]{4}\.jsonl$/,
       );
+    });
+
+    it('two calls with the same Date produce different paths (random suffix)', () => {
+      const d = new Date('2026-04-05T18:30:00.000Z');
+      const p1 = resolveManifestPath(d);
+      const p2 = resolveManifestPath(d);
+      // With a 4-char base-36 suffix (36^4 = 1,679,616 combinations) collision
+      // probability per call pair is ~1/1.7M — safe to assert inequality in tests.
+      expect(p1).not.toBe(p2);
+    });
+
+    it('result starts with bust- and ends with .jsonl (discoverManifests compat)', () => {
+      const p = resolveManifestPath(new Date());
+      const filename = p.split(/[/\\]/).at(-1)!;
+      expect(filename.startsWith('bust-')).toBe(true);
+      expect(filename.endsWith('.jsonl')).toBe(true);
     });
   });
 
@@ -542,6 +817,19 @@ if (import.meta.vitest) {
       });
       expect(op.status).toBe('failed');
       expect(op.error).toBe('EPERM');
+    });
+
+    it('accepts category=command', () => {
+      const op = buildArchiveOp({
+        category: 'command',
+        scope: 'global',
+        source_path: '/home/u/.claude/commands/sc/build.md',
+        archive_path: '/home/u/.claude/ccaudit/archived/commands/sc/build.md',
+        content: '# cmd\n',
+      });
+      expect(op.op_type).toBe('archive');
+      expect(op.category).toBe('command');
+      expect(op.status).toBe('completed');
     });
   });
 
@@ -913,6 +1201,141 @@ if (import.meta.vitest) {
       expect(typeof entry.path).toBe('string');
       expect(entry.mtime).toBeInstanceOf(Date);
       expect(entry.mtime.getTime()).toBe(fakeMtime.getTime());
+    });
+  });
+
+  describe('buildHeader — selection_filter', () => {
+    function baseInput() {
+      return {
+        ccaudit_version: '0.0.1',
+        checkpoint_ghost_hash: 'sha256:abc',
+        checkpoint_timestamp: '2026-04-05T18:30:00.000Z',
+        since_window: '7d',
+        os: 'darwin' as NodeJS.Platform,
+        node_version: 'v22.20.0',
+        planned_ops: { archive: 1, disable: 0, flag: 0 },
+      };
+    }
+
+    it('Test 6: { mode: full } is stored as-is', () => {
+      const header = buildHeader({ ...baseInput(), selection_filter: { mode: 'full' } });
+      // buildHeader always sets selection_filter; non-null assertion is safe here
+      expect(header.selection_filter!.mode).toBe('full');
+    });
+
+    it('Test 7: { mode: subset, ids } sorts ids ascending', () => {
+      const header = buildHeader({
+        ...baseInput(),
+        selection_filter: { mode: 'subset', ids: ['b', 'a', 'c'] },
+      });
+      const sf = header.selection_filter!;
+      expect(sf.mode).toBe('subset');
+      if (sf.mode === 'subset') {
+        expect(sf.ids).toEqual(['a', 'b', 'c']);
+      }
+    });
+
+    it('Test 8: omitting selection_filter defaults to { mode: full }', () => {
+      const header = buildHeader(baseInput());
+      expect(header.selection_filter).toEqual({ mode: 'full' });
+    });
+  });
+
+  // -- Phase 9 SC6: archive_purge op + purge manifest ---------------
+
+  describe('buildArchivePurgeOp', () => {
+    it('builds a follow-up op with uuid + ISO ts + purged:true', () => {
+      const op = buildArchivePurgeOp({ original_op_id: 'orig-uuid', reason: 'reclaimed' });
+      expect(op.op_type).toBe('archive_purge');
+      expect(op.op_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+      expect(op.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(op.status).toBe('completed');
+      expect(op.original_op_id).toBe('orig-uuid');
+      expect(op.purged).toBe(true);
+      expect(op.reason).toBe('reclaimed');
+    });
+
+    it('accepts each permitted reason', () => {
+      for (const reason of ['reclaimed', 'source_occupied', 'stale_archive_missing'] as const) {
+        const op = buildArchivePurgeOp({ original_op_id: 'o', reason });
+        expect(op.reason).toBe(reason);
+      }
+    });
+  });
+
+  describe('resolvePurgeManifestPath', () => {
+    it('returns purge-<iso-ms-dashed>-<rand4>.jsonl under manifests/', () => {
+      const d = new Date('2026-04-22T12:00:00.000Z');
+      const p = resolvePurgeManifestPath(d);
+      expect(p).toMatch(
+        /[/\\]\.claude[/\\]ccaudit[/\\]manifests[/\\]purge-2026-04-22T12-00-00-000Z-[a-z0-9]{4}\.jsonl$/,
+      );
+    });
+  });
+
+  describe('writePurgeManifest', () => {
+    let tmp: string;
+    beforeEach(async () => {
+      tmp = await mkdtemp(path.join(tmpdir(), 'purge-manifest-'));
+    });
+    afterEach(async () => {
+      await rm(tmp, { recursive: true, force: true });
+    });
+
+    it('writes header + ops + footer; round-trips via readManifest', async () => {
+      const manifestPath = path.join(tmp, 'purge-test.jsonl');
+      const ops = [
+        buildArchivePurgeOp({ original_op_id: 'a', reason: 'reclaimed' }),
+        buildArchivePurgeOp({ original_op_id: 'b', reason: 'source_occupied' }),
+      ];
+      const result = await writePurgeManifest(ops, {
+        ccaudit_version: '1.5.0',
+        purge_timestamp: '2026-04-22T12:00:00.000Z',
+        manifestPath,
+      });
+      expect(result.opCount).toBe(2);
+      const read = await readManifest(manifestPath);
+      expect(read.header).toBeTruthy();
+      expect(read.header!.checkpoint_ghost_hash).toBe('purge:2026-04-22T12:00:00.000Z');
+      expect(read.ops).toHaveLength(2);
+      expect(read.ops[0]!.op_type).toBe('archive_purge');
+      expect(read.footer).toBeTruthy();
+    });
+
+    it('writes header + empty-ops + footer when ops list is empty', async () => {
+      const manifestPath = path.join(tmp, 'purge-empty.jsonl');
+      await writePurgeManifest([], {
+        ccaudit_version: '1.5.0',
+        purge_timestamp: '2026-04-22T12:00:00.000Z',
+        manifestPath,
+      });
+      const read = await readManifest(manifestPath);
+      expect(read.header).toBeTruthy();
+      expect(read.ops).toHaveLength(0);
+      expect(read.footer).toBeTruthy();
+    });
+  });
+
+  describe('discoverManifests — includes purge-*.jsonl', () => {
+    it('surfaces both bust-*.jsonl and purge-*.jsonl; filters unrelated', async () => {
+      const fakeMtime = new Date('2026-04-22T12:00:00Z');
+      const deps: DiscoverManifestsDeps = {
+        manifestsDir: '/fake/manifests',
+        readdir: async () => [
+          'bust-2026-04-20T10-00-00Z.jsonl',
+          'purge-2026-04-22T12-00-00Z.jsonl',
+          'other.txt',
+          'ccaudit-log.jsonl',
+        ],
+        stat: async () => ({ mtime: fakeMtime }),
+      };
+      const result = await discoverManifests(deps);
+      expect(result).toHaveLength(2);
+      const names = result.map((r) => path.basename(r.path)).sort();
+      expect(names).toEqual([
+        'bust-2026-04-20T10-00-00Z.jsonl',
+        'purge-2026-04-22T12-00-00Z.jsonl',
+      ]);
     });
   });
 }

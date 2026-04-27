@@ -78,6 +78,91 @@ Bust, restore, and reclaim emit a `counts` object rather than an `items` array.
 }
 ```
 
+### Additive fields (v1.5)
+
+Successful and partial-success `restore` responses carry two additional
+fields surfacing the subset-restore surface landed in v1.5:
+
+- **`selectionFilter`** — type `null | { "mode": "subset", "ids": string[] }`.
+  Present on `status: "success"` and `status: "partial-success"`. `null` when
+  the invocation restored the full inventory. Populated as
+  `{ "mode": "subset", "ids": [...] }` for the three subset entry points:
+  `--interactive`, `--name <pattern>` (single-match), and `--all-matching <pattern>`.
+  `ids` are op-shaped canonical identifier strings — one per restored operation.
+  Three shapes exist, matching the three op types:
+  - **Archive ops** (agents, skills, commands): `<category>:<archive_path>` —
+    e.g. `agent:/home/user/.claude/ccaudit/archived/code-reviewer.md`
+  - **Disable ops** (MCP servers): `mcp:<config_path>:<renamed_key>` —
+    e.g. `mcp:/home/user/.claude.json:ccaudit-disabled:playwright`
+  - **Memory ops** (flag / refresh): `memory:<op_type>:<file_path>:<op_id>` —
+    e.g. `memory:flag:/home/user/.claude/projects/myproject/CLAUDE.md:3fa85f64-5717-4562-b3fc-2c963f66afa6`
+- **`skipped`** — type `Array<{ "reason": "source_exists", "path": string, "canonicalId": string }>`.
+  Always present on success + partial-success (may be empty `[]`). One entry
+  per item whose source path already existed on disk at restore time — those
+  items are never overwritten (safety invariant). Each entry is also surfaced
+  as a single stderr warning line: `warning: skipped <path> — source already exists`.
+  `canonicalId` follows the same op-shaped format as `selectionFilter.ids`.
+
+```json
+"selectionFilter": {
+  "mode": "subset",
+  "ids": [
+    "agent:/home/user/.claude/ccaudit/archived/code-reviewer.md",
+    "mcp:/home/user/.claude.json:ccaudit-disabled:playwright"
+  ]
+},
+"skipped": [
+  {
+    "reason": "source_exists",
+    "path": "/home/user/.claude/agents/code-reviewer.md",
+    "canonicalId": "agent:/home/user/.claude/ccaudit/archived/code-reviewer.md"
+  }
+]
+```
+
+> **Manifest casing exception.** Manifest JSONL headers intentionally keep
+> snake_case fields such as `manifest.header.selection_filter` for backward
+> compatibility with v1.5 dry-run/bust manifests. Public `--json` envelopes use
+> camelCase and do not expose the manifest header casing directly.
+
+> **Pre-dispatch validation envelope.** Restore preflight failures such as
+> mutually-exclusive flags, `CCAUDIT_NO_INTERACTIVE`, TTY refusal, no-match, or
+> ambiguity emit the standard envelope when `--json` is active:
+> `{ "meta": { "command": "restore", "exitCode": <code>, ... }, "error": "..." }`.
+> Without `--json`, the same message is written to stderr.
+
+### Additive field: `filteredStaleCount` (v1.5, Phase 8.2)
+
+`restore` responses on `status: "success"`, `status: "partial-success"`,
+and `status: "list"` carry an additive `filteredStaleCount` field:
+
+- **Type:** non-negative integer (number).
+- **Semantics:** count of archive ops suppressed from the listing
+  because their `archive_path` is missing on disk AND their
+  `source_path` is present — i.e. items that have already been
+  restored (or were never on disk post-bust) and whose manifest
+  records would otherwise re-appear forever as no-op
+  `already_at_source` entries. The filter is scoped to archive ops
+  only; memory (flag/refresh) and MCP (disable) ops are never
+  suppressed. Archive ops with BOTH paths missing are kept listed so
+  the restore executor can surface the fail-loud signal.
+- **Where it appears:** success, partial-success, and list response
+  variants. Defaults to `0` when nothing is filtered. Absent on
+  pre-v1.5 envelopes; consumers must tolerate `undefined`.
+- **Envelope shape note:** the field sits at the data root
+  (`envelope.filteredStaleCount`), not nested under `counts` or a
+  `summary` object — the restore envelope flattens data alongside
+  `status`, `selectionFilter`, and `skipped` rather than grouping
+  them under a `summary` key.
+
+```json
+"status": "list",
+"filteredStaleCount": 3,
+"entries": [ ... ]
+```
+
+> Additive, non-breaking. No pre-v1.5 field semantics change.
+
 **`reclaim`** → `counts.reclaim: { orphansDetected, reclaimed, skipped, failed }`
 
 ```json
@@ -87,6 +172,222 @@ Bust, restore, and reclaim emit a `counts` object rather than an `items` array.
 ```
 
 > `skipped` = files whose inferred source path already existed (safety invariant: never overwritten).
+
+## Purge (v1.5, Phase 9 SC6)
+
+`ccaudit purge-archive` drains `~/.claude/ccaudit/archived/`. It emits an
+additive top-level `purge` namespace in the JSON envelope (no changes to
+`bust` / `restore` / `reclaim` shapes).
+
+```json
+"purge": {
+  "summary": {
+    "purgedCount": 2,
+    "reclaimedCount": 1,
+    "skippedOccupiedCount": 1,
+    "staleFilteredCount": 1
+  },
+  "failures": [],
+  "dryRun": false,
+  "manifestPath": "/home/u/.claude/ccaudit/manifests/purge-2026-04-22T16-00-00-000Z-abcd.jsonl"
+}
+```
+
+| Field                                | Type                                      | Description                                                                                                                                                                |
+| ------------------------------------ | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `purge.summary.purgedCount`          | number                                    | Count of archive files dropped (source_occupied) + stale follow-up ops appended (stale_archive_missing). Always `purgedCount = skippedOccupiedCount + staleFilteredCount`. |
+| `purge.summary.reclaimedCount`       | number                                    | Count of archives moved back to source (source was free).                                                                                                                  |
+| `purge.summary.skippedOccupiedCount` | number                                    | Subset of `purgedCount`: the archive was unlinked because the source path already existed. Source is never overwritten.                                                    |
+| `purge.summary.staleFilteredCount`   | number                                    | Subset of `purgedCount`: the archive file was already missing; only the follow-up op is appended (Phase 8.2 staleness shape).                                              |
+| `purge.failures[]`                   | `Array<{ path: string; reason: string }>` | Per-item failures. Empty `[]` on full success. Partial failures do NOT change the exit code — the CLI still exits 0 as long as ≥1 item worked.                             |
+| `purge.dryRun`                       | boolean                                   | True when `--dry-run` (the default) was active. False when `--yes` executed real mutations.                                                                                |
+| `purge.manifestPath`                 | `string \| null`                          | Absolute path of the `purge-<ts>-<rand>.jsonl` follow-up manifest (only real runs that produced ≥1 mutation). `null` on dry-run or no-op.                                  |
+| `purge.manifestErrors[]`             | `Array<{ path: string; reason: string }>` | Unreadable manifest files skipped while building the purge plan. Present only when at least one manifest was skipped.                                                      |
+
+**Scope.** Archive ops only. Flag ops (memory frontmatter) and disable ops (MCP key-rename `name → ccaudit-disabled:name`) are **never** touched by purge. `classifyArchiveOps` filters by `op_type === 'archive'`.
+
+**Safety gate.** `--yes` is required for real purge; `--dry-run` is the default. Passing both together errors on stderr with `flags are mutually exclusive: --dry-run, --yes` and exits 1.
+
+### `archive_purge` manifest op (append-only)
+
+Real purge runs write a fresh `purge-<ts>-<rand>.jsonl` manifest (sibling to `bust-*.jsonl` under `~/.claude/ccaudit/manifests/`). Each successful mutation records one `archive_purge` op — the **original `ArchiveOp` is never rewritten**; dedup in restore's manifest union suppresses originals whose `op_id` matches a follow-up op's `original_op_id`.
+
+```json
+{
+  "op_id": "8b2e1c13-...",
+  "op_type": "archive_purge",
+  "timestamp": "2026-04-22T16:00:00.000Z",
+  "status": "completed",
+  "original_op_id": "op-a-reclaim",
+  "purged": true,
+  "reason": "reclaimed"
+}
+```
+
+| Field            | Type                                                          | Description                                                                                            |
+| ---------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `op_type`        | `"archive_purge"` (string literal)                            | Follow-up op; never a rewrite.                                                                         |
+| `original_op_id` | string                                                        | The `op_id` of the original `ArchiveOp` this record supersedes. Used by `restore`'s dedup suppression. |
+| `purged`         | `true` (boolean literal)                                      | Always `true`; reserved shape field for future extension.                                              |
+| `reason`         | `"reclaimed" \| "source_occupied" \| "stale_archive_missing"` | Matches the classifier branch that produced the op.                                                    |
+
+## Bust summary (v1.5)
+
+Successful `bust` responses carry a `summary` object alongside `counts`:
+
+```json
+"summary": {
+  "beforeTokens": 63722,
+  "freedTokens": 12800,
+  "totalPlannedTokens": 63722,
+  "afterTokens": 50922,
+  "pctWindow": 6,
+  "healthBefore": 23,
+  "healthAfter": 71,
+  "gradeBefore": "Poor",
+  "gradeAfter": "Good",
+  "checkpointTimestamp": "2026-04-18T09:42:11.000Z",
+  "checkpointMcpRegime": "eager"
+}
+```
+
+| Field                 | Type   | Description                                                                                                               |
+| --------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `beforeTokens`        | number | Grand-total ghost token overhead at dry-run checkpoint time.                                                              |
+| `freedTokens`         | number | Tokens actually freed by this bust. _Behavior changed in v1.5 — see note below._                                          |
+| `totalPlannedTokens`  | number | _Additive since v1.5._ Full-plan token figure preserved from the dry-run checkpoint; unaffected by subset filtering.      |
+| `afterTokens`         | number | `max(0, beforeTokens - freedTokens)`.                                                                                     |
+| `pctWindow`           | number | `freedTokens` as a percentage of a 200 000-token context window.                                                          |
+| `healthBefore`        | number | Composite health score (0–100) before the bust.                                                                           |
+| `healthAfter`         | number | Composite health score (0–100) after the bust.                                                                            |
+| `gradeBefore`         | string | Letter grade label for `healthBefore` (e.g. `Poor`, `Good`).                                                              |
+| `gradeAfter`          | string | Letter grade label for `healthAfter`.                                                                                     |
+| `checkpointTimestamp` | string | ISO 8601 UTC timestamp of the dry-run checkpoint that gated this bust.                                                    |
+| `checkpointMcpRegime` | string | `'eager' \| 'deferred' \| 'unknown'` — regime pinned at dry-run time so Before/After totals stay consistent across steps. |
+
+### `freedTokens` behavior change in v1.5
+
+In v1.4.x, `freedTokens` was always the full-inventory plan total because
+every bust was full-inventory. v1.5 introduces subset busts via the
+`--interactive` TUI picker and the `CCAUDIT_SELECT_IDS` env hook. When a
+subset bust runs, `freedTokens` now reflects the subset-accurate figure
+(sum of per-item token estimates across the archived subset only).
+
+The companion `totalPlannedTokens` field preserves the full-plan figure
+from the checkpoint so dashboards can still answer "what was the full
+opportunity?" after a subset bust.
+
+Consumers that compared `freedTokens` across runs MUST now check
+`manifest.header.selection_filter.mode` (see next section) to distinguish
+subset vs full-inventory busts. For full-inventory busts (the default
+non-interactive path), `freedTokens === totalPlannedTokens` and the v1.4
+contract is preserved.
+
+## Manifest header (v1.5)
+
+Every manifest record emitted by `bust` carries a header with a
+`selection_filter` field that identifies whether the bust was a full or
+subset operation.
+
+```json
+"selection_filter": { "mode": "full" }
+```
+
+```json
+"selection_filter": {
+  "mode": "subset",
+  "ids": ["agent:code-reviewer", "mcp-server:playwright", "skill:my-skill"]
+}
+```
+
+| Field                   | Type                 | Description                                                                                                                       |
+| ----------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `selection_filter.mode` | `'full' \| 'subset'` | `'full'` for default non-interactive busts and empty-selection abort paths. `'subset'` when `--interactive` or env hook filtered. |
+| `selection_filter.ids`  | `string[]`           | Present only when `mode === 'subset'`. Canonical item IDs actually archived, sorted lexicographically for determinism.            |
+
+Older manifests (pre-v1.5) omit the field entirely; readers should treat
+its absence as `{ mode: 'full' }`.
+
+### Additive contract
+
+All v1.5 envelope additions are **additive**. Consumers reading a v1.4
+envelope must tolerate the absence of `totalPlannedTokens` and
+`selection_filter`; consumers reading a v1.5+ envelope must tolerate their
+presence. The `--json` envelope never drops or renames fields without a
+major-version bump flagged in `CHANGELOG.md`.
+
+### Example: full-inventory bust
+
+```json
+{
+  "meta": { "command": "bust", "version": "1.5.0", "exitCode": 0 },
+  "manifestPath": "~/.claude/ccaudit/manifests/bust-2026-04-19T10:00:00Z.jsonl",
+  "counts": {
+    "archive": { "agents": 116, "skills": 74, "failed": 0 },
+    "disable": { "completed": 4, "failed": 0 },
+    "flag": { "completed": 6, "refreshed": 0, "failed": 0 }
+  },
+  "summary": {
+    "beforeTokens": 63722,
+    "freedTokens": 63722,
+    "totalPlannedTokens": 63722,
+    "afterTokens": 0,
+    "pctWindow": 32,
+    "healthBefore": 23,
+    "healthAfter": 91,
+    "gradeBefore": "Poor",
+    "gradeAfter": "Excellent",
+    "checkpointTimestamp": "2026-04-19T09:59:30.000Z",
+    "checkpointMcpRegime": "eager"
+  }
+}
+```
+
+Corresponding `manifest.header.selection_filter`:
+
+```json
+{ "mode": "full" }
+```
+
+### Example: subset bust (v1.5 --interactive)
+
+```json
+{
+  "meta": { "command": "bust", "version": "1.5.0", "exitCode": 0 },
+  "manifestPath": "~/.claude/ccaudit/manifests/bust-2026-04-19T10:05:00Z.jsonl",
+  "counts": {
+    "archive": { "agents": 2, "skills": 1, "failed": 0 },
+    "disable": { "completed": 1, "failed": 0 },
+    "flag": { "completed": 0, "refreshed": 0, "failed": 0 }
+  },
+  "summary": {
+    "beforeTokens": 63722,
+    "freedTokens": 8400,
+    "totalPlannedTokens": 63722,
+    "afterTokens": 55322,
+    "pctWindow": 4,
+    "healthBefore": 23,
+    "healthAfter": 41,
+    "gradeBefore": "Poor",
+    "gradeAfter": "Fair",
+    "checkpointTimestamp": "2026-04-19T10:04:45.000Z",
+    "checkpointMcpRegime": "eager"
+  }
+}
+```
+
+Corresponding `manifest.header.selection_filter`:
+
+```json
+{
+  "mode": "subset",
+  "ids": ["agent:code-reviewer", "agent:pencil-dev", "mcp-server:playwright", "skill:my-skill"]
+}
+```
+
+Note: `summary.freedTokens` (8400) < `summary.totalPlannedTokens` (63722)
+because only a subset was archived. `selection_filter.mode === 'subset'`
+is the signal that the two figures will differ.
 
 ## Item categories
 

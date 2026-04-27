@@ -1,4 +1,5 @@
 import type { TokenEstimate } from './token/types.ts';
+import type { FrameworkProtection } from './scanner/types.ts';
 
 /**
  * Scope of a ghost item -- global (~/.claude/) or project-local (.claude/).
@@ -57,6 +58,23 @@ export interface GhostItem {
    * items when file-size estimation fails (e.g., unreadable file).
    */
   tokenEstimate?: TokenEstimate | null;
+  /**
+   * Phase 6 (D6-01): framework-as-unit protection metadata. Populated by
+   * `toGhostItems` when the item belongs to a framework that has BOTH used
+   * and ghost members (would trip INV-S6 under a partial bust). `undefined`
+   * when the item is not protected — the picker row renders normally.
+   *
+   * Advisory only: server-side INV-S6 enforcement in `runBust` remains the
+   * actual gate. This field feeds the picker row dim+glyph and the toggle
+   * guard (plan 06-02).
+   */
+  protection?: FrameworkProtection;
+  /**
+   * Phase 6 (D6-02): config-file references for MCP items. Propagated from
+   * the underlying `InventoryItem.configRefs` when present. Length >= 1 for
+   * every MCP-category GhostItem; `undefined` for non-MCP items.
+   */
+  configRefs?: string[];
 }
 
 /**

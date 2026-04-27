@@ -48,7 +48,7 @@ export const inventoryCommand = define({
     json: {
       type: 'boolean',
       short: 'j',
-      description: 'Output as JSON (see docs/JSON-SCHEMA.md for schema)',
+      description: 'JSON output (docs/JSON-SCHEMA.md)',
       default: false,
     },
     verbose: {
@@ -103,12 +103,8 @@ export const inventoryCommand = define({
     // Initialize color detection from process.argv (--no-color) and env (NO_COLOR)
     initColor();
 
-    // Resolve output mode from all flag values
-    const noGroupFrameworksVal = ctx.values['no-group-frameworks'];
-    const mode = resolveOutputMode({
-      ...ctx.values,
-      noGroupFrameworks: typeof noGroupFrameworksVal === 'boolean' ? noGroupFrameworksVal : false,
-    });
+    // Resolve output mode from all flag values.
+    const mode = resolveOutputMode(ctx.values);
 
     if (mode.verbose) {
       console.error(`[ccaudit] Scanning sessions (window: ${sinceStr})...`);
