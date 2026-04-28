@@ -1,10 +1,28 @@
 # ccaudit
 
-**~11% of your Opus 4.7 1M-token context is gone before you type a word.** (~108k tokens of ghost inventory - roughly half a Sonnet 4.6 200k context. See snapshot below.)
+**~5-10% of your Opus 4.7 1M-token context is gone before you type a word.** (~50-108k tokens of ghost inventory - almost half a Sonnet 4.6 200k context. See snapshot below.)
 
 Unused agents, skills, MCP servers, commands, hooks, and memory files (call them ghosts) load into context every session.<br>
 ccaudit finds them, shows you the cost, and moves them to `~/.claude/ccaudit/archived/` in one command.<br>
 Undo any time with `ccaudit restore`.
+
+### TL;DR
+Solution: paste this into your terminal
+```bash
+claude -p "please spawn a haiku subagent to use the web tool, \
+fetch the readme of this opensource project and explain to me, in very simple terms, \
+what it does in 3 sentences and why I should use it (all using bullet points): \
+https://github.com/fabio-dee/ccaudit"
+```
+
+### Enough talk. Just tell me how to use it now:
+```bash
+npx ccaudit-cli@latest                    # full report of what's loading vs. what's used
+npx ccaudit-cli --interactive             # pick exactly which ghosts to archive (TUI)
+npx ccaudit-cli --dry-run                 # see the archive plan for ALL ghosts, no files touched
+npx ccaudit-cli --dangerously-bust-ghosts # archive ALL ghosts (nothing deleted, undo with restore)
+```
+---
 
 ## Native alternatives (and where ccaudit fits)
 
@@ -22,13 +40,6 @@ memory + commands + hooks in one pass), **regime-aware token math** (eager
 vs deferred-tools once `cc ≥ 2.1.7` flips the ToolSearch threshold), and
 **archive-with-rollback** - every action is manifest-logged and reversible
 via `ccaudit restore`.
-
-```bash
-npx ccaudit-cli@latest                    # see what's loading vs. what's used
-npx ccaudit-cli --interactive             # pick exactly which ghosts to archive (TUI)
-npx ccaudit-cli --dry-run                 # see the archive plan, no files touched
-npx ccaudit-cli --dangerously-bust-ghosts # archive ghosts (nothing deleted, undo with restore)
-```
 
 > ccusage tells you what you spent. ccaudit tells you what's wasting it.
 
