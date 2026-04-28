@@ -7,7 +7,9 @@ ccaudit finds them, shows you the cost, and moves them to `~/.claude/ccaudit/arc
 Undo any time with `ccaudit restore`.
 
 ### TL;DR
+
 Solution: paste this into your terminal
+
 ```bash
 claude -p "please spawn a haiku subagent to use the web tool, \
 fetch the readme of this opensource project and explain to me, in very simple terms, \
@@ -16,12 +18,14 @@ https://github.com/fabio-dee/ccaudit"
 ```
 
 ### Enough talk. Just tell me how to use it now:
+
 ```bash
 npx ccaudit-cli@latest                    # full report of what's loading vs. what's used
 npx ccaudit-cli --interactive             # pick exactly which ghosts to archive (TUI)
 npx ccaudit-cli --dry-run                 # see the archive plan for ALL ghosts, no files touched
 npx ccaudit-cli --dangerously-bust-ghosts # archive ALL ghosts (nothing deleted, undo with restore)
 ```
+
 ---
 
 ## Native alternatives (and where ccaudit fits)
